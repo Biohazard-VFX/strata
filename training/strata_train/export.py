@@ -19,6 +19,7 @@ from torch import Tensor, nn
 from ._external import resolve
 from ._precision import FloatProjection
 from .fold_constants import fold
+from .optimize import optimize
 
 
 class Exported(Protocol):
@@ -139,6 +140,7 @@ def export_network(net: nn.Module, path: Path, output: str) -> None:
     net.cpu()
     torch.cuda.empty_cache()
     fold(path)
+    optimize(path)
     print(f"exported {path}", flush=True)
 
 
