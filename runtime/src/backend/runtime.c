@@ -103,11 +103,16 @@ static int append_cuda(strata_context *ctx, int device_id,
 	const char *values[] = { "0" };
 	char *library = cuda_library();
 	OrtStatus *status;
+	void *pin;
 
 	if (!library)
 		return strata_fail(err, "cannot locate the CUDA provider");
 	status = ctx->api->RegisterExecutionProviderLibrary(ctx->env, "cuda",
 							    library);
+	/* ORT unloads EP libraries with the env, leaking CUDA's static state. */
+	pin = dlopen(library, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
+	if (pin)
+		dlclose(pin);
 	free(library);
 	ctx->device = find_cuda(ctx, device_id);
 	if (!ctx->device)
