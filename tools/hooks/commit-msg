@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+exec "$(git rev-parse --show-toplevel)/tools/check_commits.sh" --message-file "$1"
