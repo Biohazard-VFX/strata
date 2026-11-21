@@ -1,0 +1,30 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "normal",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../build/normal",
+      "environment": {"CFLAGS": "", "CPPFLAGS": "", "CXXFLAGS": "", "LDFLAGS": ""},
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+    },
+    {
+      "name": "sanitize",
+      "inherits": "normal",
+      "binaryDir": "${sourceDir}/../build/sanitize",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "STRATA_SANITIZE": "ON"}
+    },
+    {
+      "name": "cpu", "inherits": "normal", "binaryDir": "${sourceDir}/../build/cpu"
+    }
+  ],
+  "buildPresets": [
+    {"name": "normal", "configurePreset": "normal"},
+    {"name": "sanitize", "configurePreset": "sanitize"}
+  ],
+  "testPresets": [
+    {"name": "normal", "configurePreset": "normal", "output": {"outputOnFailure": true}, "execution": {"jobs": 1}},
+    {"name": "sanitize", "configurePreset": "sanitize", "output": {"outputOnFailure": true}, "execution": {"jobs": 1},
+     "environment": {"ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1", "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"}}
+  ]
+}
