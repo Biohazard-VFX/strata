@@ -2,7 +2,7 @@
 
 Deep data from live-action footage.
 
-Strata turns an image or a plate into deep EXRs: several depth samples per pixel, each with its own color and coverage. That lets CG sit behind and in front of hair, fur, foliage, motion blur and defocus without roto. The video model will also solve the camera and recover PBR materials (albedo, normals, roughness, metallic) per layer, for relighting plates in comp.
+Strata turns an image or a plate into deep EXRs: several depth samples per pixel, each with its own color and coverage. That lets CG sit behind and in front of hair, fur, foliage, motion blur and defocus without roto. Our own model will also solve the camera and recover PBR materials (albedo, normals, roughness, metallic) per layer, for relighting plates in comp.
 
 Status: early development. Not production-ready.
 
@@ -19,8 +19,8 @@ Status: early development. Not production-ready.
 
 1. Runtime running Depth Pro 2, writing depth plus a direct depth-to-deep baseline.
 2. Host integrations: Nuke nodes first, then OFX and ComfyUI.
-3. Depth Pro 2 post-trained to output deep from a single image.
-4. Video model: footage in, deep, camera and per-layer PBR out.
+3. Depth Pro 2 post-trained to output deep, on single images and video.
+4. Our own model, trained from scratch: footage in, deep, camera and per-layer PBR out.
 5. Desktop app (Rust + Rune), also on the web.
 
 ## Models
