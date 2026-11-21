@@ -12,12 +12,13 @@ Status: early development. Not production-ready.
 - `training/`: model export, post-training and evaluation.
 - `contract/`: versioned model spec shared by runtime and training.
 - `datagen/`: synthetic dataset generation (USD + MaterialX, rendered in Karma), with deep, cameras and material AOVs per frame.
+- `hosts/`: integrations built only on the public C API: Nuke (native deep), OFX, ComfyUI.
 - `tools/`: repository checks.
 
 ## Roadmap
 
 1. Runtime running Depth Pro 2, writing depth plus a direct depth-to-deep baseline.
-2. Nuke nodes.
+2. Host integrations: Nuke nodes first, then OFX and ComfyUI.
 3. Depth Pro 2 post-trained to output deep from a single image.
 4. Video model: footage in, deep, camera and per-layer PBR out.
 5. Desktop app (Rust + Rune), also on the web.
