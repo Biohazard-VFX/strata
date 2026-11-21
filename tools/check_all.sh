@@ -27,6 +27,13 @@ for preset in "${presets[@]}"; do
   if [[ -n ${STRATA_PARITY_MANIFEST:-} ]]; then options+=("-DSTRATA_PARITY_MANIFEST=$STRATA_PARITY_MANIFEST"); fi
   if [[ -n ${STRATA_REFERENCE_DIR:-} ]]; then options+=("-DSTRATA_REFERENCE_DIR=$STRATA_REFERENCE_DIR"); fi
   cmake --preset "$preset" -S runtime "${options[@]}"
+  "$python" - "$root/build/$preset/CMakeCache.txt" "$preset" <<'PY'
+import sys
+from pathlib import Path
+cache = Path(sys.argv[1]).read_text()
+expected = "ON" if sys.argv[2] == "sanitize" else "OFF"
+assert f"STRATA_SANITIZE:BOOL={expected}\n" in cache, "CMake reset options; reconfigure before qualification"
+PY
   cmake --build "$root/build/$preset" --parallel 4
   tests=()
   if [[ "$cpu" == 1 ]]; then tests=(-LE gpu); fi

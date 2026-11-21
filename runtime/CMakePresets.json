@@ -6,7 +6,7 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/../build/normal",
       "environment": {"CFLAGS": "", "CPPFLAGS": "", "CXXFLAGS": "", "LDFLAGS": ""},
-      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "STRATA_SANITIZE": "OFF"}
     },
     {
       "name": "sanitize",
