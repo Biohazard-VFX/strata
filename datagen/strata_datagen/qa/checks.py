@@ -19,7 +19,7 @@ LIMITS = {
     "mean_samples": (1.0, 48.0),
     "max_samples": (1.0, 1024.0),
     "partial_share": (0.005, 1.0),
-    "flatten_error": (0.0, 0.02),
+    "flatten_error": (0.0, 0.005),
     "valid_id_fraction": (0.999, 1.0),
     "camera_error": (0.0, 1e-3),
 }
