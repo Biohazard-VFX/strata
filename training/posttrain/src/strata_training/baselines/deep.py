@@ -1,7 +1,3 @@
-import json
-from pathlib import Path
-from typing import Any
-
 import numpy as np
 from scipy import ndimage
 
@@ -33,34 +29,3 @@ def two_layer(alpha: Array, front: Array, back: Array, beauty: Array, layers: in
     result.rgb[0] = beauty * alpha[None]
     result.rgb[1] = beauty
     return result
-
-
-def legacy_baselines(entry: dict[str, Any], beauty: Array, results: Path) -> dict[str, Layers]:
-    data = Path(entry["legacy_data"])
-    dp = np.load(data / "dp2.npz")
-    curves: dict[str, Any] = json.loads((data.parent / "curves.json").read_text())
-    predictions = {
-        "fake H+ oracle-aligned": fake_deep(dp["dp_inv"], beauty),
-        "fake H+ raw metric": fake_deep(1 / np.maximum(dp["depth"], 1e-8), beauty),
-    }
-    for radius in (6, 16):
-        base = np.load(data / f"analytic_r{radius}.npz")
-        a, f, b = base["alpha"], base["inv_fg"], base["inv_bg"]
-        for curved in (False, True):
-            alpha = (
-                np.asarray(curves[str(radius)]["lut"])[np.minimum((a * 20).astype(int), 19)]
-                if curved
-                else a
-            )
-            suffix = "+curve" if curved else ""
-            predictions[f"analytic r={radius}{suffix} oracle-aligned"] = two_layer(
-                alpha, f, b, beauty
-            )
-            predictions[f"analytic r={radius}{suffix} raw metric"] = two_layer(
-                alpha, f * float(dp["scale"]), b * float(dp["scale"]), beauty
-            )
-    probe = np.load(results / f"{entry['shot']}_probe_B.npz")
-    predictions["v004 frozen probe oracle-aligned"] = two_layer(
-        probe["alpha"], probe["inv_fg"], probe["inv_bg"], beauty
-    )
-    return predictions

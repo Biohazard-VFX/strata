@@ -12,7 +12,7 @@ from torch import nn
 from strata_training.data.metadata import camera_frames
 from strata_training.data.sequences import clip_indices
 from strata_training.data.targets import visible_inverse
-from strata_training.device import configure_gpu
+from strata_training.io import save_array, save_arrays, write_json
 from strata_training.model.dp2 import DeepDepthPro
 from strata_training.types import Array, Layers
 
@@ -27,9 +27,9 @@ def _after(module: nn.Module, inputs: tuple[torch.Tensor, ...], output: torch.Te
     module.cpu()
 
 
-def _load(preset: str) -> DeepDepthPro:
+def _load(preset: str, device: str) -> DeepDepthPro:
     model = DeepDepthPro(preset, decoder_trainable=False)
-    if preset == "depthpro2-h":
+    if preset == "depthpro2-h" and device == "cuda":
         blocks = model.base.encoder.blocks
         model.base.encoder.blocks = nn.ModuleList()
         model.cuda()
@@ -38,7 +38,7 @@ def _load(preset: str) -> DeepDepthPro:
             block.register_forward_pre_hook(_before)
             block.register_forward_hook(_after)
     else:
-        model.cuda()
+        model.to(device)
     return model.eval()
 
 
@@ -73,18 +73,18 @@ def _save(
         solid = truth > 0
     scale = float(np.exp(np.median(np.log(np.maximum(focal_inv[solid], 1e-8) / truth[solid]))))
     for level, tensor in enumerate(pyramid):
-        np.save(target / f"pyramid_{level}.npy", tensor.half().cpu().numpy())
+        save_array(target / f"pyramid_{level}.npy", tensor.half().cpu().numpy())
     if features is None:
         if legacy is None:
             raise ValueError("Reusing features requires a legacy source")
         if not (target / "features.npy").exists():
             (target / "features.npy").symlink_to(legacy / "features.npy")
     else:
-        np.save(target / "features.npy", features.half().cpu().numpy())
+        save_array(target / "features.npy", features.half().cpu().numpy())
     camera = camera_frames(Path(entry["manifest"]).parent)[entry["frame"]]
     raw_scale = float(camera["width"]) / float(camera["fx"])
-    (target / "context.json").write_text(json.dumps({"clip_ids": clip_ids}))
-    np.savez_compressed(
+    write_json(target / "context.json", {"clip_ids": clip_ids})
+    save_arrays(
         target / "base.npz",
         inverse_depth=focal_inv / scale,
         metric_scale=1 / scale,
@@ -93,18 +93,19 @@ def _save(
     )
 
 
-def extract(index: Path, output: Path, preset: str, clip_length: int = 1) -> None:
+def extract(
+    index: Path, output: Path, preset: str, clip_length: int = 1, device: str = "cuda"
+) -> None:
     entries: list[dict[str, Any]] = json.loads(index.read_text())
     if clip_length < 1:
         raise ValueError("clip_length must be positive")
     by_shot: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in entries:
         by_shot[entry["shot"]].append(entry)
-    configure_gpu()
-    model = _load(preset)
+    model = _load(preset, device)
     output.mkdir(parents=True, exist_ok=True)
-    mean = torch.tensor([0.485, 0.456, 0.406], device="cuda")[None, :, None, None]
-    std = torch.tensor([0.229, 0.224, 0.225], device="cuda")[None, :, None, None]
+    mean = torch.tensor([0.485, 0.456, 0.406], device=device)[None, :, None, None]
+    std = torch.tensor([0.229, 0.224, 0.225], device=device)[None, :, None, None]
     start = time.monotonic()
     completed = 0
     for shot in by_shot.values():
@@ -115,12 +116,12 @@ def extract(index: Path, output: Path, preset: str, clip_length: int = 1) -> Non
                 completed += len(clip)
                 continue
             arrays = [np.load(e["cache"])["srgb"] for e in clip]
-            image = torch.as_tensor(np.stack(arrays).astype(np.float32) / 255, device="cuda")
+            image = torch.as_tensor(np.stack(arrays).astype(np.float32) / 255, device=device)
             height, width = image.shape[-2:]
             normalized = torch.nn.functional.pad(
                 (image - mean) / std, (0, -width % 32, 0, -height % 32), mode="replicate"
             )
-            with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16, cache_enabled=False):
+            with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16, cache_enabled=False):
                 pyramid = model.pyramid(normalized)
                 for i, entry in enumerate(clip):
                     frame_pyramid = [p[i : i + 1] for p in pyramid]
@@ -129,7 +130,7 @@ def extract(index: Path, output: Path, preset: str, clip_length: int = 1) -> Non
                         full_features = None
                     else:
                         features = model.decode(frame_pyramid)
-                        with torch.autocast("cuda", enabled=False):
+                        with torch.autocast(device, enabled=False):
                             inverse = (
                                 model.deep_head.inverse_head(features.float())[
                                     0, 0, :height, :width
@@ -148,22 +149,14 @@ def extract(index: Path, output: Path, preset: str, clip_length: int = 1) -> Non
                         ids,
                     )
                     completed += 1
-                    print(
-                        json.dumps(
-                            {"id": entry["id"], "clip": ids, "seconds": time.monotonic() - start}
-                        ),
-                        flush=True,
-                    )
-    (output / "extraction.json").write_text(
-        json.dumps(
-            {
-                "preset": preset,
-                "clip_length": clip_length,
-                "seconds": time.monotonic() - start,
-                "peak_vram_bytes": torch.cuda.max_memory_allocated(),
-                "frames": completed,
-                "encoder_offload": preset == "depthpro2-h",
-            },
-            indent=2,
-        )
+    write_json(
+        output / "extraction.json",
+        {
+            "preset": preset,
+            "clip_length": clip_length,
+            "seconds": time.monotonic() - start,
+            "peak_vram_bytes": torch.cuda.max_memory_allocated() if device == "cuda" else 0,
+            "frames": completed,
+            "encoder_offload": preset == "depthpro2-h",
+        },
     )

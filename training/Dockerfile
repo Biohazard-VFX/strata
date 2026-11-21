@@ -6,6 +6,6 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY posttrain/src ./src
 RUN uv sync --frozen --no-dev
 COPY posttrain/configs ./configs
-ENV TORCH_HOME=/data/torch-home PYTHONPATH="" PYTORCH_ALLOC_CONF=expandable_segments:True
+ENV TORCH_HOME=/data/torch-home PYTHONPATH=""
 ENTRYPOINT ["uv", "run", "--frozen", "--no-dev", "strata-train"]
 CMD ["pipeline", "configs/runpod.json"]

@@ -8,12 +8,11 @@ import torch
 from scipy import ndimage
 
 from strata_training.baselines.cached import cached_baselines
-from strata_training.baselines.deep import fake_deep, legacy_baselines
+from strata_training.baselines.deep import fake_deep
 from strata_training.data.cache import load_layers
 from strata_training.data.dataset import Frame
 from strata_training.data.exr import write_deep
 from strata_training.data.targets import composite, visible_inverse
-from strata_training.device import configure_gpu
 from strata_training.eval.boundaries import boundary_f1, directed_boundary_counts, silhouette_recall
 from strata_training.eval.calibration import calibration
 from strata_training.eval.metrics import mixed_errors
@@ -21,6 +20,7 @@ from strata_training.eval.predict import load_model, predict
 from strata_training.eval.protocol import entries_for
 from strata_training.eval.recompose import insert_plane
 from strata_training.eval.temporal import sequence_jitter
+from strata_training.io import save_arrays, write_json
 from strata_training.types import Array, Layers
 
 
@@ -224,10 +224,10 @@ def evaluate(
     protocol: Path,
     output: Path,
     checkpoints: list[Path],
-    legacy_results: Path | None = None,
     export_frames: int = 1,
     baseline_cache: Path | None = None,
     prediction_caches: list[Path] | None = None,
+    device: str = "cuda",
 ) -> dict[str, Any]:
     entries = entries_for(index, protocol, "test")
     output.mkdir(parents=True, exist_ok=True)
@@ -239,16 +239,11 @@ def evaluate(
             predictions = cached_baselines(
                 entry["id"], baseline_cache, data["beauty"].astype(np.float32)
             )
-        elif legacy_results and entry["legacy_data"]:
-            predictions = legacy_baselines(entry, data["beauty"].astype(np.float32), legacy_results)
         for method, prediction in predictions.items():
             collect(prediction, target, data, method, entry, collected)
-        print(json.dumps({"baseline_frame": entry["id"]}), flush=True)
-    if checkpoints:
-        configure_gpu()
     temporal: dict[str, Any] = {}
     for checkpoint in checkpoints:
-        model, config = load_model(checkpoint)
+        model, config = load_model(checkpoint, device)
         method = f"{config['preset']} {config['mode']} {config['scale_mode']}"
         fake_method = f"fake {config['preset']} {config['scale_mode']}"
         include_baseline = not any(key[1] == fake_method for key in collected)
@@ -262,7 +257,7 @@ def evaluate(
             baseline = fake_deep(frame.base, data["beauty"].astype(np.float32))
             if include_baseline:
                 collect(baseline, target, data, fake_method, entry, collected)
-            np.savez_compressed(
+            save_arrays(
                 predictions_dir / f"{entry['id']}.npz",
                 inverse_depth=prediction.inverse_depth,
                 alpha=prediction.alpha,
@@ -270,10 +265,10 @@ def evaluate(
             )
             if i < export_frames:
                 write_deep(predictions_dir / f"{entry['id']}.exr", prediction)
-            print(json.dumps({"method": method, "frame": entry["id"]}), flush=True)
         temporal[method] = sequence_jitter(entries, predictions_dir)
         del model
-        torch.cuda.empty_cache()
+        if device == "cuda":
+            torch.cuda.empty_cache()
     for directory in prediction_caches or []:
         metadata: dict[str, Any] = json.loads((directory / "prediction.json").read_text())
         config = metadata["config"]
@@ -327,7 +322,9 @@ def evaluate(
             "probe is oracle-conditioned. protocol.scale documents that legacy track, "
             "not the raw checkpoint inputs."
         ),
-        "peak_vram_bytes": torch.cuda.max_memory_allocated() if checkpoints else 0,
+        "peak_vram_bytes": torch.cuda.max_memory_allocated()
+        if checkpoints and device == "cuda"
+        else 0,
     }
-    (output / "metrics.json").write_text(json.dumps(report, indent=2, allow_nan=False))
+    write_json(output / "metrics.json", report)
     return report

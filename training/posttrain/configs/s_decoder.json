@@ -1,7 +1,7 @@
 {
-  "index": "/mnt/work/life/projects/deep-depth/data/strata_v0/targets/index.json",
-  "protocol": "/mnt/work/life/biohazard/products/strata-wt/training/training/eval/v004_split.json",
-  "features": "/mnt/work/life/projects/deep-depth/data/strata_v0/features_s",
+  "index": "/data/strata_v0/targets/index.json",
+  "protocol": "/data/protocol/v004_split.json",
+  "features": "/data/strata_v0/features_s",
   "preset": "depthpro2-s",
   "layers": 4,
   "mode": "decoder",
@@ -13,5 +13,5 @@
   "steps": 1500,
   "learning_rate": 0.0001,
   "log_every": 250,
-  "output": "/mnt/work/life/projects/deep-depth/data/strata_v0/runs/s_decoder"
+  "output": "/data/strata_v0/runs/s_decoder"
 }

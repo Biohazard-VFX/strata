@@ -11,7 +11,7 @@
   "seed": 4004,
   "crop": 128,
   "halo": 64,
-  "batch_size": 2,
+  "batch_size": 4,
   "steps": 10000,
   "learning_rate": 0.0001,
   "log_every": 250,

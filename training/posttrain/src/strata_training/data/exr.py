@@ -5,15 +5,21 @@ from typing import Any
 import numpy as np
 
 from strata_training.data.targets import reduce_samples
+from strata_training.io import atomic_path
 from strata_training.types import Array, Layers
 
 exr: Any = import_module("OpenEXR")
 
 
-def read_rgb(path: Path) -> Array:
+def read_rgb(path: Path, *, legacy: bool = False) -> Array:
     with exr.File(str(path), separate_channels=True) as file:
         candidates = [part for part in file.parts if part.name() == "C"]
-        part = candidates[0] if candidates else file.parts[0]
+        if candidates:
+            part = candidates[0]
+        elif legacy and len(file.parts) == 1:
+            part = file.parts[0]
+        else:
+            raise ValueError(f"Beauty is missing its C part: {path}")
         channels = part.channels
         return np.stack([channels[c].pixels for c in "RGB"]).astype(np.float32)
 
@@ -72,7 +78,8 @@ def write_deep(path: Path, prediction: Layers) -> None:
             for name in channels:
                 channels[name][y, x] = values[name].astype(np.float32)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with exr.File(
-        {"type": exr.deepscanline, "compression": exr.ZIPS_COMPRESSION}, channels
-    ) as file:
-        file.write(str(path))
+    with (
+        atomic_path(path) as temporary,
+        exr.File({"type": exr.deepscanline, "compression": exr.ZIPS_COMPRESSION}, channels) as file,
+    ):
+        file.write(str(temporary))

@@ -5,10 +5,12 @@ from pathlib import Path
 from strata_training.data.cache import prepare
 from strata_training.data.convert import convert_v004
 from strata_training.eval.protocol import freeze
+from strata_training.torch_api import api
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="strata-train")
+    parser.add_argument("--threads", type=int)
     sub = parser.add_subparsers(dest="command", required=True)
     convert = sub.add_parser("convert-v004")
     convert.add_argument("project", type=Path)
@@ -25,6 +27,7 @@ def main() -> None:
     features.add_argument("output", type=Path)
     features.add_argument("--preset", choices=("depthpro2-s", "depthpro2-h"), default="depthpro2-s")
     features.add_argument("--clip-length", type=int, default=1)
+    features.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     baselines = sub.add_parser("baselines")
     for name in ("index", "protocol", "features", "output", "probe", "normalization"):
         baselines.add_argument(name, type=Path)
@@ -43,10 +46,14 @@ def main() -> None:
     evaluation.add_argument("output", type=Path)
     evaluation.add_argument("--checkpoint", type=Path, action="append", default=[])
     evaluation.add_argument("--predictions", type=Path, action="append", default=[])
-    evaluation.add_argument("--legacy-results", type=Path)
     evaluation.add_argument("--baselines", type=Path)
     evaluation.add_argument("--export-frames", type=int, default=1)
+    evaluation.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     args = parser.parse_args()
+    if args.threads is not None:
+        if args.threads < 1:
+            parser.error("--threads must be positive")
+        api.set_num_threads(args.threads)
     if args.command == "convert-v004":
         print(convert_v004(args.project, args.output))
     elif args.command == "targets":
@@ -56,7 +63,7 @@ def main() -> None:
     elif args.command == "features":
         from strata_training.model.features import extract
 
-        extract(args.index, args.output, args.preset, args.clip_length)
+        extract(args.index, args.output, args.preset, args.clip_length, args.device)
     elif args.command == "baselines":
         from strata_training.baselines.prepare import prepare_baselines
 
@@ -94,10 +101,10 @@ def main() -> None:
             args.protocol,
             args.output,
             args.checkpoint,
-            args.legacy_results,
             args.export_frames,
             args.baselines,
             args.predictions,
+            args.device,
         )
         print(json.dumps({"rows": len(report["summary"]), "frames": len(report["test_ids"])}))
 

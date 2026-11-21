@@ -8,7 +8,7 @@ from PIL import Image
 
 from strata_training.data.exr import read_deep, read_instances, read_rgb
 from strata_training.data.metadata import CONTRACT, camera_frames, category
-from strata_training.data.targets import composite
+from strata_training.io import save_arrays, write_json
 from strata_training.types import Array, Layers, fp16_safe
 
 
@@ -40,7 +40,9 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                 target = read_deep(shot / "deep" / f"{int(frame):04d}.exr", layers)
                 if not target.valid.any():
                     raise ValueError(f"No visible deep geometry in {identifier}")
-                image = read_rgb(shot / "beauty" / f"{int(frame):04d}.exr")
+                image = read_rgb(
+                    shot / "beauty" / f"{int(frame):04d}.exr", legacy=legacy is not None
+                )
                 expected = (camera["height"], camera["width"])
                 if image.shape[-2:] != expected or target.alpha.shape[-2:] != expected:
                     raise ValueError(
@@ -59,9 +61,8 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                     ids = read_instances(shot / "beauty" / f"{frame:04d}.exr")
                     fur = ids == 3
                     reference = {"foreground": (ids == 2) | (ids == 3)}
-                np.savez_compressed(
+                save_arrays(
                     cache,
-                    allow_pickle=False,
                     inverse_depth=target.inverse_depth,
                     alpha=target.alpha,
                     rgb=fp16_safe(target.rgb),
@@ -70,13 +71,6 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                     mixed=mixed,
                     fur=fur,
                     **reference,
-                )
-                error = float(np.abs(composite(target.alpha, target.rgb) - image).mean())
-                print(
-                    json.dumps(
-                        {"id": identifier, "deep_beauty_mae": error, "mixed": int(mixed.sum())}
-                    ),
-                    flush=True,
                 )
             entries.append(
                 {
@@ -92,7 +86,7 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
             )
     if not entries:
         raise ValueError(f"No shot manifests found in {dataset}")
-    (output / "index.json").write_text(json.dumps(entries, indent=2) + "\n")
+    write_json(output / "index.json", entries)
     return entries
 
 

@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from strata_training.io import atomic_path
 from strata_training.model.dp2 import DeepDepthPro
 
 
@@ -26,9 +27,8 @@ def save_checkpoint(
         "step": step,
         "seconds": seconds,
     }
-    temporary = path.with_suffix(".partial")
-    torch.save(state, temporary)
-    temporary.replace(path)
+    with atomic_path(path) as temporary:
+        torch.save(state, temporary)
 
 
 def load_online(path: Path, device: str = "cpu") -> tuple[DeepDepthPro, dict[str, Any]]:

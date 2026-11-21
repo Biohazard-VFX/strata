@@ -1,5 +1,4 @@
 import hashlib
-import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -9,8 +8,8 @@ from torch import nn
 
 from strata_training.data.dataset import Frame
 from strata_training.data.exr import write_deep
-from strata_training.device import configure_gpu
 from strata_training.eval.protocol import entries_for
+from strata_training.io import save_arrays, write_json
 from strata_training.model.dp2 import DeepDepthPro
 from strata_training.model.head import DeepHead
 from strata_training.types import Layers
@@ -102,17 +101,13 @@ def cache_predictions(
     export_frames: int = 1,
     device: str = "cuda",
 ) -> dict[str, Any]:
-    if device == "cuda":
-        configure_gpu()
-    else:
-        torch.set_num_threads(8)
     model, config = load_model(checkpoint, device)
     entries = entries_for(index, protocol, "test")
     output.mkdir(parents=True, exist_ok=True)
     for i, entry in enumerate(entries):
         frame = Frame(entry, Path(config["features"]), config["scale_mode"])
         prediction = predict(model, config, frame)
-        np.savez_compressed(
+        save_arrays(
             output / f"{entry['id']}.npz",
             inverse_depth=prediction.inverse_depth,
             alpha=prediction.alpha,
@@ -120,7 +115,6 @@ def cache_predictions(
         )
         if i < export_frames:
             write_deep(output / f"{entry['id']}.exr", prediction)
-        print(json.dumps({"prediction": entry["id"]}), flush=True)
     report = {
         "config": config,
         "test_ids": [e["id"] for e in entries],
@@ -130,5 +124,5 @@ def cache_predictions(
         "peak_vram_bytes": torch.cuda.max_memory_allocated() if device == "cuda" else 0,
         "peak_reserved_bytes": torch.cuda.max_memory_reserved() if device == "cuda" else 0,
     }
-    (output / "prediction.json").write_text(json.dumps(report, indent=2))
+    write_json(output / "prediction.json", report)
     return report

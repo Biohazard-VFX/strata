@@ -27,10 +27,8 @@ class DeepHead(nn.Module):
         self,
         features: torch.Tensor,
         image: torch.Tensor,
-        base: torch.Tensor | None = None,
+        base: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        if base is None:
-            base = cast(torch.Tensor, self.inverse_head(features.float())).clamp_min(1e-5)
         base = base.clamp_min(1e-3)
         inputs = torch.cat((features, image, base), dim=1)
         inputs = (inputs - self.input_mean[None, :, None, None]) / self.input_std[

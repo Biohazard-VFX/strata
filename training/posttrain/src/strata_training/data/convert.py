@@ -6,6 +6,7 @@ import numpy as np
 
 from strata_training.data.exr import read_rgb
 from strata_training.data.metadata import CONTRACT
+from strata_training.io import write_json
 
 
 def convert_v004(project: Path, output: Path) -> int:
@@ -18,7 +19,7 @@ def convert_v004(project: Path, output: Path) -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             if not target.exists():
                 target.symlink_to(render / f"{kind}.0001.exr")
-        _, height, width = read_rgb(render / "beauty.0001.exr").shape
+        _, height, width = read_rgb(render / "beauty.0001.exr", legacy=True).shape
         position = np.array(sample["camera_position"])
         forward = np.array(sample["look_at"]) - position
         forward /= np.linalg.norm(forward)
@@ -97,6 +98,6 @@ def convert_v004(project: Path, output: Path) -> int:
                 "instance_id",
             ],
         }
-        (shot / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        (shot / "camera.json").write_text(json.dumps(camera, indent=2) + "\n")
+        write_json(shot / "manifest.json", manifest)
+        write_json(shot / "camera.json", camera)
     return len(samples)

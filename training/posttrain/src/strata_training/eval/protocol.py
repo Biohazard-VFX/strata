@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from strata_training.io import write_json
+
 
 def freeze(index: Path, output: Path) -> dict[str, Any]:
     entries: list[dict[str, Any]] = json.loads(index.read_text())
@@ -23,7 +25,7 @@ def freeze(index: Path, output: Path) -> dict[str, Any]:
             raise ValueError("Frozen split differs; choose a new versioned protocol path")
     else:
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(split, indent=2) + "\n")
+        write_json(output, split)
     return split
 
 
