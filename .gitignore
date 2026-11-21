@@ -4,3 +4,9 @@ models/
 *.exr
 .venv/
 __pycache__/
+runtime/third_party/onnxruntime/
+training/.venv
+*.onnx.data
+*.npz
+*.onnx.weights
+.ruff_cache/
