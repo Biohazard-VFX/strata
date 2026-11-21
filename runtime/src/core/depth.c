@@ -1,4 +1,8 @@
 #include "internal.h"
+#include <float.h>
+
+#define STRATA_SRGB_TABLE_EXPONENT 118u
+#define STRATA_SRGB_TABLE (10u << 10)
 
 static int tensor_alloc(struct strata_tensor *tensor, int w, int h,
 			struct strata_error *err)
@@ -44,33 +48,70 @@ int strata_padded_size(int w, int h, int *pw, int *ph, struct strata_error *err)
 	return 0;
 }
 
-static float display(float value, float gain, int linear)
+static float clamp_unit(float value)
 {
-	if (linear)
-		value *= gain;
-	if (!isfinite(value))
-		return value > 0 ? 1 : 0;
-	value = fmaxf(0, fminf(1, value));
-	return linear ? strata_srgb(value) : value;
+	value = value > 0 ? value : 0;
+	return value < 1 ? value : 1;
 }
 
-static size_t prepare_row(const float *rgba, size_t w, float gain, int linear,
-			  float *const out[3])
+static size_t nonfinite_pixels(const float *rgba, size_t w)
 {
-	const float mean[] = { STRATA_MEAN_R, STRATA_MEAN_G, STRATA_MEAN_B };
-	const float std[] = { STRATA_STD_R, STRATA_STD_G, STRATA_STD_B };
-	size_t nonfinite = 0;
+	size_t count = 0;
 
 	for (size_t x = 0; x < w; ++x) {
 		const float *p = rgba + x * 4;
 
-		nonfinite += !isfinite(p[0]) || !isfinite(p[1]) ||
-			     !isfinite(p[2]);
-		for (size_t c = 0; c < 3; ++c)
-			out[c][x] = (display(p[c], gain, linear) - mean[c]) /
-				    std[c];
+		count += (size_t)!((fabsf(p[0]) <= FLT_MAX) &
+				   (fabsf(p[1]) <= FLT_MAX) &
+				   (fabsf(p[2]) <= FLT_MAX));
 	}
-	return nonfinite;
+	return count;
+}
+
+static void srgb_table(float *table)
+{
+	for (uint32_t i = 0; i < STRATA_SRGB_TABLE; ++i) {
+		uint32_t bits = (STRATA_SRGB_TABLE_EXPONENT << 23) + (i << 13);
+		float value;
+
+		memcpy(&value, &bits, sizeof(value));
+		table[i] = strata_srgb(value);
+	}
+}
+
+static float encode(float value, const float *table)
+{
+	uint32_t bits, index;
+
+	memcpy(&bits, &value, sizeof(bits));
+	index = (bits - (STRATA_SRGB_TABLE_EXPONENT << 23)) >> 13;
+	if (!(bits & 0x1fffu) && index < STRATA_SRGB_TABLE)
+		return table[index];
+	return strata_srgb(value);
+}
+
+static void prepare_row(const float *rgba, size_t w, float gain,
+			const float *table, float *const out[3])
+{
+	const float mean[] = { STRATA_MEAN_R, STRATA_MEAN_G, STRATA_MEAN_B };
+	const float std[] = { STRATA_STD_R, STRATA_STD_G, STRATA_STD_B };
+
+	if (!table) {
+		for (size_t c = 0; c < 3; ++c) {
+			for (size_t x = 0; x < w; ++x)
+				out[c][x] = (clamp_unit(rgba[x * 4 + c]) -
+					     mean[c]) /
+					    std[c];
+		}
+		return;
+	}
+	for (size_t c = 0; c < 3; ++c) {
+		for (size_t x = 0; x < w; ++x) {
+			float value = clamp_unit(rgba[x * 4 + c] * gain);
+
+			out[c][x] = (encode(value, table) - mean[c]) / std[c];
+		}
+	}
 }
 
 size_t strata_prepare(const struct strata_image *image, float exposure,
@@ -80,14 +121,18 @@ size_t strata_prepare(const struct strata_image *image, float exposure,
 	size_t pw = (size_t)padded->width, ph = (size_t)padded->height;
 	size_t plane = pw * ph, nonfinite = 0;
 	float gain = (float)pow(2.0, (double)exposure);
+	float table[STRATA_SRGB_TABLE];
 
+	if (image->linear)
+		srgb_table(table);
 	for (size_t y = 0; y < h; ++y) {
+		const float *row = image->rgba + y * w * 4;
 		float *out[3];
 
 		for (size_t c = 0; c < 3; ++c)
 			out[c] = padded->data + c * plane + y * pw;
-		nonfinite += prepare_row(image->rgba + y * w * 4, w, gain,
-					 image->linear, out);
+		nonfinite += nonfinite_pixels(row, w);
+		prepare_row(row, w, gain, image->linear ? table : NULL, out);
 		for (size_t c = 0; c < 3; ++c) {
 			for (size_t x = w; x < pw; ++x)
 				out[c][x] = out[c][w - 1];
