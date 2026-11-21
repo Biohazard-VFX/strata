@@ -25,6 +25,24 @@ static void open_failures(const char *bad, const char *missing)
 	EXPECT(strstr(err.message, "unknown provider") != NULL);
 }
 
+static void fallback(const char *model)
+{
+	struct strata_options options = { .model_path = model,
+					  .provider = "cuda",
+					  .device_id = 1023 };
+	struct strata_error err = { { 0 } };
+	strata_context *ctx = NULL;
+
+	EXPECT(strata_open(&options, &ctx, &err) == -1 && !ctx);
+	EXPECT(err.message[0] != '\0');
+	options.provider = "auto";
+	if (EXPECT(!strata_open(&options, &ctx, &err))) {
+		EXPECT(!strcmp(strata_provider(ctx), "cpu"));
+		EXPECT(strata_fallback_reason(ctx)[0] != '\0');
+	}
+	strata_close(ctx);
+}
+
 static void provided(strata_context *ctx, float *network)
 {
 	struct strata_frame frame = { .image = &image,
@@ -148,6 +166,7 @@ int main(int argc, char **argv)
 	for (size_t i = 0; i < 16; ++i)
 		rgba[i] = (float)(i % 4 + 1) / 8;
 	open_failures(argv[2], argv[3]);
+	fallback(argv[1]);
 	options.model_path = argv[1];
 	if (!EXPECT(!strata_open(&options, &ctx, &err))) {
 		fprintf(stderr, "%s\n", err.message);
@@ -162,7 +181,7 @@ int main(int argc, char **argv)
 	strata_close(ctx);
 	strata_close(NULL);
 	if (!failures)
-		puts("session open failures, focal sources, non-finite input "
-		     "and reload passed");
+		puts("session open failures, fallback, focal sources, "
+		     "non-finite input and reload passed");
 	return failures != 0;
 }
