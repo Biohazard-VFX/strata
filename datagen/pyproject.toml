@@ -1,0 +1,63 @@
+[project]
+name = "strata-datagen"
+version = "0.1.0"
+description = "Seeded USD + MaterialX scenes rendered with Karma into the Strata deep dataset"
+requires-python = ">=3.12"
+dependencies = [
+  "jsonschema>=4.23",
+  "materialx>=1.39",
+  "numpy>=2.0",
+  "OpenEXR>=3.3",
+  "pillow>=11.3",
+  "scipy>=1.18.1",
+  "usd-core>=25.5",
+]
+
+[project.scripts]
+strata-datagen = "strata_datagen.cli:main"
+
+[dependency-groups]
+dev = [
+    "pyright==1.1.414",
+    "ruff==0.17.6",
+    "types-usd>=24.5.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["typings"]
+src = [".", "../contract/dataset"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "PIE", "PERF", "RET", "RSE", "RUF",
+  "ANN", "PTH", "ARG", "NPY", "FLY", "PL", "TRY", "EM", "ISC", "ICN", "G", "T20", "Q", "S",
+  "BLE", "FBT", "DTZ", "ERA", "LOG", "C90", "SLF", "TID", "TC", "FURB", "D2", "D3",
+]
+ignore = ["PLR2004", "S603", "S607", "TRY003", "EM101", "EM102", "D203", "D213", "PLR0913", "D200", "D212"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "PLR2004"]
+"strata_datagen/cli.py" = ["T201"]
+"**/validate.py" = ["T201"]
+"blender/*" = ["T201", "INP001"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+include = ["strata_datagen", "tests", "tools", "../contract/dataset"]
+extraPaths = ["../contract/dataset"]
+stubPath = "typings"
+venvPath = "."
+venv = ".venv"
