@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://strata.dev/contract/dataset/0.1.0/schema.json",
+  "title": "Strata dataset shot records",
+  "$defs": {
+    "contract": {"const": "strata-dataset-0.1.0"},
+    "matrix4": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
+    },
+    "frame": {
+      "type": "object",
+      "required": ["frame", "width", "height", "fx", "fy", "cx", "cy", "world_to_camera", "distortion",
+                   "shutter_open", "shutter_close", "fstop", "focus_distance_m", "focal_length_mm",
+                   "sensor_width_mm"],
+      "properties": {
+        "frame": {"type": "integer", "minimum": 1},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "fx": {"type": "number", "exclusiveMinimum": 0},
+        "fy": {"type": "number", "exclusiveMinimum": 0},
+        "cx": {"type": "number"},
+        "cy": {"type": "number"},
+        "world_to_camera": {"$ref": "#/$defs/matrix4"},
+        "distortion": {
+          "type": "object", "required": ["model"],
+          "properties": {"model": {"enum": ["none"]}}
+        },
+        "shutter_open": {"type": "number"},
+        "shutter_close": {"type": "number"},
+        "fstop": {"type": "number", "minimum": 0},
+        "focus_distance_m": {"type": "number", "exclusiveMinimum": 0},
+        "focal_length_mm": {"type": "number", "exclusiveMinimum": 0},
+        "sensor_width_mm": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "camera": {
+      "type": "object",
+      "required": ["contract", "convention", "move", "frames"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contract"},
+        "convention": {"type": "string"},
+        "move": {"enum": ["locked", "pan_tilt", "handheld", "dolly", "orbit"]},
+        "frames": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/frame"}}
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": ["id", "source", "license", "origin"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "license": {"type": "string", "minLength": 1},
+        "origin": {"type": "string"}
+      }
+    },
+    "id_range": {
+      "type": "object",
+      "required": ["name", "first_id", "count"],
+      "properties": {
+        "name": {"type": "string"},
+        "first_id": {"type": "integer", "minimum": 1},
+        "count": {"type": "integer", "minimum": 1},
+        "prototypes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["contract", "shot_id", "seed", "recipe_version", "generator_versions", "spec", "scene",
+                   "instance_ids", "assets", "render", "timings"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contract"},
+        "shot_id": {"type": "string", "minLength": 1},
+        "seed": {"type": "integer"},
+        "recipe_version": {"type": "string"},
+        "generator_versions": {"type": "object", "additionalProperties": {"type": "string"}},
+        "spec": {"type": "object"},
+        "scene": {"type": "object"},
+        "instance_ids": {"type": "array", "items": {"$ref": "#/$defs/id_range"}},
+        "assets": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/asset"}},
+        "render": {
+          "type": "object",
+          "required": ["renderer", "width", "height", "path_traced_samples", "frames", "aovs", "deep_aovs"],
+          "properties": {
+            "width": {"type": "integer"},
+            "height": {"type": "integer"},
+            "frames": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer"}},
+            "aovs": {"type": "array", "items": {"type": "string"}},
+            "deep_aovs": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "timings": {"type": "object"}
+      }
+    }
+  }
+}
