@@ -1,0 +1,141 @@
+import json
+import math
+import time
+from pathlib import Path
+from typing import Any, cast
+
+import numpy as np
+import torch
+from torch import nn
+
+from strata_training.data.dataset import Frame, batch, normalization
+from strata_training.data.sequences import clip_indices
+from strata_training.device import configure_gpu
+from strata_training.eval.protocol import entries_for
+from strata_training.losses.deep import deep_loss
+from strata_training.model.checkpoint import save_checkpoint
+from strata_training.model.dp2 import DeepDepthPro
+from strata_training.model.head import DeepHead
+from strata_training.torch_api import api
+
+
+def train(config_path: Path) -> dict[str, Any]:
+    config: dict[str, Any] = json.loads(config_path.read_text())
+    if config["mode"] not in {"head", "decoder"}:
+        raise ValueError("mode must be head or decoder")
+    configure_gpu()
+    api.manual_seed(config["seed"])
+    rng = np.random.default_rng(config["seed"])
+    output = Path(config["output"])
+    output.mkdir(parents=True, exist_ok=True)
+    entries = entries_for(Path(config["index"]), Path(config["protocol"]), "train")
+    frames = [Frame(e, Path(config["features"]), config["scale_mode"]) for e in entries]
+    clip_length = int(config.get("clip_length", 1))
+    clips = clip_indices(entries, clip_length)
+    if clip_length > 1 and not any(len(c) > 1 for c in clips):
+        raise ValueError("Requested temporal training but dataset contains no contiguous sequences")
+    if clip_length > config["batch_size"]:
+        raise ValueError("Clip length must not exceed frame batch size")
+    decoder = config["mode"] == "decoder"
+    if decoder:
+        network = DeepDepthPro(config["preset"], config["layers"], decoder_trainable=True)
+        network.base.decoder.cuda()
+        network.base.head.cuda()
+        network.deep_head.cuda()
+        head = network.deep_head
+        model: nn.Module = network
+    else:
+        channels = frames[0].features.shape[0]
+        head = DeepHead(channels, nn.Identity(), config["layers"]).cuda()
+        model = head
+    mean, std = normalization(frames)
+    head.input_mean.copy_(torch.as_tensor(mean).cuda())
+    head.input_std.copy_(torch.as_tensor(std).cuda())
+    parameters = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(parameters, lr=config["learning_rate"], weight_decay=1e-4)
+    start_step = 0
+    previous_seconds = 0.0
+    if config.get("resume"):
+        state: dict[str, Any] = torch.load(config["resume"], map_location="cpu", weights_only=True)
+        keys = ("preset", "mode", "layers", "scale_mode", "index", "protocol", "features")
+        if any(state["config"][key] != config[key] for key in keys):
+            raise ValueError("Resume model/data/scale does not match config")
+        missing, unexpected = cast(
+            tuple[list[str], list[str]], model.load_state_dict(state["model"], strict=False)
+        )
+        if unexpected or any(not k.startswith("base.encoder.") for k in missing):
+            raise ValueError(f"Resume state mismatch: {missing}, {unexpected}")
+        optimizer.load_state_dict(state["optimizer"])
+        rng.bit_generator.state = state["rng"]
+        torch.set_rng_state(state["torch_rng"].cpu())
+        start_step, previous_seconds = state["step"], state["seconds"]
+    start = time.monotonic()
+    if start_step >= config["steps"]:
+        raise ValueError("Resume step already reaches the requested final step")
+    history: list[dict[str, Any]] = []
+    if config.get("resume") and (output / "history.json").exists():
+        history = json.loads((output / "history.json").read_text())
+    crop, halo = config["crop"], config["halo"]
+    running: list[float] = []
+    for step in range(start_step + 1, config["steps"] + 1):
+        selections: list[tuple[int, int, int]] = []
+        while len(selections) < config["batch_size"]:
+            clip = clips[int(rng.integers(len(clips)))]
+            coordinates = frames[clip[0]].crop(rng, crop + 2 * halo)
+            selections.extend(
+                (i, *coordinates) for i in clip[: config["batch_size"] - len(selections)]
+            )
+        inputs, target, pyramid = batch(frames, selections, crop, halo, decoder=decoder)
+        optimizer.zero_grad(set_to_none=True)
+        learning_rate = config["learning_rate"] * (
+            0.01 + 0.99 * 0.5 * (1 + math.cos(math.pi * step / config["steps"]))
+        )
+        for group in optimizer.param_groups:
+            group["lr"] = learning_rate
+        model.train()
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            if decoder:
+                prediction = cast(DeepDepthPro, model).from_pyramid(
+                    pyramid, inputs["image"], inputs["scale"]
+                )
+            else:
+                prediction = cast(
+                    dict[str, torch.Tensor],
+                    model(inputs["features"], inputs["image"], inputs["base"]),
+                )
+            central = {
+                k: v[..., halo : halo + crop, halo : halo + crop] for k, v in prediction.items()
+            }
+            loss, terms = deep_loss(central, target)
+        if not torch.isfinite(loss):
+            raise FloatingPointError(f"Nonfinite loss at step {step}")
+        api.autograd.backward(loss)
+        torch.nn.utils.clip_grad_norm_(parameters, 5)
+        api.optim.AdamW.step(optimizer)
+        running.append(loss.item())
+        if step % config["log_every"] == 0 or step == config["steps"]:
+            row: dict[str, Any] = {
+                "step": step,
+                "seconds": previous_seconds + time.monotonic() - start,
+                "train_loss": float(np.mean(running)),
+                "last_terms": {k: v.item() for k, v in terms.items()},
+                "peak_vram_bytes": torch.cuda.max_memory_allocated(),
+            }
+            history.append(row)
+            running.clear()
+            (output / "history.json").write_text(json.dumps(history, indent=2))
+            save_checkpoint(output / "last.pt", model, optimizer, config, rng, step, row["seconds"])
+            print(json.dumps(row), flush=True)
+    seconds = previous_seconds + time.monotonic() - start
+    save_checkpoint(output / "final.pt", model, optimizer, config, rng, config["steps"], seconds)
+    report = {
+        "config": config,
+        "seconds": seconds,
+        "peak_vram_bytes": torch.cuda.max_memory_allocated(),
+        "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
+        "trainable_parameters": sum(p.numel() for p in parameters),
+        "train_frames": len(frames),
+        "final_train_loss": history[-1]["train_loss"],
+    }
+    (output / "training.json").write_text(json.dumps(report, indent=2))
+    return report
