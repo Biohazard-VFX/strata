@@ -33,3 +33,4 @@
 - The render driver is farm-ready: `jobs.json`/`jobs.sh` list one husk command per shot with paths relative to the build root, and all USD asset paths are relative.
 - Husk writes per-frame files because each product's name is time-sampled per frame (no reliance on `$F` expansion).
 - Opacity cutouts on Megascans foliage write partial deep coverage: on one 1280x720 test frame, 75% of pixels whose front surface is a plant are partially covered and 82% hold samples behind the plant, against 29% and 32% with the opacity maps removed (geometric blade edges only); plant sample alpha median 0.094 vs 0.18.
+- Camera focal length and apertures are authored in tenths of a scene unit (mm / 100 at metres), as UsdGeomCamera specifies; Karma honours it, and millimetre values gave a 100x too-large aperture (subject fully defocused).

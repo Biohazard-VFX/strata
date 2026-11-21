@@ -12,6 +12,7 @@ VERSION = "camera-0.1.0"
 MOVES = ("locked", "pan_tilt", "handheld", "dolly", "orbit")
 SENSOR_MM = (36.0, 20.25)
 CLIPPING_M = (0.03, 5000.0)
+MM_PER_LENS_UNIT = 100.0  # UsdGeomCamera lens values are tenths of a scene unit; Karma honours it.
 
 
 @dataclass(frozen=True)
@@ -191,9 +192,9 @@ def author(stage: Usd.Stage, path: str, track: CameraTrack) -> UsdGeom.Camera:
     first = track.frames[0] - 1
     for index, pose in enumerate(track.samples):
         op.Set(matrix(pose.T), Usd.TimeCode(first + index))
-    camera.CreateFocalLengthAttr(track.lens.focal_mm)
-    camera.CreateHorizontalApertureAttr(SENSOR_MM[0])
-    camera.CreateVerticalApertureAttr(SENSOR_MM[1])
+    camera.CreateFocalLengthAttr(track.lens.focal_mm / MM_PER_LENS_UNIT)
+    camera.CreateHorizontalApertureAttr(SENSOR_MM[0] / MM_PER_LENS_UNIT)
+    camera.CreateVerticalApertureAttr(SENSOR_MM[1] / MM_PER_LENS_UNIT)
     camera.CreateFStopAttr(track.lens.fstop)
     camera.CreateFocusDistanceAttr(track.lens.focus_m)
     camera.CreateClippingRangeAttr(Gf.Vec2f(*CLIPPING_M))
