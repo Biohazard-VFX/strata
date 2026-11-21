@@ -15,15 +15,15 @@ class Aov:
     source_name: str
     data_type: str
     file_format: str
-    pixel_filter: str | None = None
+    pixel_filter: str = '["ubox",{}]'
 
 
 BEAUTY_AOVS = (
     Aov("C", "lpe", "C.*[LO]", "color4f", "color4h"),
-    Aov("albedo", "lpe", "CDA", "color3f", "color3h", '["ubox",{}]'),
-    Aov("N", "raw", "ray:hitN_camera", "normal3f", "float3", '["ubox",{}]'),
-    Aov("roughness", "raw", "roughness", "float", "half", '["ubox",{}]'),
-    Aov("metallic", "raw", "metallic", "float", "half", '["ubox",{}]'),
+    Aov("albedo", "lpe", "CDA", "color3f", "color3h"),
+    Aov("N", "raw", "ray:hitN_camera", "normal3f", "float3"),
+    Aov("roughness", "raw", "roughness", "float", "half"),
+    Aov("metallic", "raw", "metallic", "float", "half"),
     Aov("diffuse_direct", "lpe", "C<RD>L", "color3f", "color3h"),
     Aov("diffuse_indirect", "lpe", "C<RD>.+L", "color3f", "color3h"),
     Aov("specular_direct", "lpe", "C<R[GS]>L", "color3f", "color3h"),
@@ -32,6 +32,7 @@ BEAUTY_AOVS = (
     Aov("instance_id", "primvar", "instance_id", "int", "float", '["minmax",{"mode":"zmin"}]'),
 )
 DEEP_AOVS = ("C", "instance_id")
+DEEP_COMPRESSION = 5
 
 
 @dataclass(frozen=True)
@@ -56,10 +57,9 @@ def _var(stage: Usd.Stage, aov: Aov) -> UsdRender.Var:
         ("driver:parameters:aov:husk:channel_prefix", "" if aov.name == "C" else aov.name),
     ):
         prim.CreateAttribute(name, Sdf.ValueTypeNames.String).Set(value)
-    if aov.pixel_filter is not None:
-        prim.CreateAttribute("driver:parameters:aov:karma:filter", Sdf.ValueTypeNames.String).Set(
-            aov.pixel_filter
-        )
+    prim.CreateAttribute("driver:parameters:aov:karma:filter", Sdf.ValueTypeNames.String).Set(
+        aov.pixel_filter
+    )
     prim.CreateAttribute("driver:parameters:aov:husk:format", Sdf.ValueTypeNames.Token).Set(aov.file_format)
     prim.CreateAttribute("driver:parameters:aov:husk:multiSampled", Sdf.ValueTypeNames.Bool).Set(
         aov.source_type == "lpe"
@@ -75,6 +75,9 @@ def _product(
     for frame in frames:
         attr.Set(f"{folder}/{frame:04d}.exr", Usd.TimeCode(frame))
     product.CreateOrderedVarsRel().SetTargets(variables)
+    product.GetPrim().CreateAttribute(
+        "driver:parameters:husk:OpenEXR:compression", Sdf.ValueTypeNames.String
+    ).Set("zips")
     return product
 
 
@@ -82,7 +85,7 @@ def _deep(stage: Usd.Stage, frames: tuple[int, ...], variables: list[Sdf.Path]) 
     deep = _product(stage, "deep", "deep", frames, variables)
     deep.CreateProductTypeAttr("karma:deep")
     prim = deep.GetPrim()
-    prim.CreateAttribute("karma:product:dcmcompression", Sdf.ValueTypeNames.Int).Set(0)
+    prim.CreateAttribute("karma:product:dcmcompression", Sdf.ValueTypeNames.Int).Set(DEEP_COMPRESSION)
     prim.CreateAttribute("karma:product:dcmofsize", Sdf.ValueTypeNames.Int).Set(1)
     prim.CreateAttribute("karma:product:dcmzbias", Sdf.ValueTypeNames.Float).Set(0.001)
     return deep
@@ -93,6 +96,8 @@ def _karma(settings: UsdRender.Settings, config: RenderConfig) -> None:
     for name, kind, value in (
         ("karma:global:pathtracedsamples", Sdf.ValueTypeNames.Int, config.path_traced_samples),
         ("karma:global:abortnogpudevice", Sdf.ValueTypeNames.Bool, True),
+        ("karma:global:pixelfilter", Sdf.ValueTypeNames.String, "box"),
+        ("karma:global:pixelfilterscale", Sdf.ValueTypeNames.Float, 1.0),
         ("karma:object:xformsamples", Sdf.ValueTypeNames.Int, 3),
         ("karma:object:geosamples", Sdf.ValueTypeNames.Int, 1),
     ):

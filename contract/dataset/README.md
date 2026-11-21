@@ -70,9 +70,11 @@ Multi-part scanline EXR, one part per AOV, all at the camera resolution:
 
 Single-part deep scanline EXR with channels `R G B A Z ZBack instance_id`, float, one sample list
 per pixel, samples unsorted. `R G B` are premultiplied by `A`. `instance_id` is premultiplied by
-`A` as well: the integer id of a sample is `round(instance_id / A)`. Surface samples have
-`ZBack - Z` of at most about 1 mm. Fully occluded surfaces are not stored. Compositing the samples
-front to back reproduces the beauty `C` part.
+`A` as well: the integer id of a sample is `round(instance_id / A)`. Karma merges samples of the
+same surface that lie within 1 mm in depth (deep compression 5), so a sample can stand for several
+pixel samples; ZBack - Z stays at most about 1 mm for surfaces. Fully occluded surfaces are not
+stored. Beauty and deep share a one-pixel box filter: compositing the samples front to back
+reproduces the beauty `C` part (mean absolute difference about 4e-5).
 
 Instance ids: 0 is sky (no deep sample), 1 terrain, 2 hero skin, 3 hero groom (hair or fur),
 1000 and up are scattered instances; `manifest.instance_ids` maps every id to its layer.

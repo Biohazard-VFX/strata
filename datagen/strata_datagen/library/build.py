@@ -14,6 +14,7 @@ EXCLUDED_PLANTS = ("houseplant", "succulent", "aloe", "palm", "paddle", "eelgras
 GRASS = ("grass", "wheat", "sedge", "rush", "reed")
 ROCK = ("rock", "stone", "boulder")
 DEBRIS = ("log", "stump", "branch", "debris", "root")
+NATURAL_GROUND = ("ground", "soil", "grass", "moss", "sand", "gravel", "mud", "forest", "mulch", "rock")
 MAN_MADE = ("trash", "manmade", "construction", "brick", "street", "building", "carved", "castle")
 
 
@@ -52,6 +53,11 @@ def model_role(asset: megascans.Asset) -> str | None:
     if any(word in name for word in ROCK):
         return "rock"
     return "debris" if any(word in name for word in DEBRIS) else None
+
+
+def natural_ground(asset: megascans.Asset) -> bool:
+    name = asset.folder.name.lower()
+    return any(word in name for word in NATURAL_GROUND) and not any(word in name for word in MAN_MADE)
 
 
 def _assets(sources: Sources) -> Iterator[megascans.Asset]:
@@ -104,6 +110,8 @@ def prepare_megascans(sources: Sources, root: Path) -> tuple[list[catalogue.Mode
     for asset in _assets(sources):
         folder = root / "assets" / "megascans" / asset.asset_id
         if asset.category == "surface":
+            if not natural_ground(asset):
+                continue
             surfaces.append(
                 catalogue.Surface(
                     asset.asset_id,
