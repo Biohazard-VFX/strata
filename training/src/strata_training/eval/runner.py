@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from scipy import ndimage
 
+from strata_training.baselines.cached import cached_baselines
 from strata_training.baselines.deep import collapse_two, fake_deep, legacy_baselines
 from strata_training.data.cache import load_layers
 from strata_training.data.dataset import Frame
@@ -19,6 +20,7 @@ from strata_training.eval.metrics import mixed_errors
 from strata_training.eval.predict import load_model, predict
 from strata_training.eval.protocol import entries_for
 from strata_training.eval.recompose import insert_plane
+from strata_training.eval.temporal import sequence_jitter
 from strata_training.types import Array, Layers
 
 
@@ -89,6 +91,11 @@ class Collected:
             counts = np.array(items).sum(axis=0)
             return boundary_f1([(int(row[0]), int(row[1]), int(row[2])) for row in counts])
 
+        for key in ("edge_composite", "edge_insert"):
+            result[f"{key}_mae"] = float(values[key].mean())
+        result["native_coverage_calibration"] = calibration(
+            values["native_predicted_alpha"], values["native_target_alpha"]
+        )
         result["directed_boundary_f1_native"] = pooled(self.boundary)
         result["directed_boundary_f1_affine_aligned"] = pooled(self.aligned_boundary)
         result["silhouette_recall_z3m_proxy"] = (
@@ -121,6 +128,10 @@ def collect(
         composite(prediction.alpha, prediction.rgb) - data["beauty"].astype(np.float32)
     ).mean(axis=0)
     merge = np.abs(insert_plane(prediction) - insert_plane(target)).mean(axis=0)
+    edge = ndimage.binary_dilation(data["mixed"], iterations=2)
+    layer_rgb = np.abs(prediction.rgb - target.rgb).mean(axis=(0, 1))
+    count_error = np.abs((prediction.alpha > 0.03).sum(axis=0) - (target.alpha > 0.03).sum(axis=0))
+    reversed_order = (prediction.inverse_depth[:-1] < prediction.inverse_depth[1:]).any(axis=0)
     relative = np.abs(gt_inverse / np.maximum(pred_inverse, 1e-8) - 1)
     relative_aligned = np.abs(gt_inverse / np.maximum(aligned, 1e-8) - 1)
     delta1 = (
@@ -167,9 +178,16 @@ def collect(
         result.append(
             "ordered", np.abs(prediction.inverse_depth[valid] / target.inverse_depth[valid] - 1)
         )
+        result.append("edge_composite", reconstruction[edge & region])
+        result.append("edge_insert", merge[edge & region])
+        result.append("native_predicted_alpha", prediction.alpha[0][mixed])
+        result.append("native_target_alpha", target.alpha[0][mixed])
         result.append("predicted_alpha", historical.alpha[0][mixed])
         result.append("target_alpha", reference_alpha[0][mixed])
         for key, array in {
+            "layer_premult_rgb_mae": layer_rgb,
+            "sample_count_mae_a003": count_error,
+            "depth_order_violation_fraction": reversed_order,
             "composite_mae": reconstruction,
             "insert_z3m_mae": merge,
             "depth_absrel": relative,
@@ -193,19 +211,27 @@ def evaluate(
     checkpoints: list[Path],
     legacy_results: Path | None = None,
     export_frames: int = 1,
+    baseline_cache: Path | None = None,
+    prediction_caches: list[Path] | None = None,
 ) -> dict[str, Any]:
     entries = entries_for(index, protocol, "test")
     output.mkdir(parents=True, exist_ok=True)
     collected: dict[tuple[str, str], Collected] = {}
     for entry in entries:
         target, data = load_layers(Path(entry["cache"]))
-        if legacy_results and entry["legacy_data"]:
+        predictions: dict[str, Layers] = {}
+        if baseline_cache:
+            predictions = cached_baselines(
+                entry["id"], baseline_cache, data["beauty"].astype(np.float32)
+            )
+        elif legacy_results and entry["legacy_data"]:
             predictions = legacy_baselines(entry, data["beauty"].astype(np.float32), legacy_results)
-            for method, prediction in predictions.items():
-                collect(prediction, target, data, method, entry, collected)
+        for method, prediction in predictions.items():
+            collect(prediction, target, data, method, entry, collected)
         print(json.dumps({"baseline_frame": entry["id"]}), flush=True)
     if checkpoints:
         configure_gpu()
+    temporal: dict[str, Any] = {}
     for checkpoint in checkpoints:
         model, config = load_model(checkpoint)
         method = f"{config['preset']} {config['mode']} {config['scale_mode']}"
@@ -230,8 +256,27 @@ def evaluate(
             if i < export_frames:
                 write_deep(predictions_dir / f"{entry['id']}.exr", prediction)
             print(json.dumps({"method": method, "frame": entry["id"]}), flush=True)
+        temporal[method] = sequence_jitter(entries, predictions_dir)
         del model
         torch.cuda.empty_cache()
+    for directory in prediction_caches or []:
+        metadata: dict[str, Any] = json.loads((directory / "prediction.json").read_text())
+        config = metadata["config"]
+        if metadata["test_ids"] != [e["id"] for e in entries]:
+            raise ValueError("Prediction cache holdout differs from frozen protocol")
+        method = f"{config['preset']} {config['mode']} {config['scale_mode']}"
+        fake_method = f"fake {config['preset']} {config['scale_mode']}"
+        include_baseline = not any(key[1] == fake_method for key in collected)
+        for entry in entries:
+            target, data = load_layers(Path(entry["cache"]))
+            prediction, _ = load_layers(directory / f"{entry['id']}.npz")
+            collect(prediction, target, data, method, entry, collected)
+            if include_baseline:
+                base_data = np.load(Path(config["features"]) / entry["id"] / "base.npz")
+                key = "raw_inverse_depth" if config["scale_mode"] == "raw" else "inverse_depth"
+                baseline = fake_deep(base_data[key], data["beauty"].astype(np.float32))
+                collect(baseline, target, data, fake_method, entry, collected)
+        temporal[method] = sequence_jitter(entries, directory)
     summary = [
         {"group": group, "method": method, **values.summary()}
         for (group, method), values in sorted(collected.items())
@@ -240,11 +285,27 @@ def evaluate(
         "summary": summary,
         "test_ids": [e["id"] for e in entries],
         "protocol": json.loads(protocol.read_text()),
-        "temporal_jitter": None,
-        "temporal_reason": "v004 contains isolated single-frame shots, no GT tracks",
-        "boundary_protocol": "Directed adjacent-pixel ratios at 5,10,15,20,25%, threshold-proportional weighting. Exact native-pixel matching, four directed orientations. Affine-aligned results separate. Silhouette proxy: coverage at Z<3m thresholded at .1; scanline connected-run NMS. Not a published-benchmark reproduction.",
-        "baseline_color_policy": "Analytic/probe lack RGB predictions; reuse observed beauty at every layer. Composite zero is tautological. Insert-plane error tests geometry but is not hidden-color recovery.",
-        "historical_protocol": "Collapse K predictions to two at largest visible log gap (.003 visible-contribution cutoff), compare with original v004 two-layer GT/masks. Native K metrics are separate; probe remains oracle-conditioned.",
+        "temporal_jitter": temporal,
+        "temporal_reason": (
+            "Report static-track proxy only when contiguous frames exist; v004 has none."
+        ),
+        "boundary_protocol": (
+            "Directed adjacent-pixel ratios at 5,10,15,20,25%, threshold-proportional "
+            "weighting. Exact native-pixel matching, four directed orientations. "
+            "Affine-aligned results separate. Silhouette proxy: coverage at Z<3m "
+            "thresholded at .1; scanline connected-run NMS. Not a published-benchmark "
+            "reproduction."
+        ),
+        "baseline_color_policy": (
+            "Analytic/probe lack RGB predictions; reuse observed beauty at every layer. "
+            "Composite zero is tautological. Insert-plane error tests geometry but is "
+            "not hidden-color recovery."
+        ),
+        "historical_protocol": (
+            "Collapse K predictions to two at largest visible log gap (.003 "
+            "visible-contribution cutoff), compare with original v004 two-layer "
+            "GT/masks. Native K metrics are separate; probe remains oracle-conditioned."
+        ),
         "peak_vram_bytes": torch.cuda.max_memory_allocated() if checkpoints else 0,
     }
     (output / "metrics.json").write_text(json.dumps(report, indent=2))

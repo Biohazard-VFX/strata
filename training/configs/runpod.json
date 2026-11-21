@@ -1,0 +1,19 @@
+{
+  "dataset": "/data/dataset",
+  "index": "/data/cache/targets/index.json",
+  "protocol": "/data/protocol/split.json",
+  "features": "/data/cache/features_s",
+  "output": "/data/runs/s_decoder",
+  "preset": "depthpro2-s",
+  "layers": 4,
+  "mode": "decoder",
+  "scale_mode": "raw",
+  "seed": 4004,
+  "crop": 128,
+  "halo": 64,
+  "batch_size": 2,
+  "steps": 10000,
+  "learning_rate": 0.0001,
+  "log_every": 250,
+  "clip_length": 1
+}

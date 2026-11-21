@@ -44,6 +44,19 @@ def test_opaque_samples_hide_later_samples_and_small_gaps_do_not_split() -> None
     assert_allclose(composite(target.alpha, target.rgb)[:, 0, 0], [0.5, 0.5, 0])
 
 
+def test_hidden_depth_gaps_do_not_consume_visible_layer_slots() -> None:
+    target = reduce_samples(
+        np.array([2.0, 4.0, 8.0, 100.0, 10000.0]),
+        np.array([0.5, 0.5, 1.0, 1.0, 1.0]),
+        np.array([[0.5, 0, 0], [0, 0.5, 0], [0, 0, 1], [1, 0, 0], [1, 0, 0]]),
+        np.array([5]),
+        (1, 1),
+        layers=3,
+    )
+    assert_allclose(target.alpha[:, 0, 0], [0.5, 0.5, 1])
+    assert_allclose(target.inverse_depth[:, 0, 0], [0.5, 0.25, 0.125])
+
+
 def test_invalid_deep_samples_fail_instead_of_silently_reordering_bad_data() -> None:
     with pytest.raises(ValueError, match="positive"):
         reduce_samples(np.array([0.0]), np.ones(1), np.zeros((1, 3)), np.ones(1, dtype=int), (1, 1))

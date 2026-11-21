@@ -55,7 +55,8 @@ class DeepDepthPro(nn.Module):
             return list(self.base.encoder.reassemble_tokens(tokens, grid))
 
     def decode(self, pyramid: list[torch.Tensor]) -> torch.Tensor:
-        decoded: torch.Tensor = self.base.decoder(pyramid)
+        with torch.autocast(pyramid[0].device.type, dtype=torch.bfloat16):
+            decoded: torch.Tensor = self.base.decoder(pyramid)
         with torch.autocast(decoded.device.type, enabled=False):
             return self.base.head[:2](decoded.float())
 
@@ -65,7 +66,8 @@ class DeepDepthPro(nn.Module):
         features = self.decode(pyramid)
         with torch.autocast(features.device.type, enabled=False):
             base = self.deep_head.inverse_head(features.float()).clamp_min(1e-5) * metric_scale
-        return self.deep_head(features, image, base)
+        with torch.autocast(features.device.type, dtype=torch.bfloat16):
+            return self.deep_head(features, image, base)
 
     def forward(
         self, normalized: torch.Tensor, image: torch.Tensor, metric_scale: torch.Tensor

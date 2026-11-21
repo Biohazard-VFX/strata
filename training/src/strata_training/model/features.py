@@ -9,6 +9,7 @@ import torch
 from scipy import ndimage
 from torch import nn
 
+from strata_training.data.sequences import clip_indices
 from strata_training.device import configure_gpu
 from strata_training.model.dp2 import DeepDepthPro
 from strata_training.types import Array
@@ -27,6 +28,7 @@ def _after(module: nn.Module, inputs: tuple[torch.Tensor, ...], output: torch.Te
 def _load(preset: str) -> DeepDepthPro:
     model = DeepDepthPro(preset, decoder_trainable=False)
     if preset == "depthpro2-h":
+        model.base.encoder.bfloat16()
         blocks = model.base.encoder.blocks
         model.base.encoder.blocks = nn.ModuleList()
         model.cuda()
@@ -103,9 +105,8 @@ def extract(index: Path, output: Path, preset: str, clip_length: int = 1) -> Non
     start = time.monotonic()
     completed = 0
     for shot in by_shot.values():
-        shot.sort(key=lambda e: e["frame"])
-        for offset in range(0, len(shot), clip_length):
-            clip = shot[offset : offset + clip_length]
+        for indices in clip_indices(shot, clip_length):
+            clip = [shot[i] for i in indices]
             ids = [e["id"] for e in clip]
             if all((output / e["id"] / "base.npz").exists() for e in clip):
                 completed += len(clip)
@@ -126,7 +127,14 @@ def extract(index: Path, output: Path, preset: str, clip_length: int = 1) -> Non
                     else:
                         features = model.decode(frame_pyramid)
                         with torch.autocast("cuda", enabled=False):
-                            inverse = model.deep_head.inverse_head(features.float())[0, 0, :height, :width].float().cpu().numpy()
+                            inverse = (
+                                model.deep_head.inverse_head(features.float())[
+                                    0, 0, :height, :width
+                                ]
+                                .float()
+                                .cpu()
+                                .numpy()
+                            )
                         full_features = features[0, :, :height, :width]
                     _save(
                         entry,

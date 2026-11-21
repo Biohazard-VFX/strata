@@ -24,14 +24,26 @@ def main() -> None:
     features.add_argument("index", type=Path)
     features.add_argument("output", type=Path)
     features.add_argument("--preset", choices=("depthpro2-s", "depthpro2-h"), default="depthpro2-s")
+    features.add_argument("--clip-length", type=int, default=1)
+    baselines = sub.add_parser("baselines")
+    for name in ("index", "protocol", "features", "output", "probe", "normalization"):
+        baselines.add_argument(name, type=Path)
+    pipeline = sub.add_parser("pipeline")
+    pipeline.add_argument("config", type=Path)
     training = sub.add_parser("train")
     training.add_argument("config", type=Path)
+    prediction = sub.add_parser("predict")
+    for name in ("index", "protocol", "checkpoint", "output"):
+        prediction.add_argument(name, type=Path)
+    prediction.add_argument("--export-frames", type=int, default=1)
     evaluation = sub.add_parser("evaluate")
     evaluation.add_argument("index", type=Path)
     evaluation.add_argument("protocol", type=Path)
     evaluation.add_argument("output", type=Path)
     evaluation.add_argument("--checkpoint", type=Path, action="append", default=[])
+    evaluation.add_argument("--predictions", type=Path, action="append", default=[])
     evaluation.add_argument("--legacy-results", type=Path)
+    evaluation.add_argument("--baselines", type=Path)
     evaluation.add_argument("--export-frames", type=int, default=1)
     args = parser.parse_args()
     if args.command == "convert-v004":
@@ -43,11 +55,31 @@ def main() -> None:
     elif args.command == "features":
         from strata_training.model.features import extract
 
-        extract(args.index, args.output, args.preset)
+        extract(args.index, args.output, args.preset, args.clip_length)
+    elif args.command == "baselines":
+        from strata_training.baselines.prepare import prepare_baselines
+
+        prepare_baselines(
+            args.index, args.protocol, args.features, args.output, args.probe, args.normalization
+        )
+    elif args.command == "pipeline":
+        from strata_training.pipeline import pipeline
+
+        pipeline(args.config)
     elif args.command == "train":
         from strata_training.train import train
 
         print(json.dumps(train(args.config)))
+    elif args.command == "predict":
+        from strata_training.eval.predict import cache_predictions
+
+        print(
+            json.dumps(
+                cache_predictions(
+                    args.index, args.protocol, args.checkpoint, args.output, args.export_frames
+                )
+            )
+        )
     elif args.command == "evaluate":
         from strata_training.eval.runner import evaluate
 
@@ -58,6 +90,8 @@ def main() -> None:
             args.checkpoint,
             args.legacy_results,
             args.export_frames,
+            args.baselines,
+            args.predictions,
         )
         print(json.dumps({"rows": len(report["summary"]), "frames": len(report["test_ids"])}))
 

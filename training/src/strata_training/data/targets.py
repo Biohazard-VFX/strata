@@ -40,6 +40,13 @@ def reduce_samples(
     before = np.concatenate(([0.0], cumulative[:-1]))
     trans = np.exp(before - before[starts])
     weight = trans * a
+    visible = weight > 1e-12
+    z, a, c = z[visible], a[visible], c[visible]
+    pix, trans, weight = pix[visible], trans[visible], weight[visible]
+    if not z.size:
+        return _reshape(output, shape, layers)
+    counts = np.bincount(pix, minlength=pixels)
+    starts = np.repeat(np.cumsum(counts) - counts, counts)
     gaps = np.full(z.size, -np.inf)
     same = pix[1:] == pix[:-1]
     gaps[1:] = np.where(same, np.diff(np.log(z)), -np.inf)

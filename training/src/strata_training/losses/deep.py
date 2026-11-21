@@ -36,7 +36,7 @@ def deep_loss(
         "rgb": rgb,
         "composite": reconstruction,
     }
-    return depth + gradient + alpha + 0.25 * rgb + 0.25 * reconstruction, terms
+    return depth + gradient + 4 * alpha + 0.25 * rgb + 0.25 * reconstruction, terms
 
 
 def gradient_loss(

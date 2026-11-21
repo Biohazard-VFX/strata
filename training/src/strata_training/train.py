@@ -9,6 +9,7 @@ import torch
 from torch import nn
 
 from strata_training.data.dataset import Frame, batch, normalization
+from strata_training.data.sequences import clip_indices
 from strata_training.device import configure_gpu
 from strata_training.eval.protocol import entries_for
 from strata_training.losses.deep import deep_loss
@@ -26,6 +27,12 @@ def train(config_path: Path) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     entries = entries_for(Path(config["index"]), Path(config["protocol"]), "train")
     frames = [Frame(e, Path(config["features"]), config["scale_mode"]) for e in entries]
+    clip_length = int(config.get("clip_length", 1))
+    clips = clip_indices(entries, clip_length)
+    if clip_length > 1 and not any(len(c) > 1 for c in clips):
+        raise ValueError("Requested temporal training but dataset contains no contiguous sequences")
+    if clip_length > config["batch_size"]:
+        raise ValueError("Clip length must not exceed frame batch size")
     decoder = config["mode"] == "decoder"
     if decoder:
         network = DeepDepthPro(config["preset"], config["layers"], decoder_trainable=True)
@@ -46,15 +53,17 @@ def train(config_path: Path) -> dict[str, Any]:
     start_step = 0
     previous_seconds = 0.0
     if config.get("resume"):
-        state: dict[str, Any] = torch.load(
-            config["resume"], map_location="cuda", weights_only=False
-        )
+        state: dict[str, Any] = torch.load(config["resume"], map_location="cpu", weights_only=False)
         if (
             state["config"]["preset"] != config["preset"]
             or state["config"]["mode"] != config["mode"]
         ):
             raise ValueError("Resume model does not match config")
-        model.load_state_dict(state["model"])
+        missing, unexpected = cast(
+            tuple[list[str], list[str]], model.load_state_dict(state["model"], strict=False)
+        )
+        if unexpected or any(not k.startswith("base.encoder.") for k in missing):
+            raise ValueError(f"Resume state mismatch: {missing}, {unexpected}")
         optimizer.load_state_dict(state["optimizer"])
         rng.bit_generator.state = state["rng"]
         torch.set_rng_state(state["torch_rng"].cpu())
@@ -65,9 +74,12 @@ def train(config_path: Path) -> dict[str, Any]:
     running: list[float] = []
     for step in range(start_step + 1, config["steps"] + 1):
         selections: list[tuple[int, int, int]] = []
-        for _ in range(config["batch_size"]):
-            i = int(rng.integers(len(frames)))
-            selections.append((i, *frames[i].crop(rng, crop + 2 * halo)))
+        while len(selections) < config["batch_size"]:
+            clip = clips[int(rng.integers(len(clips)))]
+            coordinates = frames[clip[0]].crop(rng, crop + 2 * halo)
+            selections.extend(
+                (i, *coordinates) for i in clip[: config["batch_size"] - len(selections)]
+            )
         inputs, target, pyramid = batch(frames, selections, crop, halo, decoder=decoder)
         optimizer.zero_grad(set_to_none=True)
         learning_rate = config["learning_rate"] * (
@@ -111,7 +123,9 @@ def train(config_path: Path) -> dict[str, Any]:
     seconds = previous_seconds + time.monotonic() - start
     torch.save(
         {
-            "model": model.state_dict(),
+            "model": {
+                k: v for k, v in model.state_dict().items() if not k.startswith("base.encoder.")
+            },
             "optimizer": optimizer.state_dict(),
             "config": config,
             "rng": rng.bit_generator.state,

@@ -20,6 +20,8 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
             identifier = f"{shot.name}_{int(frame):04d}"
             cache = output / f"{identifier}.npz"
             legacy = Path(manifest["legacy_data"]) if "legacy_data" in manifest else None
+            if cache.exists() and np.load(cache)["alpha"].shape[0] != layers:
+                raise ValueError("Target cache K changed; use a new cache directory")
             if not cache.exists():
                 target = read_deep(shot / "deep" / f"{int(frame):04d}.exr", layers)
                 image = read_rgb(shot / "beauty" / f"{int(frame):04d}.exr")

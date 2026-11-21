@@ -9,9 +9,9 @@
   "seed": 4004,
   "crop": 128,
   "halo": 64,
-  "batch_size": 4,
-  "steps": 15000,
+  "batch_size": 2,
+  "steps": 40000,
   "learning_rate": 0.0004,
-  "log_every": 250,
+  "log_every": 1000,
   "output": "/mnt/work/life/projects/deep-depth/data/strata_v0/runs/h_head"
 }

@@ -36,7 +36,9 @@ def convert_v004(project: Path, output: Path) -> int:
                     "focus_distance_m": sample["distance_m"]
                     + (4 if sample["focus"] == "background" else 0),
                     "camera_convention": "right-handed, -Z forward, Y up",
-                    "focus_distance_source": "legacy distance_m approximation; source HIP is authoritative",
+                    "focus_distance_source": (
+                        "legacy distance_m approximation; source HIP is authoritative"
+                    ),
                 }
             }
         }
