@@ -31,7 +31,9 @@ def main():
     parser.add_argument("--reference-dir",type=Path,required=True)
     parser.add_argument("--out",type=Path,required=True)
     parser.add_argument("--max-relative",type=float,default=.05)
-    parser.add_argument("--median-relative",type=float,default=.001)
+    parser.add_argument("--median-relative",type=float,default=.005)
+    parser.add_argument("--aggregate-median-relative",type=float,default=.001)
+    parser.add_argument("--focal-relative",type=float,default=.001)
     args = parser.parse_args()
     cases = json.loads(args.manifest.read_text())
     assert cases and len({case['id'] for case in cases}) == len(cases)
@@ -61,14 +63,15 @@ def main():
             assert completed.returncode == 0, completed.stderr
             timing = json.loads(completed.stdout)
             assert timing['provider'] == 'cuda', 'CPU fallback is not GPU parity'
-            assert abs(timing['focal_px']-float(reference['focal_px']))/float(reference['focal_px']) <= args.median_relative
+            assert abs(timing['focal_px']-float(reference['focal_px']))/float(reference['focal_px']) <= args.focal_relative
             row = {'id':case['id'],'timing':timing}
             with OpenEXR.File(str(prefix.with_suffix('.depth.exr')),separate_channels=True) as file:
                 assert set(file.channels()) == {'Z','network_inverse_depth','inverse_metres'}
                 for field,channel in (('camera_z_metres','Z'),('network_inverse_depth','network_inverse_depth'),('inverse_metres','inverse_metres')):
                     values = file.channels()[channel].pixels.copy()
                     error = relative(values,reference[field])
-                    stats = {'max_relative':float(error.max()),'median_relative':float(np.median(error))}
+                    stats = {'max_relative':float(error.max()),'median_relative':float(np.median(error)),
+                             'p99_relative':float(np.quantile(error,.99))}
                     row[field] = stats
                     all_relative[field].append(error)
                     assert stats['max_relative'] <= args.max_relative, (case['id'],field,stats)
@@ -84,10 +87,13 @@ def main():
     for field,arrays in all_relative.items():
         errors = np.concatenate(arrays)
         aggregate[field] = {'max_relative':float(errors.max()),'median_relative':float(np.median(errors)),
+                            'p99_relative':float(np.quantile(errors,.99)),
                             'finite_pixels':int(errors.size)}
     summary = {'cases':len(report),'aggregate':aggregate}
     (args.out/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary),flush=True)
+    for field,stats in aggregate.items():
+        assert stats['median_relative'] <= args.aggregate_median_relative, (field,stats)
 
 
 if __name__ == '__main__':

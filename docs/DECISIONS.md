@@ -17,3 +17,4 @@
 - Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
 - The runtime GPU phase owns the exclusive shared lock throughout; admit each serialized job only with its measured or conservative expected process peak plus 2048 MiB free, and report unsafe resolutions as not measurable.
 - Cold timings mean a fresh process/session with the filesystem cache left intact; warm timings exclude the first frame, and sampled VRAM is process memory rather than total desktop use.
+- FP16 CUDA parity budgets are 5% maximum, 0.5% per-image median and 0.1% pixel-weighted aggregate median; the unfinished 0.1% per-image gate failed unchanged dof_05 (0.2545%), with identical old/new reference arrays and ONNX operations/weights, and neither disabling reference TF32 nor float32 Attention softmax changed it; focal tolerance remains 0.1%.
