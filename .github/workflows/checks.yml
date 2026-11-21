@@ -1,0 +1,50 @@
+name: checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.5"
+          enable-cache: true
+          cache-dependency-glob: training/uv.lock
+      - name: System C dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libopenexr-dev libjson-c-dev python3-openimageio
+      - name: CPU Python environment and formatter
+        run: |
+          uv sync --project training --extra cpu --locked --python 3.12
+          uv tool install clang-format==23.1.4
+      - name: CPU ONNX Runtime SDK
+        run: python3 runtime/cmake/fetch_ort.py --cpu --cache "$RUNNER_TEMP/strata-downloads"
+      - name: Commit range
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
+          if 'pull_request' in event:
+              base = event['pull_request']['base']['sha']
+              head = event['pull_request']['head']['sha']
+          else:
+              base = event.get('before', '')
+              head = os.environ['GITHUB_SHA']
+          if not base or set(base) == {'0'}:
+              base = 'origin/main'
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write(f'STRATA_COMMIT_RANGE={base}..{head}\n')
+          PY
+      - name: All CPU checks
+        run: tools/check_all.sh --cpu
