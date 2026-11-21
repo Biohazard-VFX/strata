@@ -6,11 +6,11 @@ Strata turns an image or a plate into deep EXRs: several depth samples per pixel
 
 Status: early development. Not production-ready.
 
-[Runtime build, export, CLI usage and qualification results](runtime/README.md).
+[Runtime build, export, CLI usage and qualification](runtime/README.md).
 
 ## Layout
 
-- `runtime/`: C library and `strata` CLI on ONNX Runtime (CUDA/TensorRT, CoreML, DirectML). Embeddable through a C API.
+- `runtime/`: C library, `strata` CLI and `strata_bench` on ONNX Runtime (CPU and CUDA). Embeddable through a C API.
 - `training/`: model export, post-training and evaluation.
 - `contract/`: versioned model spec shared by runtime and training.
 - `datagen/`: synthetic dataset generation (USD + MaterialX, rendered in Karma), with deep, cameras and material AOVs per frame.
