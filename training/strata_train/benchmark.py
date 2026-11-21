@@ -45,15 +45,22 @@ def gpu_memory() -> tuple[int, int, dict[int, int]]:
     return used, free, processes
 
 
-def measured(command: list[str], prefix: Path, timeout: float) -> dict[str, object]:
+def measured(
+    command: list[str], prefix: Path, timeout: float, peak_mib: int, reserve_mib: int
+) -> dict[str, object]:
     baseline, free, _ = gpu_memory()
     print(
         json.dumps({"claim": str(prefix), "device_used_mib": baseline, "device_free_mib": free}),
         flush=True,
     )
-    if free < 14 * 1024:
-        msg = "benchmark requires 14 GiB free before claiming the shared GPU"
-        raise RuntimeError(msg)
+    if free < peak_mib + reserve_mib:
+        return {
+            "status": "not_measurable",
+            "reason": "shared GPU lacks expected peak plus required safety reserve",
+            "device_free_mib": free,
+            "expected_peak_mib": peak_mib,
+            "reserve_mib": reserve_mib,
+        }
     device_peak, process_peak, samples = baseline, 0, 0
     start = time.monotonic()
     timed_out = False
@@ -81,6 +88,9 @@ def measured(command: list[str], prefix: Path, timeout: float) -> dict[str, obje
         returncode = process.wait()
     print(json.dumps({"released": str(prefix), "returncode": returncode}), flush=True)
     result: dict[str, object] = {
+        "status": "failed" if returncode else "measured",
+        "expected_peak_mib": peak_mib,
+        "reserve_mib": reserve_mib,
         "command": command,
         "returncode": returncode,
         "timed_out": timed_out,
@@ -124,13 +134,22 @@ def main() -> None:
     )
     parser.add_argument("--repeat", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=600)
+    parser.add_argument("--sizes", nargs="+", choices=("1080p", "4k"), default=["1080p", "4k"])
+    parser.add_argument("--peak-1080-mib", type=int, default=7680)
+    parser.add_argument("--peak-4k-mib", type=int, default=14336)
+    parser.add_argument("--reserve-mib", type=int, default=2048)
     args = parser.parse_args()
+    if args.reserve_mib < 2048 or min(args.peak_1080_mib, args.peak_4k_mib) <= 0:
+        parser.error("positive peak estimates and at least 2048 MiB reserve are required")
     if args.repeat < 2:
         parser.error("repeat must include a first frame and at least one warm frame")
     out = cast("Path", args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     report: list[dict[str, object]] = []
-    for width, height, focal in ((1920, 1080, 2666.67), (3840, 2160, 5333.34)):
+    sizes = {"1080p": (1920, 1080, 2666.67), "4k": (3840, 2160, 5333.34)}
+    for size in cast("list[str]", args.sizes):
+        width, height, focal = sizes[size]
+        peak_mib = args.peak_1080_mib if size == "1080p" else args.peak_4k_mib
         image = out / f"input-{width}x{height}.png"
         with Image.open(args.image) as source:
             source.convert("RGB").resize((width, height), Image.Resampling.LANCZOS).save(image)
@@ -173,7 +192,7 @@ def main() -> None:
                     "--repeat",
                     str(args.repeat),
                 ]
-            result = measured(command, prefix, args.timeout)
+            result = measured(command, prefix, args.timeout, peak_mib, args.reserve_mib)
             result.update(engine=engine, width=width, height=height)
             report.append(result)
             (out / "results.json").write_text(json.dumps(report, indent=2) + "\n")

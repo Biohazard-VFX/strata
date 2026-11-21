@@ -15,3 +15,5 @@
 - Explicit providers fail rather than silently change primary EP; auto logs its CPU fallback, while GPU sessions retain ORT's normal CPU shape operations.
 - Use official ORT release artifacts, or official NuGet headers/PyPI native libraries when GitHub returns 404; never commit binaries or model weights.
 - Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
+- The runtime GPU phase owns the exclusive shared lock throughout; admit each serialized job only with its measured or conservative expected process peak plus 2048 MiB free, and report unsafe resolutions as not measurable.
+- Cold timings mean a fresh process/session with the filesystem cache left intact; warm timings exclude the first frame, and sampled VRAM is process memory rather than total desktop use.
