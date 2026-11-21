@@ -1,35 +1,22 @@
-# Training v0 decisions
+# Architecture decisions
 
-- Isolate all training work on feat/training-v0 in the requested worktree; leave runtime and dataset contract ownership untouched.
-- Start with K=4; sort samples by camera-plane Z, retain the largest K-1 consecutive log-depth gaps exceeding ln(1.15), break ties at the first sample, and merge each contiguous cluster with front-to-back transmittance.
-- Store conditional cluster coverage and conditional premultiplied RGB, not global contribution; coverage-weighted inverse depths use visible sample weights, and invisible/empty slots are zero with no depth loss.
-- Preserve scene-linear beauty and deep RGB in their original working space; the legacy v004 files do not prove ACEScg and are labeled unverified rather than silently retagged.
-- Reuse the existing v004 sRGB conversion and fixed exposure for exact input comparability; pilot ACEScg inputs use an explicit AP1-to-linear-sRGB matrix and the same fixed display exposure, not a tone mapper.
-- Preserve the 28/8 v004 train/holdout split and its existing mixed/fur masks for historical two-layer comparison; additionally evaluate native K-layer targets separately.
-- Pin upstream DP2 commit aa389cbb0b74341664ed663a0966c859905cd6c0 in uv.lock; vendor no Apple source or weights into Strata.
-- Mark absent legacy material/ID AOVs explicitly; reconstruct camera extrinsics from legacy look-at parameters, and recover focus from the verified build_dataset_v004.py focusDistance expression and expose missing AOVs instead of fabricating them.
-- Adopt paper_notes.md: never resize/interpolate depth or deep labels; compute the three first-order inverse-depth gradient scales with native stride-1/2/4 selection, not a six-scale or Laplacian loss.
-- Do not confidence-weight geometry; mixed-pixel weighting is confined to coverage, color and reconstruction, with 4× coverage loss compensating four-slot averaging.
-- Train primary models on raw focal-converted metric inverse depth and report oracle-scale-aligned diagnostics separately; the historical probe remains explicitly oracle-conditioned.
-- Clamp the pretrained scalar ReLU output at 1e-3 inverse metres before multiplicative residual refinement so zero stock predictions can learn finite surfaces; the first S trial exposed 645,932 zero pixels across 36 frames.
-- Keep the historical reference comparison separate from native K-layer metrics; compare first coverage/depth and the last GT-valid ordered slot directly, because visibility compaction incorrectly relabelled zero analytical foreground coverage as opaque in a failing regression.
-- Use directed four-neighbor boundaries at 5/10/15/20/25% with threshold-proportional weights and exact native matching; disclose this discrete adaptation rather than claiming exact published-benchmark reproduction.
-- Report v004 silhouette recall only as a Z<3m coverage proxy because object-ID masks are absent; use alpha>0.1 and connected-run nonmaximum suppression.
-- Report observed-beauty baseline RGB as an explicit fallback, never as recovered hidden colors; supplement tautological self-composites with a fixed Z=3m magenta insertion test.
-- Stream H+ frozen encoder blocks from CPU to honor 12 GiB free VRAM; reuse existing v004 H+ dense activations and save pyramids as fp16; regenerate the preliminary bf16-storage trial with original fp32 encoder weights before decoder training.
-- Isolate the uv project under training/posttrain so the concurrent runtime/export agent keeps its independent root training/pyproject.toml, lock and strata_train package unchanged.
-- Keep the entire frozen encoder on CPU during cached decoder training and omit it from new checkpoints; reload its pinned original weights before restoration.
-- Split temporal contexts at shot, split and frame-gap boundaries; the per-frame deep head supports joint DP2 multi-frame encoder features, without treating unrelated photos as a temporal clip.
-- Compute sequence jitter on visibility-gated static reprojection tracks without per-frame alignment when sequences exist; disclose that dynamic per-sample identity tracks are not supplied by v004.
-- Discard zero-coverage/fully hidden samples before choosing cluster gaps so invisible depth gaps cannot consume visible layer slots; a new failing toy test exposed this and all 36 v004 caches remain bit-identical after the repair.
-- Freeze final step budgets before holdout evaluation: S head 5,000, S decoder 1,500, H+ head 40,000, H+ decoder 1,500; evaluate final checkpoints only.
-- Preserve the canonical Conventional Commit validator through a temporary hook bridge because the shared repository installed a hook pointing to tools absent from this older worktree; do not disable validation.
-- Consume the published strata-dataset-0.1.0 camera frame-list schema, locate beauty by its C part rather than part order, and classify native fur/hero silhouettes with discrete instance IDs instead of legacy Z proxies.
-- When no split is supplied, rank shot names by SHA256 and hold out max(1,floor(shots/5)) complete shots; a single-shot dataset cannot form a disjoint nonempty frozen evaluation.
-- Preserve the original v004 index digest and 28/8 IDs while upgrading all 72 manifest/camera records to the published JSON schema; legacy image AOV conformance remains explicitly false.
-- Keep native one-surface partial coverage in the mixed mask; missing back geometry remains undefined rather than fabricating a back-depth score.
-- Use explicit CPU bfloat16 cached prediction while other agents own the GPU lock; record inference device/precision and retain measured GPU training timing/VRAM separately.
-- Preserve all positive-coverage deep-EXR samples: a failing 1e-5-alpha HDR round-trip exposed the previous 1e-4 export cutoff.
-- Accumulate metric means/sums in float64, select the last valid layer by its index rather than valid-count-minus-one, and return null for undefined calibration/geometry.
-- Default the RunPod recipe to four-frame joint temporal contexts, not unrelated-photo clips; no paid instance is launched.
-
+- Deep targets use K=4 front-to-back slots at native resolution; labels are never resized or interpolated.
+- Sort samples by Z and retain the largest K-1 log-depth gaps above ln(1.15); ties choose the first gap.
+- Discard visible coverage <=1e-12 before clustering so fully occluded samples cannot consume slots.
+- Store conditional coverage and premultiplied RGB; combine depths by visible-coverage-weighted inverse depth.
+- Keep empty slots zero and exclude them from geometry losses.
+- Preserve source scene-linear primaries; transform only the RGB input supplied to the DP2 encoder.
+- Initialize front inverse depth from DP2; positive log-depth increments place later slots behind it.
+- Freeze the DP2 encoder; train the deep head alone or the decoder and deep head.
+- Geometry uses valid-layer log L1 and three native-stride first-order gradient scales, without confidence weighting.
+- Coverage, color and compositing losses may emphasize partial coverage; geometry never uses predicted confidence.
+- Read versioned camera frame lists and corner-origin pixel centers from the dataset contract.
+- Layer heads act per frame on joint temporal features and accept DP2 streaming caches.
+- Temporal feature contexts never cross shot, split or frame-gap boundaries.
+- Cache frozen encoder pyramids so decoder training does not retain encoder activations.
+- Omit frozen encoder tensors from trainable checkpoints and restore them from the pinned upstream model.
+- Persist optimizer and RNG state in checkpoints so interrupted runs can continue.
+- Reject checkpoint-key mismatches outside the declared new-head and frozen-encoder boundaries.
+- Deep EXR export preserves every positive-coverage sample, including faint HDR contributions.
+- Native role masks use ID 3 for groom and IDs 2/3 for hero silhouettes; scattered instances remain separate.
+- Post-training lives in training/posttrain so model export remains independently owned.

@@ -58,7 +58,7 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                     mixed = (target.alpha[0] > 0.03) & (target.alpha[0] < 0.97)
                     ids = read_instances(shot / "beauty" / f"{frame:04d}.exr")
                     fur = ids == 3
-                    reference = {"foreground": ids >= 2}
+                    reference = {"foreground": (ids == 2) | (ids == 3)}
                 np.savez_compressed(
                     cache,
                     allow_pickle=False,

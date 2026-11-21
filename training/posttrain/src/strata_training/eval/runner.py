@@ -310,7 +310,7 @@ def evaluate(
         "boundary_protocol": (
             "Directed adjacent-pixel ratios at 5,10,15,20,25%, threshold-proportional "
             "weighting. Exact native-pixel matching, four directed orientations. "
-            "Affine-aligned results separate. Native silhouettes use hero instance IDs>=2; "
+            "Affine-aligned results separate. Native silhouettes use hero instance IDs 2/3; "
             "v004 silhouette proxy is coverage at Z<3m "
             "thresholded at .1; scanline connected-run NMS. Not a published-benchmark "
             "reproduction."
