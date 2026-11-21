@@ -6,9 +6,10 @@ python=${STRATA_TEST_PYTHON:-"$root/training/.venv/bin/python"}
 export PYTHONPATH=
 bash tools/check_commits.sh
 "$python" tools/check_commit_rules.py
-"$python" tools/check_layer_rules.py
+"$python" tools/check_rule_cases.py
 bash tools/check_layers.sh
 bash tools/check_comments.sh
+bash tools/check_decisions.sh
 bash tools/check_format.sh
 "$python" -m ruff check training contract --config training/pyproject.toml
 "$python" -m ruff format --check training contract --config training/pyproject.toml
@@ -24,8 +25,6 @@ for preset in "${presets[@]}"; do
   options=("-DSTRATA_TEST_PYTHON=$python")
   if [[ -n ${ONNXRUNTIME_ROOT:-} ]]; then options+=("-DONNXRUNTIME_ROOT=$ONNXRUNTIME_ROOT"); fi
   if [[ -n ${STRATA_MODEL:-} ]]; then options+=("-DSTRATA_MODEL=$STRATA_MODEL"); fi
-  if [[ -n ${STRATA_PARITY_MANIFEST:-} ]]; then options+=("-DSTRATA_PARITY_MANIFEST=$STRATA_PARITY_MANIFEST"); fi
-  if [[ -n ${STRATA_REFERENCE_DIR:-} ]]; then options+=("-DSTRATA_REFERENCE_DIR=$STRATA_REFERENCE_DIR"); fi
   cmake --preset "$preset" -S runtime "${options[@]}"
   "$python" - "$root/build/$preset/CMakeCache.txt" "$preset" <<'PY'
 import sys

@@ -8,6 +8,9 @@ import re
 import sys
 import subprocess
 
+sys.path.insert(0, 'tools')
+from source_scan import c_functions
+
 errors = []
 def imported_modules(node):
     if isinstance(node,ast.Import):
@@ -56,19 +59,14 @@ for path in Path('runtime').rglob('*'):
             errors.append(f'{path}: public header may only include C standard headers: {header}')
         if path.is_relative_to('runtime/src/core') and ('onnxruntime' in header.lower() or 'backend' in header.lower()):
             errors.append(f'{path}: core cannot include {header}')
-        if path.is_relative_to('runtime/src/cli') and header != 'strata.h' and header not in standard:
-            errors.append(f'{path}: CLI may only include strata.h and C standard headers: {header}')
+        if (path.is_relative_to('runtime/src/cli') or path.is_relative_to('runtime/src/bench')) and header != 'strata.h' and header not in standard:
+            errors.append(f'{path}: CLI and bench may only include strata.h and C standard headers: {header}')
     for match in re.finditer(r'\btypedef\s+struct\b[^;]*;',text,re.S):
         if match[0] != 'typedef struct strata_context strata_context;':
             errors.append(f'{path}: only opaque strata_context may be typedefed')
-    start = None
-    for number,line in enumerate(text.splitlines(),1):
-        if line == '{':
-            start = number
-        elif line == '}' and start is not None:
-            if number-start > 100:
-                errors.append(f'{path}:{start}: function exceeds 100 lines')
-            start = None
+    for name,first,last in c_functions(text):
+        if last-first+1 > 100:
+            errors.append(f'{path}:{first}: function {name} exceeds 100 lines')
 for directory in ('training/strata_train','contract/strata_contract'):
     for path in Path(directory).rglob('*.py'):
         text = path.read_text()

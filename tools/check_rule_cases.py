@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise layer violations and allowed public host dependencies in isolated repos."""
+"""Prove each source check rejects its violation and accepts allowed code, in isolated repos."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,7 +17,8 @@ BASE = {
 CASES = [
     ('public hosts', {'hosts/nuke/unit.cpp':'#include "strata.h"\n#include <DDImage/DeepFilterOp.h>\n', 'hosts/comfyui/nodes.py':'import ctypes\n'}, None),
     ('core ORT', {'runtime/src/core/unit.c':'#include <onnxruntime_c_api.h>\n'}, 'core cannot include'),
-    ('CLI private', {'runtime/src/cli/unit.c':'#include "../core/private.h"\n','runtime/src/core/private.h':''}, 'CLI may only include'),
+    ('CLI private', {'runtime/src/cli/unit.c':'#include "../core/private.h"\n','runtime/src/core/private.h':''}, 'may only include strata.h'),
+    ('bench private', {'runtime/src/bench/unit.c':'#include <onnxruntime_c_api.h>\n'}, 'may only include strata.h'),
     ('public header private', {'runtime/include/strata.h':'#include "../src/core/private.h"\n','runtime/src/core/private.h':''}, 'public header'),
     ('runtime Python', {'runtime/tests/unit.py':'import strata_train\n'}, 'runtime cannot depend'),
     ('training import', {'training/strata_train/unit.py':'from runtime import core\n'}, 'cross-side imports'),
@@ -30,23 +31,46 @@ CASES = [
     ('root C build', {'CMakeLists.txt':''}, 'build files belong'),
     ('datagen nonempty', {'datagen/unit.py':''}, 'datagen must remain empty'),
     ('tracked EXR', {'models/forbidden.exr':''}, 'generated artifact is tracked'),
+    ('long K&R function', {'runtime/src/core/unit.c':'int f(void) {\n' + 'f();\n' * 100 + '}\n'}, 'function f exceeds 100 lines'),
+    ('long function, braces in literals', {'runtime/tests/unit.c':'int g(void)\n{\n\tconst char *s = "}";\n' + '\tg(); /* } */\n' * 99 + '}\n'}, 'function g exceeds 100 lines'),
+    ('short functions', {'runtime/src/core/unit.c':'static const int x[] = {\n' + '1,\n' * 120 + '};\nint f(void) {\n' + 'f();\n' * 97 + '}\n'}, None),
+]
+COMMENT_CASES = [
+    ('C line comments', {'runtime/src/core/unit.c':'// one\n// two\nint x;\n'}, 'consecutive comment lines'),
+    ('C block comment', {'runtime/tests/unit.c':'/* one\n * two */\nint x;\n'}, 'comment exceeds one line'),
+    ('Python comments', {'tools/unit.py':'# one\n# two\nx = 1\n'}, 'consecutive comment lines'),
+    ('training marker', {'training/strata_train/unit.py':'x = 1  # ' + 'TO' + 'DO later\n'}, 'forbidden marker'),
+    ('C literal not comment', {'runtime/src/core/unit.c':'const char *s = "// a";\nconst char *t = "// b";\n/* one */\n'}, None),
+]
+DECISION_CASES = [
+    ('wrapped entry', {'docs/DECISIONS.md':'# Decisions\n\n- one\n  continued\n'}, 'single "- " lines'),
+    ('long entry', {'docs/DECISIONS.md':'# Decisions\n\n- ' + 'x' * 201 + '\n'}, 'exceeds 200 characters'),
+    ('valid entries', {'docs/DECISIONS.md':'# Decisions\n\n- one\n- two\n'}, None),
 ]
 (ROOT/'build').mkdir(exist_ok=True)
-for name,files,error in CASES:
-    with tempfile.TemporaryDirectory(prefix='layer-rules-',dir=ROOT/'build') as temporary:
+
+
+def run(name, files, error, script):
+    with tempfile.TemporaryDirectory(prefix='rule-cases-',dir=ROOT/'build') as temporary:
         directory = Path(temporary)
         subprocess.run(['git','init','-qb','main',str(directory)],check=True)
         for relative,text in {**BASE,**files}.items():
             path = directory/relative
             path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text(text)
-        (directory/'tools').mkdir()
-        shutil.copy2(ROOT/'tools/check_layers.sh',directory/'tools/check_layers.sh')
+        (directory/'tools').mkdir(exist_ok=True)
+        for tool in (script,'source_scan.py'):
+            shutil.copy2(ROOT/'tools'/tool,directory/'tools'/tool)
         if name == 'tracked EXR':
             subprocess.run(['git','add','--force','models/forbidden.exr'],cwd=directory,check=True)
-        result = subprocess.run(['bash','tools/check_layers.sh'],cwd=directory,capture_output=True,text=True)
+        result = subprocess.run(['bash','tools/'+script],cwd=directory,capture_output=True,text=True)
         if error is None:
             assert result.returncode == 0, (name,result.stderr)
         else:
             assert result.returncode != 0 and error in result.stderr, (name,result.stdout,result.stderr)
-print(f'layer rules: {len(CASES)} allowed/forbidden dependency scenarios passed')
+
+
+for cases,script in ((CASES,'check_layers.sh'),(COMMENT_CASES,'check_comments.sh'),(DECISION_CASES,'check_decisions.sh')):
+    for name,files,error in cases:
+        run(name,files,error,script)
+print(f'rule cases: {len(CASES)} layer, {len(COMMENT_CASES)} comment and {len(DECISION_CASES)} decision scenarios passed')
