@@ -27,6 +27,16 @@ Status: early development. Not production-ready.
 
 The first model is post-trained from Apple's Depth Pro 2. Those weights stay under Apple's research license. Strata's own models will ship under Strata's license.
 
+## References
+
+Strata builds on:
+
+- Bochkovskii et al., *Depth Pro: Sharp Monocular Metric Depth in Less Than a Second*, 2024. [arXiv:2410.02073](https://arxiv.org/abs/2410.02073)
+- Hu et al., *Depth Pro 2: Sharp and Temporally Consistent Metric Monocular Depth*, 2026. [arXiv:2611.26603](https://arxiv.org/abs/2611.26603)
+- Burzio, Fischer et al., *Déjà View: Looping Transformers for Multi-View 3D Reconstruction*, 2026. [arXiv:2605.30215](https://arxiv.org/abs/2605.30215)
+
+BibTeX is in [`CITATION.bib`](CITATION.bib).
+
 ## License
 
 Elastic License 2.0. Use, modify and fork it freely, including in commercial studio pipelines. You may not offer Strata as a hosted or managed service. Contributions require the CLA (see [CONTRIBUTING.md](CONTRIBUTING.md)).
