@@ -1,1 +1,1 @@
-leak:cuInit
+leak:libcuda.so

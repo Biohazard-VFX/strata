@@ -6,7 +6,9 @@ from pathlib import Path
 import subprocess
 import sys
 
-from strata_contract import c_header, spec, validate_manifest, write_manifest
+import struct
+
+from strata_contract import c_header, spec, srgb_encode, srgb_samples, validate_manifest, write_manifest
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -87,7 +89,7 @@ def main():
                '--out-depth',str(directory/'depth.exr'),'--out-deep',str(directory/'deep.exr'),
                '--out-position',str(directory/'P.exr'),'--provider','cpu']
     import OpenEXR
-    for option,value in (('--f-px','nan'),('--f-px','-1'),('--f-px','inf'),('--repeat','1.5'),('--repeat','0'),('--device','-1'),('--exposure','nan'),('--out-position',str(directory/'input.png'))):
+    for option,value in (('--f-px','nan'),('--f-px','-1'),('--f-px','inf'),('--repeat','2'),('--device','1.5'),('--device','-1'),('--exposure','nan'),('--out-position',str(directory/'input.png'))):
         invalid = subprocess.run(command+[option,value],capture_output=True,text=True,check=False)
         assert invalid.returncode == 2 and invalid.stderr.startswith('strata depth'), (option,value,invalid.returncode,invalid.stderr)
     for world in (False,True):
@@ -98,13 +100,15 @@ def main():
         camera_path.write_text(json.dumps(camera))
         completed = subprocess.run(command+(['--camera',str(camera_path)] if world else ['--f-px','1']),capture_output=True,text=True,check=False)
         assert completed.returncode == 0, completed.stdout+completed.stderr
+        report = json.loads(completed.stdout)
+        assert report['provider'] == 'cpu' and report['fallback_reason'] == '' and report['focal_source'] == 'provided'
+        assert set(report['stages']) == {'prepare_ms','focal_ms','upload_ms','run_ms','download_ms','postprocess_ms'}
         with OpenEXR.File(str(directory/'depth.exr'),separate_channels=True) as file:
-            assert set(file.channels()) == {'Z','network_inverse_depth','inverse_metres'}
+            assert set(file.channels()) == {'Z','network_inverse_depth'}
             z = file.channels()['Z'].pixels
             q = abs(np.mean(-np.array(spec()['preprocessing']['mean'],dtype=np.float32)/np.array(spec()['preprocessing']['std'],dtype=np.float32)))
             np.testing.assert_allclose(file.channels()['network_inverse_depth'].pixels,q,rtol=1e-6)
             np.testing.assert_allclose(z,1/(2*q),rtol=1e-6)
-            np.testing.assert_allclose(file.channels()['inverse_metres'].pixels,2*q,rtol=1e-6)
             if world:
                 assert file.header()['strata:fy_px'] == 2
                 assert file.header()['strata:sensor_width_mm'] == 36
@@ -118,14 +122,40 @@ def main():
             np.testing.assert_allclose(values,expected_p,rtol=1e-6)
             assert file.header()['strata:P_space'] == ('world' if world else 'camera')
 
+    angles = onnx.helper.make_tensor('angles',onnx.TensorProto.FLOAT,[1,2],[50,30])
+    zero = onnx.helper.make_tensor('zero',onnx.TensorProto.FLOAT,[],[0])
+    one = onnx.helper.make_tensor('one',onnx.TensorProto.INT64,[2],[0,1])
+    fov_graph = onnx.helper.make_graph(
+        [onnx.helper.make_node('ReduceMean',['image'],['mean'],keepdims=0),
+         onnx.helper.make_node('Mul',['mean','zero'],['zeroed']),
+         onnx.helper.make_node('Unsqueeze',['zeroed','one'],['column']),
+         onnx.helper.make_node('Add',['column','angles'],[spec()['fov']['output_name']])],
+        'fov_fixture',[image],
+        [onnx.helper.make_tensor_value_info(spec()['fov']['output_name'],onnx.TensorProto.FLOAT,[1,2])],
+        initializer=[angles,zero,one])
+    fov = onnx.helper.make_model(fov_graph,opset_imports=[onnx.helper.make_opsetid('',23)])
+    fov.ir_version = 10
+    onnx.save(fov,str(directory/'model.fov.onnx'))
+    estimated = subprocess.run(command,capture_output=True,text=True,check=False)
+    assert estimated.returncode == 0, estimated.stderr
+    report = json.loads(estimated.stdout)
+    assert report['focal_source'] == 'estimated' and abs(report['focal_px']-1/np.tan(np.radians(15))) < 1e-4, report
+    bad = directory/'bad.onnx'
+    onnx.save(onnx.helper.make_model(onnx.helper.make_graph([onnx.helper.make_node('Identity',['image'],[name])],'bad',[image],
+        [onnx.helper.make_tensor_value_info(name,onnx.TensorProto.FLOAT,[1,3,'h','w'])]),opset_imports=[onnx.helper.make_opsetid('',23)],ir_version=10),str(bad))
+    write_manifest(bad)
     if len(sys.argv) > 3:
-        subprocess.run([sys.argv[3],str(model),str(directory/'input.png')],check=True)
+        subprocess.run([sys.argv[3],str(model),str(bad),str(directory/'missing.onnx')],check=True)
+    if len(sys.argv) > 4:
+        bits = lambda value: struct.unpack('<I',struct.pack('<f',value))[0]
+        vectors = ''.join(f'{bits(value):08x} {bits(srgb_encode(value)):08x}\n' for value in srgb_samples())
+        subprocess.run([sys.argv[4]],input=vectors,text=True,check=True)
     fixture.graph.node[-1].output[0] = 'untransposed_q'
     fixture.graph.node.append(onnx.helper.make_node('Transpose',['untransposed_q'],[name],perm=[0,1,3,2]))
     onnx.save(fixture,str(model))
     Image.fromarray(np.zeros((3,65,3),dtype=np.uint8)).save(directory/'input.png')
     completed = subprocess.run(command+['--f-px','1'],capture_output=True,text=True,check=False)
-    assert completed.returncode == 1 and 'padded_height,padded_width' in completed.stderr, completed.stdout+completed.stderr
+    assert completed.returncode == 1 and "output 'network_inverse_depth'" in completed.stderr, completed.stdout+completed.stderr
     print('Python/C contract rejection, real CPU inference, depth units, lifecycle and camera/world P passed')
 
 

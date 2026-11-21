@@ -10,15 +10,30 @@ void strata_positions_free(struct strata_positions *positions)
 	memset(positions, 0, sizeof(*positions));
 }
 
-int strata_camera_validate(const struct strata_camera *camera,
+int strata_camera_validate(const struct strata_camera *camera, int resolved,
 			   struct strata_error *err)
 {
-	if (!camera || !isfinite(camera->fx_px) || camera->fx_px <= 0 ||
-	    !isfinite(camera->fy_px) || camera->fy_px <= 0 ||
+	int unresolved;
+
+	if (!camera)
+		return strata_fail(err, "missing camera");
+	if (camera->focal_source != STRATA_FOCAL_ESTIMATED &&
+	    camera->focal_source != STRATA_FOCAL_PROVIDED)
+		return strata_fail(
+			err, "camera focal source must be set explicitly");
+	if (!isfinite(camera->fx_px) || !isfinite(camera->fy_px) ||
 	    !isfinite(camera->cx_px) || !isfinite(camera->cy_px) ||
 	    !isfinite(camera->sensor_width_mm) || camera->sensor_width_mm < 0 ||
 	    !isfinite(camera->sensor_height_mm) || camera->sensor_height_mm < 0)
 		return strata_fail(err, "invalid camera intrinsics");
+	unresolved = !resolved &&
+		     camera->focal_source == STRATA_FOCAL_ESTIMATED;
+	if (unresolved && (camera->fx_px != 0 || camera->fy_px != 0 ||
+			   camera->cx_px != 0 || camera->cy_px != 0))
+		return strata_fail(err, "estimated focal takes no intrinsics");
+	if (!unresolved && (camera->fx_px <= 0 || camera->fy_px <= 0))
+		return strata_fail(err,
+				   "camera focal lengths must be positive");
 	return 0;
 }
 
@@ -56,7 +71,7 @@ static int allocate_positions(int w, int h, size_t count,
 	positions->frame = *frame;
 	if (camera)
 		positions->frame.camera = *camera;
-	if (strata_camera_validate(&positions->frame.camera, err))
+	if (strata_camera_validate(&positions->frame.camera, 1, err))
 		return -1;
 	if (count > SIZE_MAX / (3 * sizeof(float)))
 		return strata_fail(err, "position allocation overflow");
@@ -117,13 +132,14 @@ int strata_unproject_depth(const struct strata_result *depth,
 			   struct strata_positions *positions,
 			   struct strata_error *err)
 {
+	struct strata_result view;
 	size_t count;
 
 	if (!positions)
 		return strata_fail(err, "missing position output");
 	memset(positions, 0, sizeof(*positions));
-	if (!depth || !depth->camera_z_metres)
-		return strata_fail(err, "missing camera-Z input");
+	if (!depth || !depth->network_inverse_depth)
+		return strata_fail(err, "missing network inverse depth");
 	if (strata_dimensions(depth->width, depth->height, err))
 		return -1;
 	count = (size_t)depth->width * (size_t)depth->height;
@@ -131,8 +147,10 @@ int strata_unproject_depth(const struct strata_result *depth,
 			       &depth->frame, camera, pose, positions, err))
 		return -1;
 	positions->layout = STRATA_POSITION_FLAT;
+	view = *depth;
+	view.frame.camera = positions->frame.camera;
 	for (size_t i = 0; i < count; ++i)
-		unproject(positions, i, i, depth->camera_z_metres[i]);
+		unproject(positions, i, i, strata_camera_z_metres(&view, i));
 	return 0;
 }
 

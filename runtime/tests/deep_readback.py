@@ -71,6 +71,8 @@ def main():
     z = np.arange(h*w,dtype=np.float32).reshape(h,w)+.25
     z[2,3] = np.inf
     inverse = (1000/(w*z)).astype(np.float32)
+    with np.errstate(divide='ignore'):
+        derived = np.float32(1000)/(np.float32(w)*inverse)
     header = {"type":OpenEXR.scanlineimage,"compression":OpenEXR.ZIP_COMPRESSION,
               "dataWindow":(np.array([-3,9],dtype=np.int32),np.array([w-4,h+8],dtype=np.int32))}
     OpenEXR.File(header,{c:rgba[...,i].copy() for i,c in enumerate("RGB")}).write(str(out/"input.exr"))
@@ -80,16 +82,16 @@ def main():
         'camera_to_world':[0,-1,0,10,1,0,0,20,0,0,1,30,0,0,0,1]}))
     subprocess.run([sys.argv[1],str(out)],check=True)
     with OpenEXR.File(str(out/"depth.exr"),separate_channels=True) as file:
-        assert set(file.channels()) == {"Z","network_inverse_depth","inverse_metres"}
-        np.testing.assert_array_equal(file.channels()["Z"].pixels,z)
+        assert set(file.channels()) == {"Z","network_inverse_depth"}
+        np.testing.assert_array_equal(file.channels()["Z"].pixels,derived)
         np.testing.assert_array_equal(file.channels()["network_inverse_depth"].pixels,inverse)
-        np.testing.assert_array_equal(file.channels()["inverse_metres"].pixels,np.float32(1)/z)
         assert file.header()["strata:fx_px"] == 1000
         assert file.header()["strata:fy_px"] == 1000
         assert file.header()["strata:frame_index"] == "1001"
         assert file.header()["strata:timestamp_seconds"] == 1
         assert file.header()["strata:sensor_width_mm"] == 36
-        assert file.header()["strata:sensor_used"] == 0
+        assert file.header()["strata:focal_source"] == "provided"
+        assert "strata:focal_px" not in file.header() and "strata:sensor_used" not in file.header()
     expected_camera = np.array([[[-.5,-.25,2],[.5,-.25,2]],
                                 [[-.5,.25,2],[.5,.25,2]]],dtype=np.float32)
     expected_world = np.array([[[10.25,19.5,32],[10.25,20.5,32]],
@@ -101,7 +103,7 @@ def main():
             np.testing.assert_array_equal(points,expected_p)
             assert file.header()['strata:P_space'] == space
             assert file.header()['strata:depth_units'] == 'metres'
-    verify_deep(out/"deep.exr",rgba[...,:3],z)
+    verify_deep(out/"deep.exr",rgba[...,:3],derived)
     verify_variable(out/"variable.exr")
     verify_variable(out/"empty.exr",empty=True)
     print("C ABI / PNG / JPEG / offset EXR / flat / deep / OpenEXR / OIIO passed")

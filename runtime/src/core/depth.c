@@ -1,6 +1,6 @@
 #include "internal.h"
 
-int strata_tensor_alloc(struct strata_tensor *tensor, int w, int h,
+static int tensor_alloc(struct strata_tensor *tensor, int w, int h,
 			struct strata_error *err)
 {
 	if (strata_dimensions(w, h, err))
@@ -14,72 +14,93 @@ int strata_tensor_alloc(struct strata_tensor *tensor, int w, int h,
 	return 0;
 }
 
-void strata_tensor_free(struct strata_tensor *tensor)
+static void tensor_free(struct strata_tensor *tensor)
 {
 	free(tensor->data);
 	memset(tensor, 0, sizeof(*tensor));
 }
 
-int strata_normalize(const struct strata_image *image, float exposure,
-		     struct strata_tensor *tensor, struct strata_error *err)
+float strata_srgb(float x)
+{
+	double v = x;
+
+	if (v <= STRATA_SRGB_THRESHOLD)
+		return (float)(STRATA_SRGB_LINEAR_SCALE * v);
+	return (float)(STRATA_SRGB_POWER_SCALE * pow(v, 1 / STRATA_SRGB_GAMMA) -
+		       STRATA_SRGB_POWER_OFFSET);
+}
+
+int strata_padded_size(int w, int h, int *pw, int *ph, struct strata_error *err)
+{
+	if (strata_dimensions(w, h, err))
+		return -1;
+	*pw = (w + STRATA_INPUT_MULTIPLE - 1) / STRATA_INPUT_MULTIPLE *
+	      STRATA_INPUT_MULTIPLE;
+	*ph = (h + STRATA_INPUT_MULTIPLE - 1) / STRATA_INPUT_MULTIPLE *
+	      STRATA_INPUT_MULTIPLE;
+	if (*pw > STRATA_MAX_WIDTH || *ph > STRATA_MAX_HEIGHT)
+		return strata_fail(
+			err, "input exceeds the model contract dimensions");
+	return 0;
+}
+
+static float display(float value, float gain, int linear)
+{
+	if (linear)
+		value *= gain;
+	if (!isfinite(value))
+		return value > 0 ? 1 : 0;
+	value = fmaxf(0, fminf(1, value));
+	return linear ? strata_srgb(value) : value;
+}
+
+static size_t prepare_row(const float *rgba, size_t w, float gain, int linear,
+			  float *const out[3])
 {
 	const float mean[] = { STRATA_MEAN_R, STRATA_MEAN_G, STRATA_MEAN_B };
 	const float std[] = { STRATA_STD_R, STRATA_STD_G, STRATA_STD_B };
-	float gain = exp2f(exposure);
-	int ret = -1;
-	size_t pixels;
+	size_t nonfinite = 0;
 
-	if (strata_tensor_alloc(tensor, image->width, image->height, err))
-		return -1;
-	pixels = (size_t)image->width * (size_t)image->height;
-	for (size_t c = 0; c < 3; ++c) {
-		for (size_t i = 0; i < pixels; ++i) {
-			float value = image->rgba[i * 4 + c];
+	for (size_t x = 0; x < w; ++x) {
+		const float *p = rgba + x * 4;
 
-			if (!isfinite(value)) {
-				strata_fail(err, "non-finite input pixel");
-				goto out;
-			}
-			if (image->linear)
-				value = strata_srgb(value * gain);
-			tensor->data[c * pixels + i] =
-				(value - mean[c]) / std[c];
-		}
+		nonfinite += !isfinite(p[0]) || !isfinite(p[1]) ||
+			     !isfinite(p[2]);
+		for (size_t c = 0; c < 3; ++c)
+			out[c][x] = (display(p[c], gain, linear) - mean[c]) /
+				    std[c];
 	}
-	ret = 0;
-out:
-	if (ret)
-		strata_tensor_free(tensor);
-	return ret;
+	return nonfinite;
 }
 
-int strata_pad(const struct strata_tensor *input, struct strata_tensor *padded,
-	       struct strata_error *err)
+size_t strata_prepare(const struct strata_image *image, float exposure,
+		      const struct strata_tensor *padded)
 {
-	int ph = (input->height + STRATA_INPUT_MULTIPLE - 1) /
-		 STRATA_INPUT_MULTIPLE * STRATA_INPUT_MULTIPLE;
-	int pw = (input->width + STRATA_INPUT_MULTIPLE - 1) /
-		 STRATA_INPUT_MULTIPLE * STRATA_INPUT_MULTIPLE;
-	size_t h = (size_t)input->height, w = (size_t)input->width;
+	size_t w = (size_t)image->width, h = (size_t)image->height;
+	size_t pw = (size_t)padded->width, ph = (size_t)padded->height;
+	size_t plane = pw * ph, nonfinite = 0;
+	float gain = (float)pow(2.0, (double)exposure);
 
-	if (pw > STRATA_MAX_WIDTH || ph > STRATA_MAX_HEIGHT)
-		return strata_fail(
-			err, "input exceeds the model contract dimensions");
-	if (strata_tensor_alloc(padded, pw, ph, err))
-		return -1;
-	for (size_t c = 0; c < 3; ++c) {
-		for (size_t y = 0; y < (size_t)ph; ++y) {
-			for (size_t x = 0; x < (size_t)pw; ++x) {
-				size_t sy = y < h ? y : h - 1;
-				size_t sx = x < w ? x : w - 1;
+	for (size_t y = 0; y < h; ++y) {
+		float *out[3];
 
-				padded->data[(c * (size_t)ph + y) * (size_t)pw +
-					     x] =
-					input->data[(c * h + sy) * w + sx];
-			}
+		for (size_t c = 0; c < 3; ++c)
+			out[c] = padded->data + c * plane + y * pw;
+		nonfinite += prepare_row(image->rgba + y * w * 4, w, gain,
+					 image->linear, out);
+		for (size_t c = 0; c < 3; ++c) {
+			for (size_t x = w; x < pw; ++x)
+				out[c][x] = out[c][w - 1];
 		}
 	}
-	return 0;
+	for (size_t c = 0; c < 3; ++c) {
+		float *last = padded->data + c * plane + (h - 1) * pw;
+
+		for (size_t y = h; y < ph; ++y)
+			memcpy(last + (y - h + 1) * pw, last,
+			       pw * sizeof(float));
+	}
+	return nonfinite;
 }
 
 static float filter_weight(int sample, float center, float support)
@@ -161,37 +182,59 @@ static void fov_size(int w, int h, int *rw, int *rh, int *cw, int *ch)
 	}
 }
 
-int strata_fov_input(const struct strata_tensor *input,
+static void crop_input(const struct strata_tensor *padded,
+		       struct strata_tensor *input)
+{
+	size_t w = (size_t)input->width, h = (size_t)input->height;
+	size_t pw = (size_t)padded->width, ph = (size_t)padded->height;
+
+	for (size_t c = 0; c < 3; ++c) {
+		for (size_t y = 0; y < h; ++y)
+			memcpy(input->data + (c * h + y) * w,
+			       padded->data + (c * ph + y) * pw,
+			       w * sizeof(float));
+	}
+}
+
+static void center_crop(const struct strata_tensor *resized,
+			struct strata_tensor *crop)
+{
+	size_t rw = (size_t)resized->width, rh = (size_t)resized->height;
+	size_t cw = (size_t)crop->width, ch = (size_t)crop->height;
+
+	for (size_t c = 0; c < 3; ++c) {
+		for (size_t y = 0; y < ch; ++y)
+			memcpy(crop->data + (c * ch + y) * cw,
+			       resized->data +
+				       (c * rh + y + (rh - ch) / 2) * rw +
+				       (rw - cw) / 2,
+			       cw * sizeof(float));
+	}
+}
+
+int strata_fov_input(const struct strata_tensor *padded, int w, int h,
 		     struct strata_tensor *crop, struct strata_error *err)
 {
-	struct strata_tensor horizontal = { 0 }, resized = { 0 };
+	struct strata_tensor input = { 0 }, horizontal = { 0 }, resized = { 0 };
 	int rh, rw, ch, cw, ret = -1;
 
-	fov_size(input->width, input->height, &rw, &rh, &cw, &ch);
-	if (strata_tensor_alloc(&horizontal, rw, input->height, err) ||
-	    strata_tensor_alloc(&resized, rw, rh, err) ||
-	    strata_tensor_alloc(crop, cw, ch, err))
+	fov_size(w, h, &rw, &rh, &cw, &ch);
+	if (tensor_alloc(&input, w, h, err) ||
+	    tensor_alloc(&horizontal, rw, h, err) ||
+	    tensor_alloc(&resized, rw, rh, err) ||
+	    tensor_alloc(crop, cw, ch, err))
 		goto out;
-	resize_axis(input, &horizontal, 0);
+	crop_input(padded, &input);
+	resize_axis(&input, &horizontal, 0);
 	resize_axis(&horizontal, &resized, 1);
-	for (size_t c = 0; c < 3; ++c) {
-		for (size_t y = 0; y < (size_t)ch; ++y) {
-			size_t src =
-				(c * (size_t)rh + y + (size_t)(rh - ch) / 2) *
-					(size_t)rw +
-				(size_t)(rw - cw) / 2;
-			size_t dst = (c * (size_t)ch + y) * (size_t)cw;
-
-			memcpy(crop->data + dst, resized.data + src,
-			       (size_t)cw * sizeof(float));
-		}
-	}
+	center_crop(&resized, crop);
 	ret = 0;
 out:
-	strata_tensor_free(&horizontal);
-	strata_tensor_free(&resized);
+	tensor_free(&input);
+	tensor_free(&horizontal);
+	tensor_free(&resized);
 	if (ret)
-		strata_tensor_free(crop);
+		tensor_free(crop);
 	return ret;
 }
 
@@ -201,48 +244,38 @@ float strata_focal(const float *angles, int w, int h)
 	       tanf(angles[w < h ? 0 : 1] * .008726646259971648f);
 }
 
-int strata_postprocess(const float *prediction, int stride, int w, int h,
-		       float focal, struct strata_result *result,
-		       struct strata_error *err)
+int strata_postprocess(const float *prediction, int stride,
+		       struct strata_result *result, struct strata_error *err)
 {
-	size_t pixels = (size_t)w * (size_t)h;
-	int ret = -1;
+	size_t w = (size_t)result->width, h = (size_t)result->height;
+	float *out = malloc(w * h * sizeof(float));
 
-	if (!isfinite(focal) || focal <= 0)
-		return strata_fail(err, "invalid focal length");
-	result->network_inverse_depth = malloc(pixels * sizeof(float));
-	result->camera_z_metres = malloc(pixels * sizeof(float));
-	result->inverse_metres = malloc(pixels * sizeof(float));
-	if (!result->network_inverse_depth || !result->camera_z_metres ||
-	    !result->inverse_metres) {
-		strata_fail(err, "out of memory");
-		goto out;
-	}
-	result->width = w;
-	result->height = h;
-	result->frame.camera.fx_px = focal;
-	result->frame.camera.fy_px = focal;
-	result->frame.camera.cx_px = (float)w / 2;
-	result->frame.camera.cy_px = (float)h / 2;
-	for (size_t y = 0; y < (size_t)h; ++y) {
-		for (size_t x = 0; x < (size_t)w; ++x) {
-			size_t i = y * (size_t)w + x;
-			float inverse = prediction[y * (size_t)stride + x];
+	if (!out)
+		return strata_fail(err, "out of memory");
+	for (size_t y = 0; y < h; ++y) {
+		const float *row = prediction + y * (size_t)stride;
 
-			if (!isfinite(inverse) || inverse < 0) {
-				strata_fail(err,
-					    "invalid network inverse depth");
-				goto out;
+		for (size_t x = 0; x < w; ++x) {
+			if (!isfinite(row[x]) || row[x] < 0) {
+				free(out);
+				return strata_fail(
+					err, "invalid network inverse depth");
 			}
-			result->network_inverse_depth[i] = inverse;
-			result->camera_z_metres[i] =
-				focal / ((float)w * inverse);
-			result->inverse_metres[i] = (float)w * inverse / focal;
 		}
+		memcpy(out + y * w, row, w * sizeof(float));
 	}
-	ret = 0;
-out:
-	if (ret)
-		strata_result_free(result);
-	return ret;
+	result->network_inverse_depth = out;
+	return 0;
+}
+
+float strata_camera_z_metres(const struct strata_result *result, size_t pixel)
+{
+	return result->frame.camera.fx_px /
+	       ((float)result->width * result->network_inverse_depth[pixel]);
+}
+
+float strata_inverse_metres(const struct strata_result *result, size_t pixel)
+{
+	return (float)result->width * result->network_inverse_depth[pixel] /
+	       result->frame.camera.fx_px;
 }

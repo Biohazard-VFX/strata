@@ -84,14 +84,13 @@ static int decode_camera(struct json_object *root, struct strata_camera *camera,
 		if (number(field, values[i], err))
 			return -1;
 	}
-	if ((intrinsics && intrinsics != 4) || camera->sensor_width_mm < 0 ||
-	    camera->sensor_height_mm < 0)
+	if (intrinsics && intrinsics != 4)
 		return strata_fail(
 			err, "camera requires all four intrinsics or none");
-	if (intrinsics && strata_camera_validate(camera, err))
-		return -1;
 	camera->focal_source = intrinsics ? STRATA_FOCAL_PROVIDED :
 					    STRATA_FOCAL_ESTIMATED;
+	if (strata_camera_validate(camera, 0, err))
+		return -1;
 	if (json_object_object_get_ex(root, "camera_to_world", &field)) {
 		++known;
 		if (!json_object_is_type(field, json_type_array) ||

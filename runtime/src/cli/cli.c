@@ -1,11 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 #include "strata.h"
+#include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <math.h>
-#include <errno.h>
 
 struct cli_options {
 	struct strata_options session;
@@ -16,28 +16,24 @@ struct cli_options {
 	const char *camera;
 	float focal;
 	float exposure;
-	int repeat;
 };
 
 static double milliseconds(void)
 {
 	struct timespec time;
 
-#ifdef _WIN32
-	timespec_get(&time, TIME_UTC);
-#else
 	clock_gettime(CLOCK_MONOTONIC, &time);
-#endif
 	return 1000.0 * (double)time.tv_sec + (double)time.tv_nsec / 1000000.0;
 }
 
 static void usage(FILE *out)
 {
-	fputs("strata depth --model M.onnx --in plate.exr|png|jpg --out-depth depth.exr\n"
-	      "             --out-deep deep.exr [--f-px N] [--exposure stops]\n"
-	      "             [--provider auto|cuda|tensorrt|coreml|directml|cpu]\n"
-	      "             [--device N] [--repeat N] [--out-position P.exr] [--camera camera.json]\n"
-	      "No --f-px: estimate focal using M.fov.onnx. --repeat: time N frames.\n",
+	fputs("strata depth --model M.onnx --in plate.exr|png|jpg\n"
+	      "             --out-depth depth.exr --out-deep deep.exr\n"
+	      "             [--f-px N | --camera camera.json] [--exposure stops]\n"
+	      "             [--provider auto|cuda|cpu] [--device N]\n"
+	      "             [--out-position P.exr]\n"
+	      "Without --f-px or camera intrinsics, M.fov.onnx estimates focal.\n",
 	      out);
 }
 
@@ -55,9 +51,6 @@ static int numeric_option(struct cli_options *options, const char *key,
 		options->focal = (float)number;
 	else if (!strcmp(key, "--exposure") && fabs(number) <= 100)
 		options->exposure = (float)number;
-	else if (!strcmp(key, "--repeat") && number >= 1 && number <= 10000 &&
-		 number == floor(number))
-		options->repeat = (int)number;
 	else if (!strcmp(key, "--device") && number >= 0 && number <= 1024 &&
 		 number == floor(number))
 		options->session.device_id = (int)number;
@@ -122,39 +115,86 @@ static int parse(int argc, char **argv, struct cli_options *options)
 	return 0;
 }
 
-static void report(strata_context *ctx, const struct strata_image *image,
-		   const struct strata_result *result, double session_ms,
-		   double write_ms, const double *times, int repeat)
+static void json_string(const char *text)
 {
-	printf("{\"provider\":\"%s\",\"width\":%d,\"height\":%d,\"focal_px\":%.9g,"
-	       "\"session_ms\":%.3f,\"write_ms\":%.3f,\"frame_ms\":[",
-	       strata_provider(ctx), image->width, image->height,
-	       result->frame.camera.fx_px, session_ms, write_ms);
-	for (int i = 0; i < repeat; ++i)
-		printf("%s%.3f", i ? "," : "", times[i]);
-	puts("]}");
+	putchar('"');
+	for (const unsigned char *c = (const unsigned char *)text; *c; ++c) {
+		if (*c == '"' || *c == '\\')
+			printf("\\%c", *c);
+		else if (*c < 0x20)
+			printf("\\u%04x", *c);
+		else
+			putchar(*c);
+	}
+	putchar('"');
 }
 
-static int write_position(const struct cli_options *options,
-			  const struct strata_deep_result *deep,
-			  const struct strata_pose *pose,
-			  struct strata_error *err)
+static void report(strata_context *ctx, const struct strata_result *result,
+		   double session_ms, double frame_ms, double write_ms)
 {
-	struct strata_layers layers = { 0 };
+	const struct strata_timings *t = &result->timings;
+
+	printf("{\"provider\":\"%s\",\"fallback_reason\":",
+	       strata_provider(ctx));
+	json_string(strata_fallback_reason(ctx));
+	printf(",\"width\":%d,\"height\":%d,\"focal_px\":%.9g,"
+	       "\"focal_source\":\"%s\",\"nonfinite_input_pixels\":%zu,"
+	       "\"session_ms\":%.3f,\"frame_ms\":%.3f,\"write_ms\":%.3f,"
+	       "\"stages\":{\"prepare_ms\":%.3f,\"focal_ms\":%.3f,"
+	       "\"upload_ms\":%.3f,\"run_ms\":%.3f,\"download_ms\":%.3f,"
+	       "\"postprocess_ms\":%.3f}}\n",
+	       result->width, result->height, result->frame.camera.fx_px,
+	       result->frame.camera.focal_source == STRATA_FOCAL_PROVIDED ?
+		       "provided" :
+		       "estimated",
+	       result->nonfinite_input_pixels, session_ms, frame_ms, write_ms,
+	       t->prepare_ms, t->focal_ms, t->upload_ms, t->run_ms,
+	       t->download_ms, t->postprocess_ms);
+}
+
+static int write_outputs(const struct cli_options *options,
+			 const struct strata_image *image,
+			 const struct strata_result *result,
+			 const struct strata_pose *pose,
+			 struct strata_error *err)
+{
+	struct strata_deep_result deep = { 0 };
 	struct strata_positions positions = { 0 };
 	int ret = -1;
 
-	if (!options->position)
-		return 0;
-	if (strata_deep_to_layers(deep, 1, &layers, err) ||
-	    strata_unproject_layers(&layers, NULL, pose, &positions, err) ||
-	    strata_write_position(options->position, &positions, err))
+	if (strata_write_depth(options->depth, result, err) ||
+	    strata_depth_to_deep(image, result, &deep, err) ||
+	    strata_write_deep(options->deep, &deep, err))
+		goto out;
+	if (options->position &&
+	    (strata_unproject_depth(result, NULL, pose, &positions, err) ||
+	     strata_write_position(options->position, &positions, err)))
 		goto out;
 	ret = 0;
 out:
 	strata_positions_free(&positions);
-	strata_layers_free(&layers);
+	strata_deep_free(&deep);
 	return ret;
+}
+
+static int frame_camera(const struct cli_options *options,
+			const struct strata_image *image,
+			struct strata_frame *frame, struct strata_pose *pose,
+			int *has_pose, struct strata_error *err)
+{
+	frame->camera.focal_source = STRATA_FOCAL_ESTIMATED;
+	if (options->camera)
+		return strata_camera_read(options->camera, &frame->camera, pose,
+					  has_pose, err);
+	if (options->focal > 0)
+		frame->camera = (struct strata_camera){
+			.fx_px = options->focal,
+			.fy_px = options->focal,
+			.cx_px = (float)image->width / 2,
+			.cy_px = (float)image->height / 2,
+			.focal_source = STRATA_FOCAL_PROVIDED
+		};
+	return 0;
 }
 
 static int execute(const struct cli_options *options)
@@ -162,68 +202,42 @@ static int execute(const struct cli_options *options)
 	struct strata_error err = { { 0 } };
 	struct strata_image image = { 0 };
 	struct strata_result result = { 0 };
-	struct strata_deep_result deep = { 0 };
 	struct strata_frame frame = { .image = &image,
 				      .exposure_stops = options->exposure };
 	strata_context *ctx = NULL;
 	struct strata_pose pose = { 0 };
-	int has_pose = 0;
-	double *times = calloc((size_t)options->repeat, sizeof(*times));
-	double start, session_ms;
-	int ret = 1;
+	int has_pose = 0, ret = 1;
+	double start, session_ms, frame_ms;
 
-	if (!times) {
-		fputs("out of memory\n", stderr);
-		return 1;
-	}
-	if (strata_image_read(options->input, &image, &err))
-		goto out;
-	if (options->focal > 0)
-		frame.camera =
-			(struct strata_camera){ .fx_px = options->focal,
-						.fy_px = options->focal,
-						.cx_px = (float)image.width / 2,
-						.cy_px = (float)image.height /
-							 2 };
-	if (options->camera &&
-	    strata_camera_read(options->camera, &frame.camera, &pose, &has_pose,
-			       &err))
+	if (strata_image_read(options->input, &image, &err) ||
+	    frame_camera(options, &image, &frame, &pose, &has_pose, &err))
 		goto out;
 	start = milliseconds();
 	if (strata_open(&options->session, &ctx, &err))
 		goto out;
 	session_ms = milliseconds() - start;
-	for (int i = 0; i < options->repeat; ++i) {
-		strata_result_free(&result);
-		start = milliseconds();
-		if (strata_run(ctx, &frame, 1, &result, &err))
-			goto out;
-		times[i] = milliseconds() - start;
-	}
 	start = milliseconds();
-	if (strata_depth_to_deep(&image, &result, &deep, &err) ||
-	    strata_write_depth(options->depth, &result, &err) ||
-	    strata_write_deep(options->deep, &deep, &err) ||
-	    write_position(options, &deep, has_pose ? &pose : NULL, &err))
+	if (strata_run(ctx, &frame, &result, &err))
 		goto out;
-	report(ctx, &image, &result, session_ms, milliseconds() - start, times,
-	       options->repeat);
+	frame_ms = milliseconds() - start;
+	start = milliseconds();
+	if (write_outputs(options, &image, &result, has_pose ? &pose : NULL,
+			  &err))
+		goto out;
+	report(ctx, &result, session_ms, frame_ms, milliseconds() - start);
 	ret = 0;
 out:
 	if (ret)
 		fprintf(stderr, "strata: %s\n", err.message);
-	strata_deep_free(&deep);
 	strata_result_free(&result);
 	strata_image_free(&image);
 	strata_close(ctx);
-	free(times);
 	return ret;
 }
 
 int main(int argc, char **argv)
 {
-	struct cli_options options = { .session.provider = "auto",
-				       .repeat = 1 };
+	struct cli_options options = { .session.provider = "auto" };
 
 	if ((argc == 2 &&
 	     (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h"))) ||

@@ -68,10 +68,11 @@ int strata_depth_to_deep(const struct strata_image *image,
 	if (!deep)
 		return strata_fail(err, "missing deep output");
 	memset(deep, 0, sizeof(*deep));
-	if (!image || !image->rgba || !depth || !depth->camera_z_metres ||
+	if (!image || !image->rgba || !depth || !depth->network_inverse_depth ||
 	    image->width != depth->width || image->height != depth->height)
 		return strata_fail(err, "colour/depth dimensions differ");
-	if (strata_dimensions(image->width, image->height, err))
+	if (strata_dimensions(image->width, image->height, err) ||
+	    strata_camera_validate(&depth->frame.camera, 1, err))
 		return -1;
 	pixels = (size_t)image->width * (size_t)image->height;
 	deep->width = image->width;
@@ -92,8 +93,8 @@ int strata_depth_to_deep(const struct strata_image *image,
 		memcpy(deep->rgba + i * 4, image->rgba + i * 4,
 		       3 * sizeof(float));
 		deep->rgba[i * 4 + 3] = 1;
-		deep->z[i] = depth->camera_z_metres[i];
-		deep->zback[i] = depth->camera_z_metres[i];
+		deep->z[i] = strata_camera_z_metres(depth, i);
+		deep->zback[i] = deep->z[i];
 	}
 	ret = strata_deep_validate(deep, err);
 out:

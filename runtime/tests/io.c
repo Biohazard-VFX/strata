@@ -1,7 +1,12 @@
+#define _POSIX_C_SOURCE 200809L
 #include "strata.h"
+#include <dirent.h>
 #include <math.h>
+#include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 
 #define WIDTH 7
 #define HEIGHT 19
@@ -97,14 +102,10 @@ fail:
 
 static int write_positions(const char *directory)
 {
-	float z[] = { 2, 2, 2, 2 };
+	float z[] = { .5f, .5f, .5f, .5f };
 	struct strata_result depth = { .width = 2,
 				       .height = 2,
-				       .frame.camera = { .fx_px = 2,
-							 .fy_px = 4,
-							 .cx_px = 1,
-							 .cy_px = 1 },
-				       .camera_z_metres = z };
+				       .network_inverse_depth = z };
 	struct strata_pose pose = { 0 };
 	struct strata_positions positions = { 0 };
 	struct strata_error err = { { 0 } };
@@ -135,11 +136,104 @@ out:
 	return ret;
 }
 
+static int read_text(const char *path, char *text, size_t size)
+{
+	FILE *file = fopen(path, "rb");
+	size_t count;
+
+	if (!file)
+		return -1;
+	count = fread(text, 1, size - 1, file);
+	text[count] = '\0';
+	fclose(file);
+	return (int)count;
+}
+
+static int leftovers(const char *directory, const char *name)
+{
+	DIR *dir = opendir(directory);
+	struct dirent *entry;
+	size_t length = strlen(name);
+	int found = 0;
+
+	if (!dir)
+		return -1;
+	while ((entry = readdir(dir)))
+		found += !strncmp(entry->d_name, name, length) &&
+			 entry->d_name[length] == '.';
+	closedir(dir);
+	return found;
+}
+
+static int limited_write(const char *path, const struct strata_result *result,
+			 struct strata_error *err)
+{
+	struct rlimit original, limited;
+	int ret;
+
+	if (getrlimit(RLIMIT_FSIZE, &original))
+		return 0;
+	limited = original;
+	limited.rlim_cur = 65536;
+	signal(SIGXFSZ, SIG_IGN);
+	if (setrlimit(RLIMIT_FSIZE, &limited))
+		return 0;
+	ret = strata_write_depth(path, result, err);
+	setrlimit(RLIMIT_FSIZE, &original);
+	return ret;
+}
+
+static int atomic_test(const char *directory)
+{
+	const size_t side = 512;
+	float *q = malloc(side * side * sizeof(float));
+	struct strata_result result = {
+		.width = (int)side,
+		.height = (int)side,
+		.frame.camera = { .fx_px = 1000,
+				  .fy_px = 1000,
+				  .focal_source = STRATA_FOCAL_PROVIDED },
+		.network_inverse_depth = q
+	};
+	struct strata_error err = { { 0 } };
+	char path[4096], text[64];
+	FILE *file;
+	int ret = -1;
+
+	snprintf(path, sizeof(path), "%s/atomic.exr", directory);
+	file = fopen(path, "wb");
+	if (!q || !file)
+		goto out;
+	fputs("keep\n", file);
+	fclose(file);
+	srand(7);
+	for (size_t i = 0; i < side * side; ++i)
+		q[i] = (float)rand() / (float)RAND_MAX + .01f;
+	if (limited_write(path, &result, &err) != -1 ||
+	    read_text(path, text, sizeof(text)) != 5 ||
+	    strcmp(text, "keep\n") || leftovers(directory, "atomic.exr") != 0) {
+		fprintf(stderr, "failed write replaced or left output\n");
+		goto out;
+	}
+	if (strata_write_depth(path, &result, &err) ||
+	    read_text(path, text, sizeof(text)) <= 5 ||
+	    leftovers(directory, "atomic.exr") != 0) {
+		fprintf(stderr, "atomic replacement failed: %s\n", err.message);
+		goto out;
+	}
+	ret = 0;
+out:
+	free(q);
+	return ret;
+}
+
 int main(int argc, char **argv)
 {
 	float rgba[WIDTH * HEIGHT * 4], depth[WIDTH * HEIGHT],
-		inverse[WIDTH * HEIGHT], inverse_metres[WIDTH * HEIGHT];
-	struct strata_image image = { WIDTH, HEIGHT, 1, rgba };
+		inverse[WIDTH * HEIGHT];
+	struct strata_image image = {
+		.width = WIDTH, .height = HEIGHT, .linear = 1, .rgba = rgba
+	};
 	struct strata_result result = {
 		.width = WIDTH,
 		.height = HEIGHT,
@@ -150,9 +244,7 @@ int main(int argc, char **argv)
 				       .sensor_width_mm = 36,
 				       .sensor_height_mm = 24,
 				       .focal_source = STRATA_FOCAL_PROVIDED } },
-		.network_inverse_depth = inverse,
-		.inverse_metres = inverse_metres,
-		.camera_z_metres = depth
+		.network_inverse_depth = inverse
 	};
 	struct strata_error err = { { 0 } };
 	struct strata_deep_result deep = { 0 };
@@ -167,10 +259,8 @@ int main(int argc, char **argv)
 	depth[2 * WIDTH + 3] = INFINITY;
 	for (size_t i = 0; i < WIDTH * HEIGHT; ++i)
 		inverse[i] = 1000 / (WIDTH * depth[i]);
-	for (size_t i = 0; i < WIDTH * HEIGHT; ++i)
-		inverse_metres[i] = 1 / depth[i];
 	if (read_inputs(argv[1], rgba) || write_variable(argv[1]) ||
-	    write_positions(argv[1]))
+	    write_positions(argv[1]) || atomic_test(argv[1]))
 		return 1;
 	snprintf(path, sizeof(path), "%s/depth.exr", argv[1]);
 	if (strata_write_depth(path, &result, &err))

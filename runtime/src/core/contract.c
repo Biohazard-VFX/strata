@@ -1,16 +1,11 @@
 #include "internal.h"
-#include "strata_contract.h"
 #include <ctype.h>
 #include <json-c/json.h>
 
 int strata_check_manifest(const char *model, struct strata_error *err)
 {
 	char buffer[16384];
-	size_t length = strlen(model);
-	size_t stem = length >= 5 && !strcmp(model + length - 5, ".onnx") ?
-			      length - 5 :
-			      length;
-	char *path = malloc(stem + 6);
+	char *path = strata_sibling_path(model, ".json");
 	FILE *file = NULL;
 	struct json_tokener *parser = NULL;
 	struct json_object *actual = NULL, *expected = NULL;
@@ -19,8 +14,6 @@ int strata_check_manifest(const char *model, struct strata_error *err)
 
 	if (!path)
 		return strata_fail(err, "out of memory");
-	memcpy(path, model, stem);
-	memcpy(path + stem, ".json", 6);
 	file = fopen(path, "rb");
 	if (!file) {
 		strata_fail(err, "model contract missing: %s", path);

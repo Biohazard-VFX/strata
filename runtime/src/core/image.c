@@ -1,9 +1,23 @@
+#define _POSIX_C_SOURCE 200809L
 #include "internal.h"
+#include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
+#include <stdatomic.h>
+#include <time.h>
+#include <unistd.h>
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+double strata_milliseconds(void)
+{
+	struct timespec time;
+
+	clock_gettime(CLOCK_MONOTONIC, &time);
+	return 1000.0 * (double)time.tv_sec + (double)time.tv_nsec / 1000000.0;
+}
 
 int strata_fail(struct strata_error *err, const char *fmt, ...)
 {
@@ -19,21 +33,63 @@ int strata_fail(struct strata_error *err, const char *fmt, ...)
 
 int strata_dimensions(int w, int h, struct strata_error *err)
 {
-	if (w <= 0 || h <= 0 || w > 32768 || h > 32768 ||
-	    (size_t)w * (size_t)h > SIZE_MAX / (16 * sizeof(float)))
+	if (w <= 0 || h <= 0 || w > 32768 || h > 32768)
 		return strata_fail(err, "invalid image dimensions %d x %d", w,
 				   h);
 	return 0;
 }
 
-float strata_srgb(float x)
+char *strata_sibling_path(const char *model, const char *suffix)
 {
-	x = fmaxf(0, fminf(1, x));
-	return x <= STRATA_SRGB_THRESHOLD ?
-		       STRATA_SRGB_LINEAR_SCALE * x :
-		       STRATA_SRGB_POWER_SCALE *
-				       powf(x, 1 / STRATA_SRGB_GAMMA) -
-			       STRATA_SRGB_POWER_OFFSET;
+	size_t length = strlen(model), extra = strlen(suffix);
+	size_t stem = length >= 5 && !strcmp(model + length - 5, ".onnx") ?
+			      length - 5 :
+			      length;
+	char *path = malloc(stem + extra + 1);
+
+	if (!path)
+		return NULL;
+	memcpy(path, model, stem);
+	memcpy(path + stem, suffix, extra + 1);
+	return path;
+}
+
+int strata_atomic_target(const char *path, char **temporary,
+			 struct strata_error *err)
+{
+	static atomic_uint serial;
+	size_t length = strlen(path) + 48;
+	char *name = malloc(length);
+	int fd = -1;
+
+	if (!name)
+		return strata_fail(err, "out of memory");
+	for (int attempt = 0; fd < 0 && attempt < 16; ++attempt) {
+		snprintf(name, length, "%s.%ld.%u.tmp", path, (long)getpid(),
+			 atomic_fetch_add(&serial, 1u));
+		fd = open(name, O_WRONLY | O_CREAT | O_EXCL, 0666);
+		if (fd < 0 && errno != EEXIST)
+			break;
+	}
+	if (fd < 0) {
+		strata_fail(err, "cannot create temporary output for %s", path);
+		free(name);
+		return -1;
+	}
+	close(fd);
+	*temporary = name;
+	return 0;
+}
+
+int strata_atomic_finish(const char *path, char *temporary, int ret,
+			 struct strata_error *err)
+{
+	if (!ret && rename(temporary, path))
+		ret = strata_fail(err, "cannot replace %s", path);
+	if (ret)
+		unlink(temporary);
+	free(temporary);
+	return ret;
 }
 
 static int read_bytes(const char *path, struct strata_image *image,
@@ -55,6 +111,7 @@ static int read_bytes(const char *path, struct strata_image *image,
 		strata_fail(err, "out of memory");
 		goto out;
 	}
+	image->owned = 1;
 	image->width = w;
 	image->height = h;
 	for (size_t i = 0; i < pixels; ++i) {
@@ -93,7 +150,8 @@ void strata_image_free(struct strata_image *image)
 {
 	if (!image)
 		return;
-	free(image->rgba);
+	if (image->owned)
+		free(image->rgba);
 	memset(image, 0, sizeof(*image));
 }
 
@@ -102,7 +160,5 @@ void strata_result_free(struct strata_result *result)
 	if (!result)
 		return;
 	free(result->network_inverse_depth);
-	free(result->inverse_metres);
-	free(result->camera_z_metres);
 	memset(result, 0, sizeof(*result));
 }
