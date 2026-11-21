@@ -8,4 +8,5 @@ export PYTHONPATH=
 "$python" -m pyright
 "$python" tools/check_generators.py strata_datagen/generators
 "$python" tools/check_identifiers.py . ../contract/dataset
+"$python" tools/check_decisions.py DECISIONS.md
 "$python" -m unittest discover -s tests

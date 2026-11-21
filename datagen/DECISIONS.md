@@ -1,36 +1,31 @@
 # Datagen decisions
 
-- USD is authored with usd-core from PyPI in a uv project, not Houdini's pxr: it keeps datagen a plain typed Python package (pyright strict via types-usd), testable without a Houdini license, and the same code runs on render nodes.
-- Materials are MaterialX standard_surface networks authored directly as UsdShade prims (`outputs:mtlx:surface`); every node id and input is checked against the MaterialX standard library before authoring.
-- Roughness and metallic AOVs come from `inputs:aov:<name>` on the surface shader (Houdini's convention); Karma renders them as raw render vars, verified on a probe frame.
-- Camera-space normals use Karma's `ray:hitN_camera` render var (same convention as the contract: +Z towards the viewer).
-- Deep carries `C` and `instance_id`; Karma premultiplies the id by sample alpha, so readers recover it as `round(id / A)` (verified: residual under 0.05 before rounding).
-- Deep uses Karma's default compression (`dcmcompression 5`): uncompressed deep was 755 MB per 1280x720 frame at 64 samples (217 GB for the pilot); compressed frames are about 150 MB and still flatten to the beauty within 4e-5.
-- Beauty and every AOV use a one-pixel box filter (`karma:global:pixelfilter box`, AOV filter `ubox`), so compositing the deep samples reproduces the beauty exactly; the default Gaussian made them disagree by 0.05 on average.
-- Path-traced samples are 64 per pixel. Sweep on the hardest preset (dense foreground grass, depth of field, motion blur; frame 12 at 1280x720) against a 256-sample reference, on partial-coverage pixels: alpha error 0.025 / 0.018 / 0.012 / 0.009 and relative RGB error 0.30 / 0.23 / 0.17 / 0.13 at 16 / 32 / 64 / 128 samples, for 55 / 54 / 92 / 169 s per frame (wall, including about 30 s of scene load and kernel compile). 64 is the knee for alpha at under half the cost of 128.
-- Beauty EXRs use lossless ZIPS compression (`driver:parameters:husk:OpenEXR:compression`).
-- The dome texture maps image centre to +Z in Karma; measured by rendering the HDRI sun direction with eight candidate frame conventions (only one put the sun at frame centre).
-- Karma's distant-light intensity is irradiance: a 0.5-albedo Lambert card facing an intensity-1 sun renders 0.159 = 0.5/pi. The sun cut from each HDRI is moved into a distant light with the measured irradiance.
-- Domes need `inputs:karma:light:renderlightgeo = 1` to be visible to camera rays.
-- Each shot is normalised to 3.0 units of horizontal irradiance (sky plus sun) so exposure stays in range across HDRIs.
-- v0 uses the seven outdoor 8K HDRIs of the local Poly Haven set, resampled to 4K; the 1K files are too soft for camera-visible skies.
-- FBX models are converted with Blender (no license seat, deterministic) and then canonicalised with usd-core into one Y-up metre mesh per variation resting on y = 0.
-- Megascans maps are resized to at most 2K and stored as 8-bit files with a known encoding: sRGB albedo, raw normal/roughness/opacity; EXR albedo is treated as linear.
-- Ground surfaces are limited to natural Megascans surfaces (soil, grass, moss, sand, gravel, mud, forest floor, rock); asphalt, concrete, metal and wood are excluded.
-- Megascans assets that are not in the local sync are mirrored with nxc into scratch, never into the sync tree.
-- Heroes come only through an external hero library (`hero.json` + USD poses); the repo knows the interface, never a specific hero.
-- Fur and hair come from a generic groom generator: area-weighted roots on the skin, guide shapes blended from the four nearest guides (inverse-square weights), hairs dropped where no guide is near; with no guides it grows parametric hair along the normal.
-- Grooms and skins are baked per pose into the build root at prepare time (about 300k curves, 30 MB per pose) so shot layers stay small.
-- Presets (`strata_datagen/presets/`) are fixed recipes that may name external-library assets; generators never do.
-- Identifier checks store SHA-256 digests of the banned words so the public repo never spells them.
-- Shots are deterministic: every random draw comes from a named stream `sha256(seed:labels)`, fixed choices still consume their draws, and the same seed and recipe produce byte-identical USD (tested).
-- Terrain is a 300 m, 0.5 m-cell heightfield (fBm + ridged + domain warp, thermal erosion) with a flattened centre for the hero and a raised rim so the horizon is a ridge instead of a mesh edge.
-- Hydraulic erosion is deferred; thermal erosion is the v0 pass.
-- Tile-breaking for ground materials is a low-frequency albedo modulation; the full voronoi scatter port is deferred.
-- Human heroes (MakeHuman/MPFB) are deferred: not installed locally and not reachable inside the v0 time box.
-- DCC-hosted scripts under `blender/` are ruff-checked but excluded from pyright: bpy has no stubs.
-- Renders use Karma XPU GPU-only (`KARMA_XPU_DISABLE_EMBREE_DEVICE=1`, `karma:global:abortnogpudevice`); the driver retries with the CPU device enabled when that fails.
-- The render driver is farm-ready: `jobs.json`/`jobs.sh` list one husk command per shot with paths relative to the build root, and all USD asset paths are relative.
-- Husk writes per-frame files because each product's name is time-sampled per frame (no reliance on `$F` expansion).
-- Opacity cutouts on Megascans foliage write partial deep coverage: on one 1280x720 test frame, 75% of pixels whose front surface is a plant are partially covered and 82% hold samples behind the plant, against 29% and 32% with the opacity maps removed (geometric blade edges only); plant sample alpha median 0.094 vs 0.18.
-- Camera focal length and apertures are authored in tenths of a scene unit (mm / 100 at metres), as UsdGeomCamera specifies; Karma honours it, and millimetre values gave a 100x too-large aperture (subject fully defocused).
+- USD is authored with usd-core in a uv project, not Houdini's pxr, so datagen is typed, testable without a license and runs unchanged on render nodes.
+- Materials are MaterialX standard_surface UsdShade networks on `outputs:mtlx:surface`; node ids and inputs are validated against the MaterialX library.
+- Roughness and metallic AOVs are `inputs:aov:<name>` on the surface shader, rendered as raw render vars.
+- Camera-space normals come from Karma's `ray:hitN_camera`: x right, y up, +Z towards the viewer.
+- Deep carries `C` and `instance_id`; ids are alpha-premultiplied like colour, so a sample's id is `round(id / A)`.
+- Deep uses Karma's default compression (level 5); uncompressed deep is too large for datasets at 1280x720.
+- Beauty, AOVs and deep share a one-pixel box filter so the flattened deep reproduces the beauty.
+- Beauty EXRs are multi-part, one part per AOV, ZIPS-compressed.
+- Every product name is time-sampled per frame; outputs never rely on `$F` expansion.
+- Camera focal length and apertures are authored in tenths of a scene unit (mm / 100 at metres), per UsdGeomCamera.
+- Dome lights set `inputs:karma:light:renderlightgeo` so the HDRI is visible to camera rays.
+- HDRI directions use Karma's latlong frame: image centre at +Z, top row at +Y.
+- Each HDRI's sun is cut into a distant light whose intensity is the measured irradiance (Karma's distant-light unit).
+- Shots are normalised to a fixed horizontal irradiance (sky plus sun) so exposure is comparable across HDRIs.
+- Camera-visible skies use 8K outdoor HDRIs resampled to 4K.
+- Path-traced samples default to 64 per pixel.
+- FBX models are converted in Blender, then merged into one Y-up metre mesh per variation, footprint-centred on y = 0.
+- Megascans maps are stored at most 2K, 8-bit: sRGB albedo, raw normal, roughness and opacity; EXR albedo is linear.
+- Ground surfaces are natural Megascans surfaces only; asphalt, concrete, metal and wood are excluded.
+- Heroes enter only through an external library (`hero.json` + USD poses); repo code never names a hero.
+- Fur and hair come from the generic groom generator: guide shapes blended from the nearest guides, or parametric hair when there are none.
+- Grooms and skins are baked per pose into the build root at prepare time, so shot layers stay small.
+- Presets are the only code that names library asset ids; generators take assets as parameters.
+- Banned identifiers are checked as SHA-256 digests so the public repo never spells them.
+- Randomness comes from named streams `sha256(seed:labels)`; fixed choices still consume their draws, so a seed gives byte-identical USD.
+- Terrain is a 300 m, 0.5 m-cell heightfield with a flattened centre for the hero and a raised rim so the horizon is a ridge.
+- Renders are Karma XPU GPU-only and abort without a GPU; the driver retries once with the CPU device and records which ran.
+- Job lists (`jobs.json`, `jobs.sh`) hold one husk command per shot with paths relative to the build root.
+- Files are written atomically (temporary file, then rename).
