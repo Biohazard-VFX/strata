@@ -1,0 +1,17 @@
+# Decisions
+
+- `runtime/` owns C; `training/` owns Python; only `contract/` bridges them, so neither implementation imports the other.
+- Model contract v1 fixes tensor interfaces, normalization, padding, color and depth semantics; C rejects incompatible manifests and ONNX metadata before inference.
+- DP2 H+ runs at native resolution with bottom/right replicate padding to 32; DP2 does not use Depth Pro 1's resize pipeline.
+- Metric depth is `f_px / (original_width * inverse_depth)`; zero inverse remains positive infinity.
+- Export opset 23 Attention and tensor-valued RoPE dimensions to preserve memory-efficient attention and arbitrary portrait/landscape inputs.
+- FP16 learned operations, float32 public tensors and metric conversion keep native 4K inside the shared GPU budget; the FP32 head exceeded the 13-GiB arena.
+- Compare export parity at matching PyTorch precision; report stock bfloat16 differences separately because changing precision is not export error.
+- Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; deep RGB preserves source values and alpha is always one.
+- A separate, lazy `.fov.onnx` keeps automatic focal estimation optional and avoids paying its session cost when focal is supplied.
+- Deep scanline output uses Core's raw chunk C API and uncompressed float32 samples; OpenEXR 3.5.3's default deep packer is still a stub.
+- Flat output uses lossless ZIP with `Z` and `inverse_depth`; fake deep has exactly `R G B A Z ZBack`, one sample/pixel and `ZBack == Z`.
+- CUDA uses a 13-GiB arena, same-as-requested growth and no TF32; driver/context memory is measured separately with nvidia-smi.
+- Explicit providers fail rather than silently change primary EP; auto logs its CPU fallback, while GPU sessions retain ORT's normal CPU shape operations.
+- Use official ORT release artifacts, or official NuGet headers/PyPI native libraries when GitHub returns 404; never commit binaries or model weights.
+- Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
