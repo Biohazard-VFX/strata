@@ -1,6 +1,7 @@
 #include "strata.h"
 #include "expect.h"
 #include <math.h>
+#include <pthread.h>
 #include <string.h>
 
 static float rgba[16];
@@ -154,6 +155,54 @@ static void reload(strata_context *ctx, float network)
 	strata_result_free(&result);
 }
 
+struct worker {
+	const char *model;
+	float network;
+	int ret;
+};
+
+static void *work(void *argument)
+{
+	struct worker *worker = argument;
+	struct strata_options options = { .model_path = worker->model,
+					  .provider = "cpu" };
+	struct strata_frame frame = {
+		.image = &image,
+		.camera = { .fx_px = 100,
+			    .fy_px = 120,
+			    .focal_source = STRATA_FOCAL_PROVIDED }
+	};
+	struct strata_error err = { { 0 } };
+	strata_context *ctx = NULL;
+
+	worker->ret = strata_open(&options, &ctx, &err);
+	for (int i = 0; !worker->ret && i < 20; ++i) {
+		struct strata_result result = { 0 };
+
+		worker->ret = strata_run(ctx, &frame, &result, &err);
+		if (!worker->ret &&
+		    result.network_inverse_depth[0] != worker->network)
+			worker->ret = -1;
+		strata_result_free(&result);
+	}
+	strata_close(ctx);
+	return NULL;
+}
+
+static void concurrent(const char *model, float network)
+{
+	struct worker workers[2] = { { model, network, -1 },
+				     { model, network, -1 } };
+	pthread_t threads[2];
+
+	for (size_t i = 0; i < 2; ++i)
+		EXPECT(!pthread_create(&threads[i], NULL, work, &workers[i]));
+	for (size_t i = 0; i < 2; ++i) {
+		EXPECT(!pthread_join(threads[i], NULL));
+		EXPECT(workers[i].ret == 0);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	struct strata_options options = { .provider = "cpu" };
@@ -179,9 +228,10 @@ int main(int argc, char **argv)
 	nonfinite(ctx);
 	reload(ctx, network);
 	strata_close(ctx);
+	concurrent(argv[1], network);
 	strata_close(NULL);
 	if (!failures)
 		puts("session open failures, fallback, focal sources, "
-		     "non-finite input and reload passed");
+		     "non-finite input, reload and concurrent contexts passed");
 	return failures != 0;
 }
