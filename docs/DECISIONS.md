@@ -5,21 +5,20 @@
 - DP2 H+ runs at native resolution with bottom/right replicate padding to 32; DP2 does not use Depth Pro 1's resize pipeline.
 - Metric depth is `f_px / (original_width * inverse_depth)`; zero inverse remains positive infinity.
 - Export opset 23 Attention and tensor-valued RoPE dimensions to preserve memory-efficient attention and arbitrary portrait/landscape inputs.
-- FP16 learned operations, float32 public tensors and metric conversion keep native 4K inside the shared GPU budget; the FP32 head exceeded the 13-GiB arena.
+- Learned operations run in FP16 with a float32 final projection and float32 public tensors to bound activation memory at native resolution.
 - Compare export parity at matching PyTorch precision; report stock bfloat16 differences separately because changing precision is not export error.
+- Parity gates each image's network inverse depth: 5% maximum, 0.1% median and 0.1% signed mean relative error; focal within 0.1%.
 - Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; deep RGB preserves source values and alpha is always one.
+- sRGB encoding is computed in double precision and rounded once to float32 in C and in the oracle, so both feed identical tensors.
+- Non-finite input samples clamp after exposure (+inf to 1, NaN and -inf to 0); each result reports how many pixels were affected.
+- Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
+- `strata_run` infers one frame; temporal inference will be a separate stream API rather than a frame count on this call.
+- Results keep only the network output; camera-Z and inverse metres are derived from it and the resolved camera by accessors and writers.
+- Focal source is explicit: provided needs positive fx/fy, estimated takes zero intrinsics and is resolved by the model; unset is rejected.
 - A separate, lazy `.fov.onnx` keeps automatic focal estimation optional and avoids paying its session cost when focal is supplied.
 - Deep scanline output uses Core's raw chunk C API and uncompressed float32 samples; OpenEXR 3.5.3's default deep packer is still a stub.
-- Flat output uses lossless ZIP with `Z` and `inverse_depth`; fake deep has exactly `R G B A Z ZBack`, one sample/pixel and `ZBack == Z`.
-- CUDA uses a 13-GiB arena, same-as-requested growth and no TF32; driver/context memory is measured separately with nvidia-smi.
-- Explicit providers fail rather than silently change primary EP; auto logs its CPU fallback, while GPU sessions retain ORT's normal CPU shape operations.
-- Use official ORT release artifacts, or official NuGet headers/PyPI native libraries when GitHub returns 404; never commit binaries or model weights.
-- Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
-- The runtime GPU phase owns the exclusive shared lock throughout; admit each serialized job only with its measured or conservative expected process peak plus 2048 MiB free, and report unsafe resolutions as not measurable.
-- Cold timings mean a fresh process/session with the filesystem cache left intact; warm timings exclude the first frame, and sampled VRAM is process memory rather than total desktop use.
-- FP16 CUDA parity budgets are 5% maximum, 0.5% per-image median and 0.1% pixel-weighted aggregate median; the unfinished 0.1% per-image gate failed unchanged dof_05 (0.2545%), with identical old/new reference arrays and ONNX operations/weights, and neither disabling reference TF32 nor float32 Attention softmax changed it; focal tolerance remains 0.1%.
-- Qualification verifies the CMake sanitizer cache instead of trusting the build directory name: changing a pre-existing compiler can erase supplied cache options, including sanitizers and Python/model paths.
-- Linux GPU ASan tests disable shadow-gap protection for CUDA address reservation and suppress only cuInit leaks: a CUDA-only device-count probe independently reproduced the same 183 bytes/four allocations; leak detection remains enabled and independent leak/use-after-free canaries still fail.
-- Cold PyTorch session timing starts before the first CUDA memory query and allocator-budget setup so native and PyTorch timings both include context initialization; imports and image reads remain outside the session timer.
-- Do not launch native 4K on this shared desktop with only 13946 MiB free against the conservative 14336-MiB process estimate plus 2048-MiB reserve; report unmeasurable rather than infer unsupported throughput or a hardware limit.
-- Leave TensorRT unqualified rather than patch third-party runtimes: ORT 1.32.0/TensorRT 10.16.1.11 rejected Attention without a strongly typed network, then the memory-capped scope was OOM-killed; preserve the parser log and journal evidence.
+- Flat output uses lossless ZIP with `Z` and `network_inverse_depth`; fake deep has exactly `R G B A Z ZBack`, one sample/pixel and `ZBack == Z`.
+- Writers create a sibling temporary file and rename it over the target, so readers never see partial output.
+- Explicit providers fail when unavailable; `auto` falls back to CPU and reports why through `strata_fallback_reason`; the library never prints.
+- CUDA disables TF32 so float32 operations keep IEEE precision; allocator, arena and thread settings stay at ONNX Runtime defaults.
+- TensorRT, CoreML and DirectML are out of scope until each lands with a test and a measurement.
