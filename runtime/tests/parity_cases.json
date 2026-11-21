@@ -1,0 +1,208 @@
+[
+ {
+  "id": "v001",
+  "input": "results/v001/beauty.png",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "v003_dof",
+  "input": "results/v003_dof/beauty.png",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "v003_mb",
+  "input": "results/v003_mb/beauty.png",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_00",
+  "input": "renders/v004_dataset/dof_00/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_01",
+  "input": "renders/v004_dataset/dof_01/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_02",
+  "input": "renders/v004_dataset/dof_02/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_03",
+  "input": "renders/v004_dataset/dof_03/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_04",
+  "input": "renders/v004_dataset/dof_04/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_05",
+  "input": "renders/v004_dataset/dof_05/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_06",
+  "input": "renders/v004_dataset/dof_06/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_07",
+  "input": "renders/v004_dataset/dof_07/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_08",
+  "input": "renders/v004_dataset/dof_08/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_09",
+  "input": "renders/v004_dataset/dof_09/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_10",
+  "input": "renders/v004_dataset/dof_10/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "dof_11",
+  "input": "renders/v004_dataset/dof_11/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_00",
+  "input": "renders/v004_dataset/mb_00/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_01",
+  "input": "renders/v004_dataset/mb_01/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_02",
+  "input": "renders/v004_dataset/mb_02/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_03",
+  "input": "renders/v004_dataset/mb_03/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_04",
+  "input": "renders/v004_dataset/mb_04/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_05",
+  "input": "renders/v004_dataset/mb_05/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_06",
+  "input": "renders/v004_dataset/mb_06/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_07",
+  "input": "renders/v004_dataset/mb_07/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_08",
+  "input": "renders/v004_dataset/mb_08/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_09",
+  "input": "renders/v004_dataset/mb_09/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_10",
+  "input": "renders/v004_dataset/mb_10/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "mb_11",
+  "input": "renders/v004_dataset/mb_11/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_00",
+  "input": "renders/v004_dataset/sharp_00/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_01",
+  "input": "renders/v004_dataset/sharp_01/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_02",
+  "input": "renders/v004_dataset/sharp_02/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_03",
+  "input": "renders/v004_dataset/sharp_03/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_04",
+  "input": "renders/v004_dataset/sharp_04/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_05",
+  "input": "renders/v004_dataset/sharp_05/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_06",
+  "input": "renders/v004_dataset/sharp_06/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_07",
+  "input": "renders/v004_dataset/sharp_07/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_08",
+  "input": "renders/v004_dataset/sharp_08/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_09",
+  "input": "renders/v004_dataset/sharp_09/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_10",
+  "input": "renders/v004_dataset/sharp_10/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "sharp_11",
+  "input": "renders/v004_dataset/sharp_11/beauty.0001.exr",
+  "focal_px": 2666.67
+ },
+ {
+  "id": "v001_auto_focal",
+  "input": "results/v001/beauty.png",
+  "auto_focal": true
+ },
+ {
+  "id": "sharp_06_minus2",
+  "input": "renders/v004_dataset/sharp_06/beauty.0001.exr",
+  "focal_px": 2666.67,
+  "exposure": -2
+ }
+]

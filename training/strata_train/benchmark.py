@@ -1,4 +1,4 @@
-"""Measure serial CUDA/TensorRT/PyTorch runs and sample process VRAM with nvidia-smi."""
+"""Measure serial native CUDA and PyTorch runs and sample process VRAM with nvidia-smi."""
 
 from __future__ import annotations
 
@@ -122,22 +122,34 @@ def measured(
         if timing.get("provider") != expected:
             msg = "requested execution provider was not used"
             raise RuntimeError(msg)
-    frames = cast("list[float]", timing["frame_ms"])
+    if "frames" in timing:
+        stages = cast("list[dict[str, float]]", timing.pop("frames"))
+        frames = [stage["frame_ms"] for stage in stages]
+        result.update(
+            first_frame_stages_ms=stages[0],
+            warm_stage_median_ms={
+                key: statistics.median(stage[key] for stage in stages[1:]) for key in stages[0]
+            },
+        )
+    else:
+        frames = cast("list[float]", timing["frame_ms"])
     result.update(timing)
-    result.update(first_frame_ms=frames[0], warm_median_ms=statistics.median(frames[1:]))
+    result.update(
+        frame_ms=frames, first_frame_ms=frames[0], warm_median_ms=statistics.median(frames[1:])
+    )
     return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cli", type=Path, required=True)
+    parser.add_argument("--bench", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
         "--engines",
         nargs="+",
-        choices=("cuda", "tensorrt", "torch", "torch-stock"),
+        choices=("cuda", "torch", "torch-stock"),
         default=["cuda", "torch"],
     )
     parser.add_argument("--repeat", type=int, default=4)
@@ -164,16 +176,16 @@ def main() -> None:
         for engine in cast("list[str]", args.engines):
             prefix = out / f"{engine}-{width}x{height}"
             if engine.startswith("torch"):
-                manifest = prefix.with_suffix(".json")
-                manifest.write_text(
+                cases = prefix.with_suffix(".json")
+                cases.write_text(
                     json.dumps([{"id": prefix.name, "input": str(image), "focal_px": focal}]) + "\n"
                 )
                 command = [
                     sys.executable,
                     "-m",
                     "strata_train.reference",
-                    "--manifest",
-                    str(manifest),
+                    "--cases",
+                    str(cases),
                     "--out",
                     str(prefix),
                     "--repeat",
@@ -183,21 +195,16 @@ def main() -> None:
                     command.extend(["--precision", "bf16", "--stock-head"])
             else:
                 command = [
-                    str(args.cli.resolve()),
-                    "depth",
+                    str(args.bench.resolve()),
                     "--model",
                     str(args.model.resolve()),
                     "--in",
                     str(image),
-                    "--out-depth",
-                    str(prefix.with_suffix(".depth.exr")),
-                    "--out-deep",
-                    str(prefix.with_suffix(".deep.exr")),
                     "--f-px",
                     str(focal),
                     "--provider",
                     engine,
-                    "--repeat",
+                    "--frames",
                     str(args.repeat),
                 ]
             result = measured(command, prefix, args.timeout, peak_mib, args.reserve_mib)
