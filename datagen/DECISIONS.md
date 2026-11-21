@@ -1,0 +1,30 @@
+# Datagen decisions
+
+- USD is authored with usd-core from PyPI in a uv project, not Houdini's pxr: it keeps datagen a plain typed Python package (pyright strict via types-usd), testable without a Houdini license, and the same code runs on render nodes.
+- Materials are MaterialX standard_surface networks authored directly as UsdShade prims (`outputs:mtlx:surface`); every node id and input is checked against the MaterialX standard library before authoring.
+- Roughness and metallic AOVs come from `inputs:aov:<name>` on the surface shader (Houdini's convention); Karma renders them as raw render vars, verified on a probe frame.
+- Camera-space normals use Karma's `ray:hitN_camera` render var (same convention as the contract: +Z towards the viewer).
+- Deep carries `C` and `instance_id`; Karma premultiplies the id by sample alpha, so readers recover it as `round(id / A)` (verified: residual under 0.05 before rounding).
+- Deep compression is off (`dcmcompression 0`) so every pixel sample keeps its own depth and id; files are larger but edges are exact.
+- The dome texture maps image centre to +Z in Karma; measured by rendering the HDRI sun direction with eight candidate frame conventions (only one put the sun at frame centre).
+- Karma's distant-light intensity is irradiance: a 0.5-albedo Lambert card facing an intensity-1 sun renders 0.159 = 0.5/pi. The sun cut from each HDRI is moved into a distant light with the measured irradiance.
+- Domes need `inputs:karma:light:renderlightgeo = 1` to be visible to camera rays.
+- Each shot is normalised to 3.0 units of horizontal irradiance (sky plus sun) so exposure stays in range across HDRIs.
+- v0 uses the seven outdoor 8K HDRIs of the local Poly Haven set, resampled to 4K; the 1K files are too soft for camera-visible skies.
+- FBX models are converted with Blender (no license seat, deterministic) and then canonicalised with usd-core into one Y-up metre mesh per variation resting on y = 0.
+- Megascans maps are resized to at most 2K and stored as 8-bit files with a known encoding: sRGB albedo, raw normal/roughness/opacity; EXR albedo is treated as linear.
+- Megascans assets that are not in the local sync are mirrored with nxc into scratch, never into the sync tree.
+- Heroes come only through an external hero library (`hero.json` + USD poses); the repo knows the interface, never a specific hero.
+- Fur and hair come from a generic groom generator: area-weighted roots on the skin, guide shapes blended from the four nearest guides (inverse-square weights), hairs dropped where no guide is near; with no guides it grows parametric hair along the normal.
+- Grooms and skins are baked per pose into the build root at prepare time (about 300k curves, 30 MB per pose) so shot layers stay small.
+- Presets (`strata_datagen/presets/`) are fixed recipes that may name external-library assets; generators never do.
+- Identifier checks store SHA-256 digests of the banned words so the public repo never spells them.
+- Shots are deterministic: every random draw comes from a named stream `sha256(seed:labels)`, fixed choices still consume their draws, and the same seed and recipe produce byte-identical USD (tested).
+- Terrain is a 300 m, 0.5 m-cell heightfield (fBm + ridged + domain warp, thermal erosion) with a flattened centre for the hero and a raised rim so the horizon is a ridge instead of a mesh edge.
+- Hydraulic erosion is deferred; thermal erosion is the v0 pass.
+- Tile-breaking for ground materials is a low-frequency albedo modulation; the full voronoi scatter port is deferred.
+- Human heroes (MakeHuman/MPFB) are deferred: not installed locally and not reachable inside the v0 time box.
+- DCC-hosted scripts under `blender/` are ruff-checked but excluded from pyright: bpy has no stubs.
+- Renders use Karma XPU GPU-only (`KARMA_XPU_DISABLE_EMBREE_DEVICE=1`, `karma:global:abortnogpudevice`); the driver retries with the CPU device enabled when that fails.
+- The render driver is farm-ready: `jobs.json`/`jobs.sh` list one husk command per shot with paths relative to the build root, and all USD asset paths are relative.
+- Husk writes per-frame files because each product's name is time-sampled per frame (no reliance on `$F` expansion).
