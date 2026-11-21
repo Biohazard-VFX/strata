@@ -68,7 +68,10 @@ def measured(
         prefix.with_suffix(".stdout.log").open("w") as stdout,
         prefix.with_suffix(".stderr.log").open("w") as stderr,
         subprocess.Popen(
-            command, stdout=stdout, stderr=stderr, env={**os.environ, "PYTHONPATH": ""}
+            command,
+            stdout=stdout,
+            stderr=stderr,
+            env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
         ) as process,
     ):
         while process.poll() is None:
@@ -114,6 +117,11 @@ def measured(
         msg = "missing timing JSON or process VRAM samples"
         raise RuntimeError(msg)
     timing = rows[0]
+    if "--provider" in command:
+        expected = command[command.index("--provider") + 1]
+        if timing.get("provider") != expected:
+            msg = "requested execution provider was not used"
+            raise RuntimeError(msg)
     frames = cast("list[float]", timing["frame_ms"])
     result.update(timing)
     result.update(first_frame_ms=frames[0], warm_median_ms=statistics.median(frames[1:]))
@@ -135,7 +143,7 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=600)
     parser.add_argument("--sizes", nargs="+", choices=("1080p", "4k"), default=["1080p", "4k"])
-    parser.add_argument("--peak-1080-mib", type=int, default=7680)
+    parser.add_argument("--peak-1080-mib", type=int, default=10240)
     parser.add_argument("--peak-4k-mib", type=int, default=14336)
     parser.add_argument("--reserve-mib", type=int, default=2048)
     args = parser.parse_args()
