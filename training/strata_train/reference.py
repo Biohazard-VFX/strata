@@ -160,10 +160,10 @@ def main() -> None:
     if not cases or len({case["id"] for case in cases}) != len(cases):
         parser.error("manifest must have nonempty, unique image IDs")
     torch.set_num_threads(4)
+    start = time.perf_counter()
     limit = cast("Callable[[float], None]", resolve(torch.cuda, "set_per_process_memory_fraction"))
     limit(13 * 2**30 / torch.cuda.mem_get_info()[1])
     dtype = {"fp16": torch.float16, "fp32": torch.float32, "bf16": torch.bfloat16}[args.precision]
-    start = time.perf_counter()
     model, _ = create_model_and_transforms("depthpro2-h", precision=dtype)
     if args.precision == "fp16" and not args.stock_head:
         model.head[-2] = FloatProjection(model.head[-2])

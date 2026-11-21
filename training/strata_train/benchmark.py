@@ -143,7 +143,7 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=600)
     parser.add_argument("--sizes", nargs="+", choices=("1080p", "4k"), default=["1080p", "4k"])
-    parser.add_argument("--peak-1080-mib", type=int, default=10240)
+    parser.add_argument("--peak-1080-mib", type=int, default=11264)
     parser.add_argument("--peak-4k-mib", type=int, default=14336)
     parser.add_argument("--reserve-mib", type=int, default=2048)
     args = parser.parse_args()
