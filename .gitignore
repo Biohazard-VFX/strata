@@ -1,0 +1,6 @@
+build/
+models/
+*.onnx
+*.exr
+.venv/
+__pycache__/
