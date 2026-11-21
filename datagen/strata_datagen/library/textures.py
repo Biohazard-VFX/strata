@@ -7,6 +7,7 @@ import OpenEXR
 from numpy.typing import NDArray
 from PIL import Image
 
+from strata_datagen import files
 from strata_datagen.library.megascans import TextureMap
 
 MAX_SIZE = 2048
@@ -51,5 +52,6 @@ def convert(source: TextureMap, folder: Path) -> Path:
         )
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / name
-    image.save(target, quality=93) if target.suffix == ".jpg" else image.save(target)
+    with files.replacing(target) as temporary:
+        image.save(temporary, quality=93) if target.suffix == ".jpg" else image.save(temporary)
     return target

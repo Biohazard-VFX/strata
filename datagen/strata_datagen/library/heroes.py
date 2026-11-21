@@ -16,6 +16,7 @@ from typing import cast
 import numpy as np
 from pxr import Gf, Sdf, Usd, UsdGeom
 
+from strata_datagen import files
 from strata_datagen.generators import groom
 from strata_datagen.rng import stream
 from strata_datagen.usdutil import FloatArray, IntArray, ints, new_stage, vec2f, vec3f
@@ -156,5 +157,6 @@ def prepare_pose(manifest: HeroManifest, pose: str, output: Path) -> PreparedPos
 def copy_albedo(manifest: HeroManifest, destination: Path) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
     target = destination / f"albedo{Path(manifest.albedo).suffix}"
-    shutil.copyfile(manifest.directory / manifest.albedo, target)
+    with files.replacing(target) as temporary:
+        shutil.copyfile(manifest.directory / manifest.albedo, temporary)
     return target

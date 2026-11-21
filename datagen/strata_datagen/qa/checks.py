@@ -1,7 +1,6 @@
 """Per-shot acceptance checks; a shot that fails any check is rejected from the dataset."""
 
 import json
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -111,7 +110,7 @@ def _camera_consistency(camera: dict[str, object]) -> list[str]:
     return failures
 
 
-def check_shot(shot: Path, workers: int = 6) -> dict[str, object]:
+def check_shot(shot: Path) -> dict[str, object]:
     manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
     camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
     frames = cast("list[dict[str, object]]", camera["frames"])
@@ -119,16 +118,7 @@ def check_shot(shot: Path, workers: int = 6) -> dict[str, object]:
     if len(frames) != 24:
         failures.append(f"camera.json has {len(frames)} frames")
     ranges = _id_ranges(manifest)
-    with ProcessPoolExecutor(workers) as pool:
-        results = list(
-            pool.map(
-                check_frame,
-                [shot] * len(frames),
-                [cast("int", f["frame"]) for f in frames],
-                frames,
-                [ranges] * len(frames),
-            )
-        )
+    results = [check_frame(shot, cast("int", f["frame"]), f, ranges) for f in frames]
     failures += [f"frame {r.frame}: {f}" for r in results for f in r.failures]
     summary = {
         k: float(np.mean([r.metrics[k] for r in results if k in r.metrics]))

@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
 
+from strata_datagen import files
+
 LIBRARY_FILE = "assets/library.json"
 
 
@@ -75,7 +77,7 @@ class Library:
     def save(self, root: Path) -> None:
         path = root / LIBRARY_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=1, sort_keys=True) + "\n")
+        files.write_text(path, json.dumps(asdict(self), indent=1, sort_keys=True) + "\n")
 
     def role(self, role: str) -> tuple[Model, ...]:
         return tuple(m for m in self.models if m.role == role)

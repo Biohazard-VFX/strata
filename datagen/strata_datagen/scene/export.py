@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from strata_datagen import files
 from strata_datagen.generators import camera, groom, hero, lighting, materials, scatter, terrain
 from strata_datagen.library.catalogue import Library, Provenance
 from strata_datagen.render import settings
@@ -140,7 +141,7 @@ def write(shot: Shot, library: Library, render: RenderParams) -> None:
         ("camera.json", camera_record(shot, render)),
         ("manifest.json", manifest(shot, library, render)),
     ):
-        (shot.directory / name).write_text(json.dumps(record, indent=1, sort_keys=True) + "\n")
+        files.write_text(shot.directory / name, json.dumps(record, indent=1, sort_keys=True) + "\n")
 
 
 def load_json(path: Path) -> dict[str, object]:

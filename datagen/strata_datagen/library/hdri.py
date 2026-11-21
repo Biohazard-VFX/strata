@@ -12,6 +12,8 @@ import numpy as np
 import OpenEXR
 from numpy.typing import NDArray
 
+from strata_datagen import files
+
 SOURCE = "Poly Haven (HDRI Haven)"
 LICENSE = "CC0"
 LUMA = np.array([0.2126, 0.7152, 0.0722])
@@ -77,7 +79,8 @@ def cut_sun(image: Image) -> tuple[Image, SunCut]:
 def write_rgb(image: Image, path: Path) -> None:
     channels = {c: np.ascontiguousarray(image[..., i]).astype(np.float16) for i, c in enumerate("RGB")}
     header = {"compression": OpenEXR.ZIP_COMPRESSION, "type": OpenEXR.scanlineimage}
-    OpenEXR.File(header, channels).write(str(path))
+    with files.replacing(path) as temporary:
+        OpenEXR.File(header, channels).write(str(temporary))
 
 
 def prepare(source: Path, destination: Path, factor: int = 2) -> SunCut:

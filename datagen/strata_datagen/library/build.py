@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from strata_datagen import files
 from strata_datagen.library import catalogue, hdri, heroes, megascans, models, textures
 
 BLENDER_SCRIPT = Path(__file__).resolve().parents[2] / "blender" / "fbx_to_usd.py"
@@ -93,7 +94,7 @@ def _convert(jobs: list[tuple[Path, Path]], scratch: Path) -> None:
     if not jobs:
         return
     listing = scratch / "fbx_jobs.json"
-    listing.write_text(json.dumps([[str(a), str(b)] for a, b in jobs]))
+    files.write_text(listing, json.dumps([[str(a), str(b)] for a, b in jobs]))
     subprocess.run(
         ["blender", "-b", "--factory-startup", "--python", str(BLENDER_SCRIPT), "--", str(listing)],
         check=True,

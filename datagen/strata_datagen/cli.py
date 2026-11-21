@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
+from strata_datagen import files
 from strata_datagen.library import build as library_build
 from strata_datagen.library import catalogue, fetch
 from strata_datagen.presets import PRESETS
@@ -65,7 +66,7 @@ def cmd_render(args: argparse.Namespace) -> None:
         manifest_path = args.root / job.workdir / "manifest.json"
         manifest = export.load_json(manifest_path)
         manifest["timings"] = timings
-        manifest_path.write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+        files.write_text(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
         print("rendered", job.shot_id, timings["device"], timings["mean_frame_seconds"], flush=True)
 
 
@@ -80,10 +81,10 @@ def cmd_qa(args: argparse.Namespace) -> None:
     shots = sorted(p for p in (args.root / "shots").iterdir() if (p / "manifest.json").exists())
     results = [checks.check_shot(shot) for shot in shots]
     for shot, result in zip(shots, results, strict=True):
-        (shot / "qa.json").write_text(json.dumps(result, indent=1) + "\n")
+        files.write_text(shot / "qa.json", json.dumps(result, indent=1) + "\n")
     contact.build([(s, _label(s)) for s in shots], args.root / "contact_sheet.jpg")
     report = [{k: r[k] for k in ("shot_id", "passed", "failures", "mean_metrics")} for r in results]
-    (args.root / "qa_report.json").write_text(json.dumps(report, indent=1) + "\n")
+    files.write_text(args.root / "qa_report.json", json.dumps(report, indent=1) + "\n")
     rejected = args.root / "rejected"
     for shot, result in zip(shots, results, strict=True):
         if not result["passed"]:

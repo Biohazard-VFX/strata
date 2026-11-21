@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
+from strata_datagen import files
 from strata_datagen.exr import header
 
 RENDERER = "BRAY_HdKarmaXPU"
@@ -46,13 +47,13 @@ def job(root: Path, shot_dir: Path, frames: tuple[int, ...]) -> Job:
 
 def write_job_list(root: Path, jobs: list[Job]) -> None:
     """jobs.json for a farm submitter and jobs.sh for a plain shell, both with relative paths."""
-    (root / "jobs.json").write_text(json.dumps([asdict(j) for j in jobs], indent=1) + "\n")
+    files.write_text(root / "jobs.json", json.dumps([asdict(j) for j in jobs], indent=1) + "\n")
     lines = ["#!/bin/sh", "set -e", 'cd "$(dirname "$0")"']
     lines.extend(
         f"(cd {shlex.quote(j.workdir)} && mkdir -p {' '.join(j.outputs)} && {shlex.join(j.command)})"
         for j in jobs
     )
-    (root / "jobs.sh").write_text("\n".join(lines) + "\n")
+    files.write_text(root / "jobs.sh", "\n".join(lines) + "\n")
 
 
 class _VramMonitor(threading.Thread):

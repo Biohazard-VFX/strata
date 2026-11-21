@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from strata_datagen import files
 from strata_datagen.exr import read_flat
 
 THUMB = (640, 360)
@@ -31,5 +32,6 @@ def build(shots: list[tuple[Path, str]], output: Path) -> Path:
         draw.rectangle((x, y, x + THUMB[0], y + 22), fill=(0, 0, 0))
         draw.text((x + 6, y + 5), label, fill=(255, 255, 255))
     output.parent.mkdir(parents=True, exist_ok=True)
-    sheet.save(output, quality=92)
+    with files.replacing(output) as temporary:
+        sheet.save(temporary, quality=92)
     return output
