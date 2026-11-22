@@ -12,6 +12,8 @@ extern "C" {
 
 /* Filled outputs: zeroed or a prior output (freed first); zero on failure. */
 
+/* Borrowed input buffers must not be a filled output's own storage. */
+
 /* Owns sessions and scratch; serialize calls, contexts are independent. */
 typedef struct strata_context strata_context;
 
@@ -168,7 +170,7 @@ void strata_image_free(struct strata_image *image);
 int strata_camera_read(const char *path, struct strata_camera *camera,
 		       struct strata_pose *pose, int *has_pose,
 		       struct strata_error *err);
-/* Fill positions; a NULL camera uses the input's resolved camera. */
+/* Fills positions; NULL camera uses the input's; camera/pose may alias it. */
 int strata_unproject_depth(const struct strata_result *depth,
 			   const struct strata_camera *camera,
 			   const struct strata_pose *pose,

@@ -52,6 +52,16 @@ static void plane_test(void)
 					   &err)))
 		EXPECT(!memcmp(positions.xyz, scaled, sizeof(scaled)) &&
 		       positions.frame.camera.fx_px == 4);
+	if (EXPECT(!strata_unproject_depth(&depth, &positions.frame.camera,
+					   NULL, &positions, &err)))
+		EXPECT(!memcmp(positions.xyz, scaled, sizeof(scaled)) &&
+		       positions.frame.camera.fx_px == 4);
+	if (EXPECT(!strata_unproject_depth(&depth, NULL, &pose, &positions,
+					   &err)) &&
+	    EXPECT(!strata_unproject_depth(&depth, NULL, &positions.pose,
+					   &positions, &err)))
+		EXPECT(positions.space == STRATA_SPACE_WORLD &&
+		       !memcmp(positions.xyz, world, sizeof(world)));
 	strata_positions_free(&positions);
 }
 

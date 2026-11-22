@@ -57,13 +57,41 @@ int strata_pose_validate(const struct strata_pose *pose,
 	return 0;
 }
 
+struct position_request {
+	struct strata_camera camera;
+	struct strata_pose pose;
+	int has_camera;
+	int has_pose;
+};
+
+static int begin_positions(const struct strata_camera *camera,
+			   const struct strata_pose *pose,
+			   struct strata_positions *positions,
+			   struct position_request *request,
+			   struct strata_error *err)
+{
+	if (!positions)
+		return strata_fail(err, "missing position output");
+	*request = (struct position_request){ .has_camera = camera != NULL,
+					      .has_pose = pose != NULL };
+	if (camera)
+		request->camera = *camera;
+	if (pose)
+		request->pose = *pose;
+	strata_positions_free(positions);
+	return 0;
+}
+
 static int allocate_positions(int w, int h, size_t count,
 			      const struct strata_frame_metadata *frame,
-			      const struct strata_camera *camera,
-			      const struct strata_pose *pose,
+			      const struct position_request *request,
 			      struct strata_positions *positions,
 			      struct strata_error *err)
 {
+	const struct strata_camera *camera =
+		request->has_camera ? &request->camera : NULL;
+	const struct strata_pose *pose = request->has_pose ? &request->pose :
+							     NULL;
 	struct strata_positions out = { 0 };
 
 	if (strata_dimensions(w, h, err) || strata_pose_validate(pose, err) ||
@@ -128,19 +156,19 @@ int strata_unproject_depth(const struct strata_result *depth,
 			   struct strata_positions *positions,
 			   struct strata_error *err)
 {
+	struct position_request request;
 	struct strata_result view;
 	size_t count;
 
-	if (!positions)
-		return strata_fail(err, "missing position output");
-	strata_positions_free(positions);
+	if (begin_positions(camera, pose, positions, &request, err))
+		return -1;
 	if (!depth || !depth->network_inverse_depth)
 		return strata_fail(err, "missing network inverse depth");
 	if (strata_dimensions(depth->width, depth->height, err))
 		return -1;
 	count = (size_t)depth->width * (size_t)depth->height;
 	if (allocate_positions(depth->width, depth->height, count,
-			       &depth->frame, camera, pose, positions, err))
+			       &depth->frame, &request, positions, err))
 		return -1;
 	positions->layout = STRATA_POSITION_FLAT;
 	view = *depth;
@@ -156,11 +184,11 @@ int strata_unproject_layers(const struct strata_layers *layers,
 			    struct strata_positions *positions,
 			    struct strata_error *err)
 {
+	struct position_request request;
 	size_t pixels, count;
 
-	if (!positions)
-		return strata_fail(err, "missing position output");
-	strata_positions_free(positions);
+	if (begin_positions(camera, pose, positions, &request, err))
+		return -1;
 	if (!layers || !layers->z || !layers->present ||
 	    layers->layer_count < 1)
 		return strata_fail(err, "missing layer depth/presence input");
@@ -171,7 +199,7 @@ int strata_unproject_layers(const struct strata_layers *layers,
 		return strata_fail(err, "layer position allocation overflow");
 	count = pixels * (size_t)layers->layer_count;
 	if (allocate_positions(layers->width, layers->height, count,
-			       &layers->frame, camera, pose, positions, err))
+			       &layers->frame, &request, positions, err))
 		return -1;
 	positions->layout = STRATA_POSITION_LAYERS;
 	positions->layer_count = layers->layer_count;
@@ -188,15 +216,15 @@ int strata_unproject_deep(const struct strata_deep_result *deep,
 			  struct strata_positions *positions,
 			  struct strata_error *err)
 {
+	struct position_request request;
 	size_t pixels, offset = 0;
 
-	if (!positions)
-		return strata_fail(err, "missing position output");
-	strata_positions_free(positions);
+	if (begin_positions(camera, pose, positions, &request, err))
+		return -1;
 	if (strata_deep_validate(deep, err))
 		return -1;
 	if (allocate_positions(deep->width, deep->height, deep->sample_count,
-			       &deep->frame, camera, pose, positions, err))
+			       &deep->frame, &request, positions, err))
 		return -1;
 	positions->layout = STRATA_POSITION_DEEP;
 	positions->layer_count = 0;
