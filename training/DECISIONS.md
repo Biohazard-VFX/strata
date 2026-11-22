@@ -1,6 +1,6 @@
 # Architecture decisions
 
-- CUDA training pins raw row spans and prepares two lookahead batches on a private thread/stream; events order consumption and record_stream protects consumer lifetimes.
+- CUDA training pins raw row spans and prepares four lookahead batches on a private thread/stream; events order consumption and record_stream protects consumer lifetimes.
 
 - Torch transmission uses bounded row-local log-prefix scans, never a floating global CUDA scan, to make dense replay bitwise stable.
 

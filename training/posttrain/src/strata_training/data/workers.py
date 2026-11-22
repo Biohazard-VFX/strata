@@ -110,14 +110,18 @@ class NativeBatches(Dataset[LoadedBatch]):
 
 @contextmanager
 def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[LoadedBatch]]:
-    """Own two lookahead batches; join preparation on exit, including early stop or errors.
+    """Own four lookahead batches; join preparation on exit, including early stop or errors.
 
     A single consumer thread owns iteration. CUDA preparation uses a private stream
     and worker thread; returned tensors are ordered and retained on the consumer stream.
     """
     source = iter(batches(dataset))
     if torch.device(device).type != "cuda":
-        yield (row.to(device) for row in source)
+        consumer = (row.to(device) for row in source)
+        try:
+            yield consumer
+        finally:
+            consumer.close()
         return
     stream = torch.cuda.Stream(device=device)
     stream.wait_stream(torch.cuda.current_stream(device))
@@ -133,9 +137,9 @@ def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[Lo
         return loaded, ready
 
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="strata-prepare") as executor:
-        futures = deque(executor.submit(prepare) for _ in range(2))
+        futures = deque(executor.submit(prepare) for _ in range(4))
 
-        def consume() -> Iterator[LoadedBatch]:
+        def consume() -> Generator[LoadedBatch]:
             while futures:
                 pending = futures.popleft().result()
                 if pending is None:
@@ -154,9 +158,11 @@ def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[Lo
                 futures.append(executor.submit(prepare))
                 yield loaded
 
+        consumer = consume()
         try:
-            yield consume()
+            yield consumer
         finally:
+            consumer.close()
             try:
                 for future in futures:
                     future.result()

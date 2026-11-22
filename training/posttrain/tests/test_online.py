@@ -321,6 +321,20 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
             ) as overlap:
                 next(overlap)
 
+    if math_device == "cuda" and loader_math == "torch":
+        from strata_training.data.workers import device_batches
+
+        damaged = np.load(samples / "sample/deep/z.npy")
+        damaged[0] = np.nan
+        save_array(samples / "sample/deep/z.npy", damaged)
+        with (
+            pytest.raises(ValueError, match="Raw samples"),
+            device_batches(
+                NativeBatches([frame], online, [[0]], {**config, "device": "cuda"}), "cuda"
+            ) as overlap,
+        ):
+            list(overlap)
+
     assert sorted(p.name for p in (samples / "sample").iterdir()) == [
         "deep",
         "denoised.npy",
