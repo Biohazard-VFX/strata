@@ -126,6 +126,11 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
             },
         },
         "instance_ids": _ids(shot),
+        "background": {
+            "instance_id": lighting.SKY_ID,
+            "radius_m": lighting.BACKDROP_M,
+            "far_clip_m": camera.CLIPPING_M[1],
+        },
         "first_scatter_id": FIRST_SCATTER_ID,
         "assets": _assets(shot, library),
         "render": {
