@@ -6,7 +6,8 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
 ## Layout
 
 - `strata_datagen/generators/`: independent generators, seed and parameters in, USD prims out
-  (terrain, scatter, materials, lighting, camera, hero, groom). A generator never imports another.
+  (terrain, scatter, materials, lighting, camera, hero, groom, hairstyle). A generator never imports
+  another; shared strand operators (clump, curl, frizz, noise, braid) live in `strata_datagen/strands.py`.
 - `strata_datagen/scene/`: composes the generators into one shot from a `ShotSpec` (seed plus fixed
   choices) and writes `manifest.json` and `camera.json`.
 - `strata_datagen/presets/`: fixed recipes (canaries) that name external-library assets.
@@ -35,5 +36,7 @@ python ../contract/dataset/validate.py BUILD/shots/*
 ```
 
 `sources.json` lists `megascans_roots`, `hdris`, `hero_library`, `heroes` and `max_variations`.
+A hero whose `hero.json` lists a `scalp` region (float vertex primvar `region_scalp` on its skin) gets a
+seeded hairstyle in every shot; see `strata_datagen/library/heroes.py` for the manifest fields.
 Run Python with `PYTHONPATH` unset when the environment exports another interpreter's path.
 Design choices and measurements are in `DECISIONS.md`.
