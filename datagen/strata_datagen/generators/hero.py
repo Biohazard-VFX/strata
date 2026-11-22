@@ -34,7 +34,10 @@ def sample_motion(
     t = (np.arange(samples) - samples // 2) / 24.0
     yaw = heading + turn * t
     angle = np.radians(yaw)
-    x, z = speed * t * np.sin(angle), speed * t * np.cos(angle)
+    step = np.concatenate([[0.0], np.full(samples - 1, speed / 24.0)])
+    x = np.cumsum(step * np.sin(angle))
+    z = np.cumsum(step * np.cos(angle))
+    x, z = x - x[samples // 2], z - z[samples // 2]
     y = ground.height(x, z) + foot_offset_m
     return HeroMotion(np.stack([x, y, z], axis=-1), yaw, speed)
 

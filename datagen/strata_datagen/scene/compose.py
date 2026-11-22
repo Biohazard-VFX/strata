@@ -134,6 +134,9 @@ def plan(spec: ShotSpec, library: Library, root: Path, frame_count: int = DEFAUL
         motion = hero.sample_motion(
             stream(spec.seed, "hero", "motion"), ground, samples, -pose.bounds_min[1], spec.hero_speed_mps
         )
+        walk = creature.clip_gait(root / pose.file)
+        if walk is not None:
+            motion = creature.ground(motion, walk, ground, stream(spec.seed, "hero", "gait"))
     height = pose.bounds_max[1] - pose.bounds_min[1]
     subject = max(high - low for low, high in zip(pose.bounds_min, pose.bounds_max, strict=True))
     target = motion.positions + np.array([0.0, 0.5 * height, 0.0])

@@ -224,7 +224,7 @@ class ComposeTest(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             hero_files(Path(tmp), lib)
             spec = ShotSpec(
-                seed=7, thin=(thin.Choice("chain_link", "between"), thin.Choice("wires", "background"))
+                seed=6, thin=(thin.Choice("chain_link", "between"), thin.Choice("wires", "background"))
             )
             shot = compose.plan(spec, lib, Path(tmp))
             compose.write(shot, lib, Path(tmp), RENDER)

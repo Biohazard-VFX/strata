@@ -113,6 +113,7 @@ class DeterminismTest(unittest.TestCase):
                 camera=spec.camera,
             )
             with TemporaryDirectory() as tmp:
+                hero_files(Path(tmp), lib)
                 shot = compose.plan(fixed, lib, Path(tmp))
             self.assertEqual(shot.track.move, spec.camera.move)
             self.assertEqual(shot.light.hdri.key, "woods")
