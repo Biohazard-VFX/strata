@@ -33,7 +33,8 @@ SKIN_PRIM = "/creature/skin"
 HEAD_REGIONS = ("head", "jaw", "head_detail", "beak")
 FURRED = ("head", "jaw", "head_detail", "body", "tail", "leg", "lid")
 SEGMENTS = 7
-MAX_HAIRS = 260_000
+MAX_HAIRS = 400_000
+MAX_THICKEN = 2.5
 Json = dict[str, object]
 
 
@@ -293,6 +294,9 @@ def _resolve_fur(layer: Json, field: coat.Field, budget: float) -> Json:
     size = int(cast("int", params.pop("clump_size")))
     params["count"] = count
     params["clump_count"] = count // size if size else 0
+    thicken = min(MAX_THICKEN, budget**-0.5)
+    for width in ("width_root_m", "width_tip_m"):
+        params[width] = round(float(cast("float", params[width])) * thicken, 7)
     layer["guides"] = int(min(6000, max(64, count // 8)))
     return layer
 
@@ -307,7 +311,10 @@ def _resolve_feathers(layer: Json, field: coat.Field) -> Json:
 
 
 def sample_coat(classes: list[str], field: coat.Field, rest: FloatArray, front: int, key: str) -> Json:
-    """Concrete coat layers for hero.json, sized from the creature's skin and capped in total hairs."""
+    """Concrete coat layers for hero.json, sized from the creature's skin and capped in total hairs.
+
+    When the cap thins a coat, its hairs thicken by up to MAX_THICKEN to keep its coverage.
+    """
     rng = stream(0, "creature-coat", key)
     size = float(np.clip((rest[:, 2].max() - rest[:, 2].min()) / 1.5, 0.35, 1.6))
     fur = [layer for c in classes if c in FUR_TEMPLATES for layer in FUR_TEMPLATES[c](rng, size)]

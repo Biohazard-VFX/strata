@@ -2,11 +2,13 @@
 
 Run with Infinigen's Python (bpy as a module):
   python infinigen_creature.py JOB.json
-JOB.json: factory (Infinigen creature factory class name), factory_seed, factory_kwargs, asset_kwargs,
+JOB.json: factory (creature factory class name, or module.Class inside infinigen's creatures package
+for factories it does not export), factory_seed, factory_kwargs, asset_kwargs,
 nurbs (prefix -> exact Infinigen NURBS template key, to pin a body or head build), frames, resolution,
 output (folder).
 """
 
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -56,7 +58,9 @@ def main() -> None:
     job = json.loads(Path(sys.argv[-1]).read_text())
     _pin_templates(job.get("nurbs", {}))
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    factory_class = getattr(creatures, job["factory"])
+    module, _, name = job["factory"].rpartition(".")
+    package = importlib.import_module(f"{creatures.__name__}.{module}") if module else creatures
+    factory_class = getattr(package, name)
     with FixedSeed(job["factory_seed"]):
         factory = factory_class(factory_seed=job["factory_seed"], **job.get("factory_kwargs", {}))
         placeholder = factory.spawn_placeholder(0, (0, 0, 0), (0, 0, 0))

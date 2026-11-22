@@ -2,6 +2,8 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
+from unittest import mock
 
 import numpy as np
 from pxr import Usd, UsdGeom
@@ -122,6 +124,25 @@ class CreatureTest(unittest.TestCase):
             atol=1e-9,
         )
         self.assertGreater(float(still[-1, :, 1].mean() - still[0, :, 1].mean()), 0.0)
+
+    def test_capped_coats_thin_out_and_thicken(self) -> None:
+        raw = box_raw(1)
+        rest = creatures.orient(raw, None, 1.0)[0]
+        skin = groom.Skin(rest, raw.triangles, raw.corner_st)
+        front = creatures.front_vertex(raw, rest)
+        field = coat.field(skin, raw.regions, raw.names, front)
+        full = creatures.sample_coat(["short_coat"], field, rest, front, "box")
+        with mock.patch.object(creatures, "MAX_HAIRS", 1000):
+            capped = creatures.sample_coat(["short_coat"], field, rest, front, "box")
+        for loose, tight in zip(
+            cast("list[dict[str, dict[str, float]]]", full["fur"]),
+            cast("list[dict[str, dict[str, float]]]", capped["fur"]),
+            strict=True,
+        ):
+            self.assertLess(tight["groom"]["count"], loose["groom"]["count"])
+            ratio = tight["groom"]["width_root_m"] / loose["groom"]["width_root_m"]
+            self.assertGreater(ratio, 1.0)
+            self.assertLessEqual(ratio, creatures.MAX_THICKEN + 1e-6)
 
     def test_animated_coat_pose_round_trip_is_deterministic(self) -> None:
         raw = box_raw(3)
