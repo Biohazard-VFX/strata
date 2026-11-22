@@ -8,6 +8,7 @@
 - Learned operations run in FP16 with a float32 final projection and float32 public tensors to bound activation memory at native resolution.
 - Compare export parity at matching PyTorch precision; report stock bfloat16 differences separately because changing precision is not export error.
 - Parity gates per image: p99.9 relative error 1%, max 5% beyond 2 px of a log inverse-depth step >0.3, median 0.1%, signed bias 0.1%; focal 0.1%; raw max reported.
+- A parity gate is quarantined per image and gate only when PyTorch FP16 itself moves that metric as far under 1-ulp input flips.
 - Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; deep RGB preserves source values and alpha is always one.
 - sRGB encoding is computed in double precision and rounded once to float32 in C and in the oracle, so both feed identical tensors.
 - Non-finite input samples clamp after exposure (+inf to 1, NaN and -inf to 0); each result reports how many pixels were affected.
@@ -15,6 +16,7 @@
 - `strata_run` infers one frame; temporal inference will be a separate stream API rather than a frame count on this call.
 - Results keep only the network output; camera-Z and inverse metres are derived from it and the resolved camera by accessors and writers.
 - Focal source is explicit: provided needs positive fx/fy, estimated takes zero intrinsics and is resolved by the model; unset is rejected.
+- Exports bake ORT basic-level transforms, stride==kernel ConvTranspose as 1x1 Conv+DepthToSpace and fused RotaryEmbedding.
 - A separate, lazy `.fov.onnx` keeps automatic focal estimation optional and avoids paying its session cost when focal is supplied.
 - Deep scanline output uses Core's raw chunk C API and uncompressed float32 samples; OpenEXR 3.5.3's default deep packer is still a stub.
 - Flat output uses lossless ZIP with `Z` and `network_inverse_depth`; fake deep has exactly `R G B A Z ZBack`, one sample/pixel and `ZBack == Z`.
