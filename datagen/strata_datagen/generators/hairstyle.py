@@ -291,7 +291,8 @@ def _comb(style: Style, frame: _Frame, roots: FloatArray, normals: FloatArray) -
     lateral = np.where(fringe, lateral * 0.3, lateral)
     want = frame.side[None] * lateral[:, None] - frame.forward[None] * back[:, None] - frame.up[None] * 0.4
     along = _tangent(want, normals)
-    lift = np.where(fringe, 0.0, 0.05 + 0.9 * style.volume**2)[:, None]
+    rise = 0.05 + (0.4 if style.cut == "short" else 0.9) * style.volume**2
+    lift = np.where(fringe, 0.0, rise)[:, None]
     out = along * (1.0 - lift) + normals * lift
     return out / np.linalg.norm(out, axis=1, keepdims=True)
 
@@ -376,6 +377,8 @@ def _texture(
 ) -> FloatArray:
     reference = curves
     guide = _clump_centres(roots, style.clump_size, rng)
+    if style.cut == "buzz":
+        return strands.frizz(curves, distance=style.frizz_m * 0.3, shape=0.7, rng=rng)
     curves = strands.clump(
         curves, guide, factor=style.clump, shape=0.35, tip_spread=0.002 * (1.0 - style.clump), rng=rng
     )
