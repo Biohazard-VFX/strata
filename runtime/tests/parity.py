@@ -91,7 +91,7 @@ def check_overflow(args):
     image = args.out/'fp16_overflow.png'
     Image.fromarray(overflow_field(args.overflow_field)).save(image)
     prefix = args.out/'fp16_overflow'
-    run_case(args, {'id': 'fp16_overflow', 'input': str(image), 'focal_px': 1000}, image.parent, prefix)
+    run_case(args, {'id': 'fp16_overflow', 'input': image.name, 'focal_px': 1000}, image.parent, prefix)
     with OpenEXR.File(str(prefix.with_suffix('.depth.exr')), separate_channels=True) as file:
         native = file.channels()['network_inverse_depth'].pixels
     assert np.isfinite(native).all() and (native > 0).all()
