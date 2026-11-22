@@ -11,7 +11,7 @@ from strata_datagen.library import build as library_build
 from strata_datagen.library import catalogue, creatures, fetch, humans, morph
 from strata_datagen.presets import PRESETS
 from strata_datagen.qa import checks, contact
-from strata_datagen.render import husk, pack
+from strata_datagen.render import husk, ingest, pack
 from strata_datagen.scene import compose, export
 from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec
 
@@ -118,6 +118,10 @@ def cmd_render(args: argparse.Namespace) -> None:
         frames = range(job.first, job.first + job.count)
         timings = render_task(args.root / job.workdir, frames, args.husk)
         print("rendered", job.shot_id, timings["device"], timings["mean_frame_seconds"], flush=True)
+
+
+def cmd_ingest(args: argparse.Namespace) -> None:
+    print("ingested", len(ingest.ingest(args.shot, args.source)), "into", args.shot, flush=True)
 
 
 def _frames(args: argparse.Namespace) -> range:
@@ -246,6 +250,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--count", type=int, required=True)
     p.add_argument("--husk", default=DEFAULT_HUSK)
     p.set_defaults(run=cmd_render_task)
+    p = sub.add_parser(
+        "ingest", help="move a downloaded farm task's output folders into a shot under its lock"
+    )
+    p.add_argument("--shot", type=Path, required=True)
+    p.add_argument("--source", type=Path, required=True)
+    p.set_defaults(run=cmd_ingest)
     for name, run, text in (
         ("pack", cmd_pack, "write layer targets for rendered frames and sidecars on the deep stride"),
         ("accept", cmd_accept, "raw QA of packed frames; records each frame's acceptance"),

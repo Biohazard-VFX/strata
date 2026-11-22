@@ -37,6 +37,7 @@
 - Renders are Karma XPU GPU-only and abort without a GPU; the driver retries once with the CPU device and records which ran.
 - Job lists (`jobs.json`, `jobs.sh`) hold one `strata-datagen render-task` per task, never bare husk, with paths relative to the build root.
 - render-task holds the shot lock across husk, pack, accept and prune; husk inherits the lock descriptor, so the shot stays locked while it runs.
+- Farm nodes never write a local shot: downloaded output enters only via `ingest`, staged in the shot and renamed in under the lock.
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
 - Every frame gets float32 sky-inclusive K=4 targets (strata_contract.layers, sky masked); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.

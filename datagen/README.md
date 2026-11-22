@@ -16,7 +16,9 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   (local sync, or fetched with nxc), HDRIs and an external hero library (`hero.json` + USD poses).
 - `strata_datagen/render/`: render settings in USD and the husk driver. Farm job lists run
   `strata-datagen render-task`, which holds the shot lock, renders with a husk that inherits it,
-  then packs, accepts and prunes under the same hold.
+  then packs, accepts and prunes under the same hold. A farm renders its own copy of a shot; its
+  downloaded output folders enter a local shot only through `strata-datagen ingest`, which stages
+  them in the shot and renames them in under the lock (sidecar frames stay write-once).
 - `strata_datagen/qa/`: per-shot acceptance checks and the contact sheet.
 - `strata_datagen/timeline.py`: smooth seeded curves (`timeline.Curve`, a cubic B-spline) for every
   time-varying parameter. A generator's `sample_*` returns one value per frame sample (frames plus

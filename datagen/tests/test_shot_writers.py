@@ -17,7 +17,7 @@ from tests.concurrency import free
 from tests.fixtures import SKY, Sample, write_shot
 from tests.shotwrites import watching
 
-SHOT_WRITERS = {"build", "render", "render-task", "pack", "accept", "prune", "remove-samples", "qa"}
+SHOT_WRITERS = {"build", "render", "render-task", "ingest", "pack", "accept", "prune", "remove-samples", "qa"}
 SHOT_FREE = {"fetch", "prepare", "humans", "morphs", "creatures"}
 PIXELS: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 2), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
 
