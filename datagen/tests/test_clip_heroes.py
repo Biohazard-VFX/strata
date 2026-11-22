@@ -57,6 +57,7 @@ class ClipHeroTest(unittest.TestCase):
             self.assertEqual(refs[0].layerOffset.offset, shot.frames[0] - shot.placement.start)
             self.assertEqual(prim.attributes["primvars:karma:object:geosamples"].default, human.GEO_SAMPLES)
             self.assertEqual(prim.attributes["primvars:instance_id"].default, 2)
+            self.assertEqual(prim.attributes["primvars:coverage"].default, 1.0)
             self.assertFalse(layer.GetPrimAtPath("/World/materials/hero_skin"))
 
     def test_long_shots_only_pick_clips_that_cover_them(self) -> None:

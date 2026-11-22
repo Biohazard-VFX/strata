@@ -11,7 +11,7 @@ import numpy as np
 from pxr import Gf, Sdf, Usd, UsdGeom
 
 from strata_datagen.fields import Ground
-from strata_datagen.usdutil import FloatArray
+from strata_datagen.usdutil import FloatArray, tag_instances
 
 VERSION = "human-0.1.0"
 GEO_SAMPLES = 3
@@ -66,9 +66,8 @@ def author(
     rotate.Set(placement.yaw_deg)
     for index, offset in enumerate(placement.offset):
         translate.Set(Gf.Vec3d(*(float(v) for v in offset)), Usd.TimeCode(first_frame - 1 + index))
-    primvars = UsdGeom.PrimvarsAPI(xform)
-    primvars.CreatePrimvar("instance_id", Sdf.ValueTypeNames.Int, UsdGeom.Tokens.constant).Set(instance_id)
-    primvars.CreatePrimvar("karma:object:geosamples", Sdf.ValueTypeNames.Int, UsdGeom.Tokens.constant).Set(
-        GEO_SAMPLES
-    )
+    tag_instances(xform.GetPrim(), np.array([instance_id]))
+    UsdGeom.PrimvarsAPI(xform).CreatePrimvar(
+        "karma:object:geosamples", Sdf.ValueTypeNames.Int, UsdGeom.Tokens.constant
+    ).Set(GEO_SAMPLES)
     return xform
