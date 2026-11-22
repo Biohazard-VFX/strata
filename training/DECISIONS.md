@@ -20,7 +20,7 @@
 - Deep EXR export preserves every positive-coverage sample, including faint HDR contributions.
 - Native role masks use ID 3 for groom and IDs 2/3 for hero silhouettes; scattered instances remain separate.
 - Post-training lives in training/posttrain so model export remains independently owned.
-- Native role masks decode round(instance_id/A) from deep samples and composite visible role coverage, rather than labeling only the nearest surface.
+- Native role masks decode round(instance_id/coverage) from deep samples and composite visible role coverage, rather than labeling only the nearest surface.
 - OOD baselines reuse frozen training-only calibration; oracle-conditioned predictions retain checkpoint training-scale provenance.
 - Supervise coverage with float32 soft-target BCE logits so sigmoid saturation cannot erase mixed-pixel correction gradients.
 - Warm up new-head and pretrained-decoder optimizer groups at separate learning rates; reject resume across objective or schedule changes.
@@ -28,3 +28,4 @@
 - Public raw deep samples own flattened channel arrays and preserve pixel counts, sample order and premultiplied IDs; missing channels fail explicitly.
 - Sorted pixel and cluster segments use contiguous extrema reductions; ordered first candidates preserve stable depth-gap ties.
 - Hybrid training uses native 512² independent crops, 40% clean-cache reuse and frozen bf16/SDPA encoding otherwise; augmented features are never cached.
+- Sky ID 0 retains colour/coverage targets; clusters containing visible sky have no depth supervision, including when the K limit merges sky and geometry.

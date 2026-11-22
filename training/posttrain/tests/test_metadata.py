@@ -77,6 +77,7 @@ def test_native_parts_and_role_masks_are_preserved_in_target_cache(tmp_path: Pat
     for y, x in np.ndindex(2, 2):
         samples[y, x] = np.array([ids[y, x]], dtype=np.float32)
     channels["instance_id"] = samples
+    channels["coverage"] = channels["A"].copy()
     with exr.File(
         {"type": exr.deepscanline, "compression": exr.ZIPS_COMPRESSION}, channels
     ) as file:
@@ -105,6 +106,7 @@ def test_deep_roles_decode_premultiplied_ids_and_ignore_hidden_samples(tmp_path:
     for x, row in enumerate(rows):
         for key, values in zip(channels, row, strict=True):
             channels[key][0, x] = np.array(values, dtype=np.float32)
+    channels["coverage"] = channels["A"].copy()
     path = tmp_path / "deep.exr"
     with exr.File(
         {"type": exr.deepscanline, "compression": exr.ZIPS_COMPRESSION}, channels

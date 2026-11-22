@@ -4,24 +4,26 @@ from typing import Any
 
 import numpy as np
 
-from strata_training.data.targets import reduce_samples
+from strata_training.data.targets import reduce_identified_samples, reduce_samples
 from strata_training.io import atomic_path
 from strata_training.types import Array, Layers
 
 exr: Any = import_module("OpenEXR")
 
 
-def read_rgb(path: Path, *, legacy: bool = False) -> Array:
+def read_rgb(path: Path, *, legacy: bool = False, part_name: str = "C") -> Array:
     with exr.File(str(path), separate_channels=True) as file:
-        candidates = [part for part in file.parts if part.name() == "C"]
+        candidates = [part for part in file.parts if part.name() == part_name]
         if candidates:
             part = candidates[0]
-        elif legacy and len(file.parts) == 1:
+        elif legacy and part_name == "C" and len(file.parts) == 1:
             part = file.parts[0]
         else:
-            raise ValueError(f"Beauty is missing its C part: {path}")
+            raise ValueError(f"Beauty is missing its {part_name} part: {path}")
         channels = part.channels
-        return np.stack([channels[c].pixels for c in "RGB"]).astype(np.float32)
+        return np.stack(
+            [channels[c if part_name == "C" else f"{part_name}.{c}"].pixels for c in "RGB"]
+        ).astype(np.float32)
 
 
 def read_samples(
@@ -50,27 +52,42 @@ def read_samples(
         return arrays, counts, z.shape
 
 
-def decode_instance_ids(premultiplied: Array, alpha: Array) -> Array:
-    """Return owned rounded instance_id/A values, with zero for nonpositive alpha.
+def decode_instance_ids(premultiplied: Array, coverage: Array) -> Array:
+    """Return owned rounded instance_id/coverage values, zero for nonpositive coverage.
 
     Inputs are borrowed and unmodified; concurrent calls are safe when callers
     do not mutate inputs. The float array preserves read_roles decoding semantics.
     """
     if not np.all(np.isfinite(premultiplied) & (premultiplied >= 0)):
         raise ValueError("Deep instance IDs must be finite and nonnegative")
-    return np.rint(np.divide(premultiplied, alpha, out=np.zeros_like(alpha), where=alpha > 0))
+    return np.rint(
+        np.divide(premultiplied, coverage, out=np.zeros_like(coverage), where=coverage > 0)
+    )
 
 
 def read_roles(path: Path) -> dict[str, Array]:
-    arrays, counts, shape = read_samples(path, ("Z", "A", "instance_id"))
+    arrays, counts, shape = read_samples(path, ("Z", "A", "instance_id", "coverage"))
     alpha, premultiplied = arrays["A"], arrays["instance_id"]
-    ids = decode_instance_ids(premultiplied, alpha)
+    ids = decode_instance_ids(premultiplied, arrays["coverage"])
     markers = np.stack((ids == 3, (ids == 2) | (ids == 3), np.zeros_like(ids)), axis=1)
     coverage = reduce_samples(arrays["Z"], alpha, markers * alpha[:, None], counts, shape, 1)
     return {"fur": coverage.rgb[0, 0] > 1e-12, "foreground": coverage.rgb[0, 1] > 0.1}
 
 
-def read_deep(path: Path, layers: int = 4) -> Layers:
+def read_deep(path: Path, layers: int = 4, *, background: bool = False) -> Layers:
+    if background:
+        arrays, counts, shape = read_samples(
+            path, ("Z", "A", "R", "G", "B", "instance_id", "coverage")
+        )
+        return reduce_identified_samples(
+            arrays["Z"],
+            arrays["A"],
+            np.stack([arrays[c] for c in "RGB"], axis=1),
+            counts,
+            shape,
+            decode_instance_ids(arrays["instance_id"], arrays["coverage"]),
+            layers,
+        )
     arrays, counts, shape = read_samples(path, "ZARGB")
     return reduce_samples(
         arrays["Z"],

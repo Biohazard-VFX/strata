@@ -25,6 +25,7 @@ def write_samples(path: Path, *, ids: bool = True) -> dict[str, Array]:
         "G": np.array([2, 0.25, 0.5, 0], dtype=np.float32),
         "B": np.array([1, 0, 0.25, 0], dtype=np.float32),
     }
+    values["coverage"] = values["A"].copy()
     if ids:
         values["instance_id"] = np.array([1, 0.75, 1, 0], dtype=np.float32)
     channels: dict[str, Array] = {}

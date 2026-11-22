@@ -93,10 +93,12 @@ def test_read_samples_decodes_premultiplied_instance_ids_and_sorts_by_depth(
 ) -> None:
     channels = {n: np.empty((1, 2), dtype=object) for n in ("R", "G", "B", "A", "Z", "ZBack")}
     channels["instance_id"] = np.empty((1, 2), dtype=object)
+    channels["coverage"] = np.empty((1, 2), dtype=object)
     values: dict[str, tuple[list[float], list[float]]] = {
         "Z": ([5.0, 2.0], []),
         "A": ([0.5, 0.25], []),
-        "instance_id": ([0.5 * 1000, 0.25 * 3], []),
+        "instance_id": ([0.5001 * 10000, 0.2501 * 3], []),
+        "coverage": ([0.5001, 0.2501], []),
     }
     for name, array in channels.items():
         for x in range(2):
@@ -109,7 +111,7 @@ def test_read_samples_decodes_premultiplied_instance_ids_and_sorts_by_depth(
     deep = read_samples(path)
     assert deep.counts.tolist() == [2, 0]
     assert_allclose(deep.z, [2.0, 5.0])
-    assert deep.ids.tolist() == [3, 1000]
+    assert deep.ids.tolist() == [3, 10000]
 
 
 def shot_from(deep: DeepSamples, rng: np.random.Generator, noise: float) -> Shot:

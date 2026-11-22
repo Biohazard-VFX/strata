@@ -6,7 +6,7 @@ import numpy as np
 
 from strata_training.data.exr import decode_instance_ids
 from strata_training.data.exr import read_samples as read_channels
-from strata_training.data.targets import reduce_samples
+from strata_training.data.targets import reduce_identified_samples
 from strata_training.io import save_array
 from strata_training.types import Array, Layers
 
@@ -66,12 +66,13 @@ class DeepSamples:
         )
 
     def targets(self, layers: int = 4) -> Layers:
-        return reduce_samples(
+        return reduce_identified_samples(
             self.z.astype(np.float64),
             self.alpha.astype(np.float64),
             self.rgb.astype(np.float64),
             self.counts,
             self.shape,
+            self.ids,
             layers,
         )
 
@@ -99,9 +100,11 @@ def from_unsorted(
 
 
 def read_samples(path: Path) -> DeepSamples:
-    values, counts, shape = read_channels(path)
+    values, counts, shape = read_channels(
+        path, ("Z", "A", "R", "G", "B", "instance_id", "coverage")
+    )
     alpha = values["A"].astype(np.float32)
-    ids = decode_instance_ids(values["instance_id"], values["A"]).astype(np.int64)
+    ids = decode_instance_ids(values["instance_id"], values["coverage"]).astype(np.int64)
     rgb = np.stack([values[c] for c in "RGB"], axis=1).astype(np.float32)
     pixel = np.repeat(np.arange(counts.size), counts)
     return from_unsorted(shape, pixel, values["Z"].astype(np.float32), alpha, rgb, ids)

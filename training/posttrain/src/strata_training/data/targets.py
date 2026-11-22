@@ -42,3 +42,20 @@ def reduce_samples(
         gap_ratio=gap_ratio,
     )
     return Layers(result.inverse_depth, result.alpha, result.rgb)
+
+
+def reduce_identified_samples(
+    depth: Array,
+    alpha: Array,
+    rgb: Array,
+    counts: Array,
+    shape: tuple[int, int],
+    ids: Array,
+    layers: int = 4,
+) -> Layers:
+    """Own reduced arrays; mask depth of any cluster containing visible sky, not its color/alpha."""
+    result = reduce_samples(depth, alpha, rgb, counts, shape, layers)
+    sky = np.repeat((alpha * (ids == 0))[:, None], 3, axis=1)
+    membership = reduce_samples(depth, alpha, sky, counts, shape, layers)
+    result.inverse_depth[membership.rgb[:, 0] > 1e-12] = 0
+    return result
