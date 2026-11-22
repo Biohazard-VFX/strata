@@ -274,8 +274,10 @@ against the dataset contract's NumPy reducer, including real packed frames.
 ## Target cache maintenance
 
 `targets DATASET OUTPUT` memoizes source EXR digests in `OUTPUT/digests.json` using
-size, nanosecond mtime/ctime, inode and device. Warm preparation reuses stable digests;
+size, nanosecond mtime/ctime, inode, device and the Linux boot ID. Warm preparation
+reuses stable digests only within the same boot; a missing or changed boot ID,
 changed source metadata or timestamps within two seconds of the last hash force rehashing.
+The boot boundary prevents inode/ctime reuse on filesystems such as exFAT.
 Target archives remain content-addressed;
 preparation never overwrites arrays held by an existing frame mapping.
 
@@ -285,7 +287,12 @@ require an exclusive file lock. Training, feature extraction, prediction, baseli
 and evaluation hold shared locks in every referenced target-cache directory for the whole run.
 Locks are acquired in sorted directory order, including validation caches. Index directories
 may be read-only and stored separately; no lock file is written beside the index.
-Offline maintenance refuses while any reader holds the cache.
+Read-only target-cache directories support readers through their existing readable
+`.cache.lock`; readers still hold a shared lease and never bypass locking. A missing
+lock file is an error. Preparation and pruning require a writable cache directory;
+a read-only lock file in a writable directory is not a read-only-cache fallback.
+Offline maintenance refuses while any reader holds the cache; readers refuse while
+an offline writer or prune holds it.
 
 Loader startup logs the fraction of producer-published, recomposition-eligible views.
 `eligibility_warning_fraction` sets the warning threshold (default `0.25`, in `[0, 1]`).

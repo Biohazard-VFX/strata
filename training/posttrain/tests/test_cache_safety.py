@@ -13,6 +13,8 @@ def test_restored_mtime_rebuilds_targets(
     packed_shot: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "targets"
+    hashed_ns = cache.time.time_ns() - 10_000_000_000
+    monkeypatch.setattr(cache.time, "time_ns", lambda: hashed_ns)
     entries = cache.prepare(packed_shot.parent, output)
     source = packed_shot / "beauty/0001.exr"
     stat = source.stat()
@@ -47,9 +49,8 @@ def test_digest_memo_checks_file_identity(
         del args, kwargs
         return SimpleNamespace(**fields)
 
+    memo = cache.Digests(tmp_path)
     monkeypatch.setattr(Path, "stat", file_stat)
-    memo = cache.Digests.__new__(cache.Digests)
-    memo.records = {}
     old = memo.digest(source)
     source.write_bytes(b"new")
     fields[field] += 1
@@ -72,9 +73,8 @@ def test_same_tick_digest_is_rehashed(
         del args, kwargs
         return SimpleNamespace(**fields)
 
+    memo = cache.Digests(tmp_path)
     monkeypatch.setattr(Path, "stat", file_stat)
-    memo = cache.Digests.__new__(cache.Digests)
-    memo.records = {}
     old = memo.digest(source)
     source.write_bytes(b"new")
     assert memo.digest(source) != old

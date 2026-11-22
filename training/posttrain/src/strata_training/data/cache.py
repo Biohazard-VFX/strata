@@ -1,6 +1,7 @@
 import fcntl
 import hashlib
 import json
+import os
 import shutil
 import time
 from collections.abc import Callable, Generator
@@ -26,13 +27,19 @@ CACHE_VERSION = "targets-content-v1"
 @contextmanager
 def cache_lock(output: Path, *, shared: bool) -> Generator[None]:
     """Hold a shared training lease or exclusive offline writer lease; never wait on users."""
-    with (output / ".cache.lock").open("a+b") as lock:
+    writable = os.access(output, os.W_OK)
+    if not shared and not writable:
+        raise PermissionError("Target cache maintenance requires a writable directory")
+    with (output / ".cache.lock").open("a+b" if writable else "rb") as lock:
         try:
             fcntl.flock(lock, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise ValueError(
-                "Target cache is in use; stop training before offline maintenance"
-            ) from error
+            message = (
+                "Target cache is in use by a writer or prune; finish maintenance before reading"
+                if shared
+                else "Target cache is in use; stop training before offline maintenance"
+            )
+            raise ValueError(message) from error
         try:
             yield
         finally:
@@ -70,6 +77,7 @@ def digest_stat(stat: stat_result) -> list[int]:
 class Digests:
     def __init__(self, output: Path) -> None:
         self.path = output / "digests.json"
+        self.boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
         self.records: dict[str, Any] = (
             json.loads(self.path.read_text()) if self.path.exists() else {}
         )
@@ -81,6 +89,7 @@ class Digests:
         record = self.records.get(name)
         if (
             record is not None
+            and record.get("boot_id") == self.boot_id
             and record["stat"] == key
             and all(
                 abs(timestamp - record["hashed_ns"]) > 2_000_000_000
@@ -94,7 +103,12 @@ class Digests:
         after = path.stat()
         if digest_stat(after) != key:
             raise ValueError("Source changed while hashing target cache input")
-        self.records[name] = {"stat": key, "sha256": digest, "hashed_ns": hashed_ns}
+        self.records[name] = {
+            "stat": key,
+            "sha256": digest,
+            "hashed_ns": hashed_ns,
+            "boot_id": self.boot_id,
+        }
         return digest
 
     def save(self) -> None:
