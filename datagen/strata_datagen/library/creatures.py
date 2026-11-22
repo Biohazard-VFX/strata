@@ -21,9 +21,10 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
-from pxr import Sdf, UsdGeom, Vt
+from pxr import Sdf, UsdGeom
 
 from strata_datagen import files
+from strata_datagen import regions as skin_regions
 from strata_datagen.generators import groom
 from strata_datagen.library import coat, heroes
 from strata_datagen.rng import stream
@@ -120,6 +121,17 @@ def close_loop(clip: FloatArray, period: int) -> FloatArray:
     return cycle + weight * residual
 
 
+def region_weights(raw: Raw) -> dict[str, FloatArray]:
+    """Soft vertex weights per exported face region (strata_datagen.regions)."""
+    counts, corners = np.full(len(raw.triangles), 3), raw.triangles.ravel()
+    points = raw.points.shape[1]
+    return {
+        name: skin_regions.from_faces(raw.regions == index, counts, corners, points)
+        for index, name in enumerate(raw.names)
+        if (raw.regions == index).any()
+    }
+
+
 def write_pose(path: Path, raw: Raw, clip: FloatArray) -> None:
     """A pose file: the skin mesh at the clip's first frame, time-sampled from 0 when it moves."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,10 +149,7 @@ def write_pose(path: Path, raw: Raw, clip: FloatArray) -> None:
         UsdGeom.PrimvarsAPI(mesh).CreatePrimvar(
             "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.faceVarying
         ).Set(vec2f(raw.corner_st))
-        UsdGeom.PrimvarsAPI(mesh).CreatePrimvar(
-            "region", Sdf.ValueTypeNames.IntArray, UsdGeom.Tokens.uniform
-        ).Set(ints(raw.regions))
-        mesh.GetPrim().SetCustomDataByKey("regions", Vt.StringArray(list(raw.names)))
+        skin_regions.author(mesh, region_weights(raw))
         mesh.CreateExtentAttr(
             vec3f(np.stack([clip.reshape(-1, 3).min(axis=0), clip.reshape(-1, 3).max(axis=0)]))
         )
@@ -423,7 +432,7 @@ def build_hero(recipe: Json, raw_dir: Path, folder: Path) -> Json:
         shutil.copyfile(raw_dir / "albedo.png", temporary)
     skin = groom.Skin(first, raw.triangles, raw.corner_st)
     front = front_vertex(raw, first)
-    field = coat.field(skin, raw.regions, raw.names, front)
+    field = coat.field(skin, region_weights(raw), front)
     classes = cast("list[str]", recipe["coat"])
     provenance = cast("Json", recipe["provenance"])
     manifest: Json = {
@@ -434,6 +443,8 @@ def build_hero(recipe: Json, raw_dir: Path, folder: Path) -> Json:
         "albedo": "textures/albedo.png",
         "coat": sample_coat(classes, field, first, front, key),
         "coat_classes": classes,
+        "regions": sorted(region_weights(raw)),
+        "forward": [0.0, 0.0, 1.0],
         "length_m": recipe["length_m"],
         "generator": raw.info,
         "source": provenance["source"],

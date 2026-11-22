@@ -1,7 +1,7 @@
 """Author a human hero as USD: animated subdivision meshes with MaterialX looks and skin regions.
 
 Each part is a mesh with time-sampled points, a bound look and a `rest` primvar; the skin carries
-region GeomSubsets.
+float vertex primvars `region_<name>` (strata_datagen.regions).
 
 Layout (default prim /hero): /hero/body (skin), /hero/eyes, /hero/garment<N>, /hero/looks/<look>.
 """
@@ -12,12 +12,12 @@ from pathlib import Path
 import numpy as np
 from pxr import Sdf, Usd, UsdGeom, UsdShade
 
+from strata_datagen import regions as skin_regions
 from strata_datagen.generators import materials
 from strata_datagen.usdutil import FloatArray, IntArray, ints, new_stage, vec2f, vec3f
 
 ROOT = "/hero"
 LOOKS = "/hero/looks"
-REGION_FAMILY = "hero_region"
 REST_PRIMVAR = "rest"
 
 
@@ -59,14 +59,6 @@ def _points(mesh: UsdGeom.Mesh, samples: FloatArray, times: FloatArray | None) -
         extent.Set(vec3f(np.stack([sample.min(axis=0), sample.max(axis=0)])), code)
 
 
-def _regions(mesh: UsdGeom.Mesh, regions: dict[str, IntArray]) -> None:
-    for name, faces in sorted(regions.items()):
-        UsdGeom.Subset.CreateGeomSubset(
-            mesh, name, UsdGeom.Tokens.face, ints(faces), REGION_FAMILY, UsdGeom.Tokens.unrestricted
-        )
-    UsdGeom.Subset.SetFamilyType(mesh, REGION_FAMILY, UsdGeom.Tokens.unrestricted)
-
-
 def write(
     path: Path,
     *,
@@ -74,7 +66,7 @@ def write(
     samples: dict[str, FloatArray],
     times: FloatArray | None,
     looks: dict[str, materials.Look],
-    regions: dict[str, IntArray],
+    regions: dict[str, FloatArray],
 ) -> None:
     """Write the hero file; `times` None writes the rest pose without animation."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,7 +83,7 @@ def write(
         _points(mesh, samples[part.name], times)
         UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(bound[part.look])
         if part.name == "body":
-            _regions(mesh, regions)
+            skin_regions.author(mesh, regions)
     stage.GetRootLayer().Save()
     del stage
     temporary.replace(path)

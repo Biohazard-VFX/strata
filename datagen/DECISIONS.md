@@ -48,15 +48,16 @@
 - Each thin structure is written to its own usdc layer beside shot.usda and referenced, with material bindings as overrides, so shot layers stay small.
 - Human hair comes from the hairstyle generator: guides grown under gravity against the skin, dense strands interpolated, then Blender hair-node deformers ported to numpy (strands.py).
 - Hair renders with Karma's kma_hair melanin shader on `outputs:kma:surface`; Karma XPU skips MaterialX chiang_hair graphs (ND_surface roots).
-- Heroes mark hair-growing skin with float vertex primvars `region_<scalp|brows|lashes|beard>`; a scalp region gives the hero a seeded hairstyle in every shot.
+- Every hero marks skin regions only as float vertex primvars `region_<name>` (0..1, soft at borders), never GeomSubsets or int labels; a scalp region turns on hair.
 - Hairstyles are grown per shot into `scene/hair.usdc` so each seed gets its own style; skins and fur grooms stay baked per pose at prepare time.
+- Hair on animated heroes is grown on the rest skin and carried by a per-sample similarity fit to the upper scalp plus per-key root offsets, not per-sample points.
 - Hairstyles morph over a shot on timeline curves with one topology: length trims, density fades widths, cut and updo stay fixed; points keyed every 3 s, USD interpolates.
 - Human heroes are MPFB bodies (cmu_mb rig, CC0 skins, eyes and clothes) animated with original CMU ASF/AMC clips, built offline into the external hero library.
 - Animated heroes are point caches with samples at each frame and ±0.25, not UsdSkel, so skinned bodies, simulated garments and grooms share one representation.
 - Animated hero prims set `primvars:karma:object:geosamples` to 3; Karma renders no deformation blur without it.
 - Retargeting copies CMU world bone rotations after a rest-direction swing per bone; joints keep the target's proportions and root travel scales by hip height.
 - Hand bones follow the wrist because CMU finger channels are placeholders.
-- Skin regions (scalp, face, brows, beard, ears, lips, body) are GeomSubsets of family `hero_region`; their heights scale with the eye-to-crown distance.
+- Human skin regions (scalp, face, brows, beard, ears, lips, body) are vertex masks scaled by the eye-to-crown distance, written as faces' shares per vertex.
 - GarmentCode supplies sewing patterns only; panels are sewn and simulated in Houdini Vellum, never with GarmentCode's non-commercial Warp fork.
 - Animated heroes carry their own MaterialX looks; scenes reference them without overriding bindings.
 - A shot's subject size is the hero's largest bounding extent, so tall heroes are framed by height.

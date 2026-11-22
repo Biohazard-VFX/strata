@@ -9,7 +9,8 @@ A creature hero's hero.json may carry a "coat" block next to the plain hero fiel
   morph (optional): {length: [lo, hi], density: [lo, hi], period_s, key_step}, copied onto the
   prepared groom prim's customData so shots can vary the coat over time (generators/morph.py).
 zone = {geodesic: [lo, hi] as fractions of the longest comb distance, min_up: lowest normal y}.
-Pose skins carry a uniform int primvar `region` whose names are the mesh's customData `regions`.
+Pose skins carry float vertex primvars `region_<name>` (strata_datagen.regions); a layer grows on the
+faces whose corners' mean weight in one of its regions is at least one half.
 """
 
 import json
@@ -23,6 +24,7 @@ from pxr import Sdf, Usd, UsdGeom
 from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 
+from strata_datagen import regions as skin_regions
 from strata_datagen.generators import feathers, groom
 from strata_datagen.library import heroes
 from strata_datagen.rng import stream
@@ -196,24 +198,26 @@ class Field:
     """The rest skin with its face regions, comb field and comb distance normalised to [0, 1]."""
 
     skin: groom.Skin
-    regions: IntArray
-    names: tuple[str, ...]
+    regions: dict[str, FloatArray]
     normals: FloatArray
     combs: FloatArray
     distance: FloatArray
 
 
-def field(skin: groom.Skin, regions: IntArray, names: tuple[str, ...], front_vertex: int) -> Field:
+def field(skin: groom.Skin, regions: dict[str, FloatArray], front_vertex: int) -> Field:
     distance = geodesic(skin, front_vertex)
     normals, combs = comb_field(skin, distance)
     finite = np.isfinite(distance)
     scaled = np.where(finite, distance / max(float(distance[finite].max()), 1e-9), np.inf)
-    return Field(skin, regions, names, normals, combs, scaled)
+    return Field(skin, regions, normals, combs, scaled)
 
 
 def select(f: Field, regions: tuple[str, ...], zone: Zone) -> tuple[groom.Skin, IntArray]:
     """The skin faces a layer grows on, and their indices into the full skin's triangles."""
-    wanted = np.isin(f.regions, [f.names.index(r) for r in regions if r in f.names])
+    counts, corners = np.full(len(f.skin.triangles), 3), f.skin.triangles.ravel()
+    wanted = np.zeros(len(f.skin.triangles), dtype=bool)
+    for name in (r for r in regions if r in f.regions):
+        wanted |= skin_regions.face_mask(f.regions[name], counts, corners)
     face_distance = f.distance[f.skin.triangles].mean(axis=1)
     lo, hi = zone.geodesic
     face_up = f.normals[f.skin.triangles].mean(axis=1)[:, 1]
@@ -316,11 +320,9 @@ def deform(hair: groom.Groom, triangles: IntArray, rest: FloatArray, posed: Floa
     return anchor_posed[:, None] + np.einsum("nse,ned->nsd", local, frame_posed)
 
 
-def read_regions(stage: Usd.Stage, path: str) -> tuple[IntArray, tuple[str, ...]]:
-    prim = stage.GetPrimAtPath(path)
-    values = UsdGeom.PrimvarsAPI(prim).GetPrimvar("region").Get()
-    names = cast("list[str]", prim.GetCustomDataByKey("regions"))
-    return np.asarray(values, dtype=np.int64), tuple(names)
+def read_regions(stage: Usd.Stage, path: str) -> dict[str, FloatArray]:
+    mesh = UsdGeom.Mesh(stage.GetPrimAtPath(path))
+    return skin_regions.read(mesh, skin_regions.names(mesh))
 
 
 def _skin_samples(stage: Usd.Stage, path: str) -> list[tuple[float, FloatArray]]:
@@ -328,8 +330,14 @@ def _skin_samples(stage: Usd.Stage, path: str) -> list[tuple[float, FloatArray]]
     return [(time, np.asarray(attribute.Get(time), dtype=np.float64)) for time in attribute.GetTimeSamples()]
 
 
-def _author_skin(stage: Usd.Stage, skin: groom.Skin, samples: list[tuple[float, FloatArray]]) -> None:
+def _author_skin(
+    stage: Usd.Stage,
+    skin: groom.Skin,
+    samples: list[tuple[float, FloatArray]],
+    regions: dict[str, FloatArray],
+) -> None:
     mesh = UsdGeom.Mesh.Define(stage, "/hero/skin")
+    skin_regions.author(mesh, regions)
     mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
     points = mesh.CreatePointsAttr(vec3f(skin.points))
     for time, posed in samples:
@@ -367,14 +375,14 @@ def prepare_pose(manifest: heroes.HeroManifest, pose: str, output: Path) -> hero
         raise ValueError(f"{manifest.key} has no coat")
     source = Usd.Stage.Open(str(manifest.directory / manifest.poses[pose]))
     skin, _ = heroes.read_skin(source, manifest.skin_prim)
-    regions, names = read_regions(source, manifest.skin_prim)
+    regions = read_regions(source, manifest.skin_prim)
     samples = _skin_samples(source, manifest.skin_prim)
     density = coat.animated_density if samples else 1.0
-    hair = grow(field(skin, regions, names, coat.front_vertex), coat, density, f"{manifest.key}:{pose}")
+    hair = grow(field(skin, regions, coat.front_vertex), coat, density, f"{manifest.key}:{pose}")
     output.parent.mkdir(parents=True, exist_ok=True)
     stage = new_stage(output)
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/hero").GetPrim())
-    _author_skin(stage, skin, samples)
+    _author_skin(stage, skin, samples, regions)
     if hair is not None:
         posed = [(time, deform(hair, skin.triangles, skin.points, frame)) for time, frame in samples]
         _author_groom(stage, hair, posed)

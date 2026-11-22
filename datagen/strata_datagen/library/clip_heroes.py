@@ -2,8 +2,10 @@
 
 Animated hero.json fields (written by library/humans.py; see datagen/README.md for the full schema):
   key, kind; rest: rest-pose USD; clips: {name: {file, category, frames, first_frame, fps, subframes,
-  speed_mps, bounds_min, bounds_max, track, source}}; skin_prim; parts; regions (GeomSubset paths on
-  the skin, family `region_family`); rest_primvar; source, license, licenses, redistributable.
+  speed_mps, bounds_min, bounds_max, track, source}}; skin_prim; parts; regions (names of the skin's
+  `region_<name>` vertex primvars, strata_datagen.regions); forward; facial_hair; rest_primvar;
+  source, license, licenses, redistributable. A scalp region gives the hero a hairstyle per shot,
+  bound to the `rest_primvar` points and carried by the animated skin.
 Clip files carry their own MaterialX looks, so a build root copies the hero's usd/ and textures/.
 """
 
@@ -12,7 +14,10 @@ import shutil
 from pathlib import Path
 from typing import cast
 
-from strata_datagen.library import catalogue
+from pxr import Usd, UsdGeom
+
+from strata_datagen import regions as skin_regions
+from strata_datagen.library import catalogue, heroes
 
 COPIED = ("usd", "textures")
 
@@ -46,9 +51,20 @@ def prepare(directory: Path, folder: Path, root: Path) -> catalogue.Hero:
         )
         for name, clip in sorted(clips.items())
     )
+    skin_prim = str(raw["skin_prim"])
+    regions = tuple(str(r) for r in cast("list[object]", raw["regions"]))
+    rest = Usd.Stage.Open(str(folder / str(raw["rest"])))
+    skin_regions.read(UsdGeom.Mesh(rest.GetPrimAtPath(skin_prim)), regions)
     return catalogue.Hero(
         str(raw["key"]),
         "",
         poses,
         catalogue.Provenance(str(raw["source"]), str(raw["license"]), str(directory)),
+        heroes.hair(
+            regions,
+            _vec(raw["forward"]),
+            facial_hair=bool(raw["facial_hair"]),
+            skin_prim=skin_prim,
+            rest_primvar=str(raw["rest_primvar"]),
+        ),
     )

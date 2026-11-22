@@ -152,7 +152,7 @@ def write_take(
     *,
     parts: list[human_usd.MeshPart],
     looks: dict[str, materials.Look],
-    regions: dict[str, np.ndarray],
+    regions: dict[str, FloatArray],
 ) -> None:
     human_usd.write(path, parts=parts, samples=take.samples, times=take.times, looks=looks, regions=regions)
     stage = Usd.Stage.Open(str(path))
@@ -249,6 +249,7 @@ def build_family(
     record.update(
         key=key,
         kind="human_morph",
+        facial_hair=humans.facial_hair(specs),
         corners=[
             {"skin": s.skin.id, "phenotype": s.phenotype, "face_targets": [[t, v] for t, v in s.targets]}
             for s in specs

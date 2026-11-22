@@ -65,11 +65,16 @@ class HeroPose:
 
 @dataclass(frozen=True)
 class HeroHair:
-    """Hair-growing skin regions of a hero, its facing direction and whether facial hair is allowed."""
+    """Hair-growing skin regions of a hero, its facing direction and whether facial hair is allowed.
+
+    The skin is `skin_prim` in each pose file; animated clips bind hair to its `rest_primvar` points.
+    """
 
     regions: tuple[str, ...]
     forward: tuple[float, float, float]
     facial_hair: bool
+    skin_prim: str = "/hero/skin"
+    rest_primvar: str | None = None
 
 
 @dataclass(frozen=True)
@@ -173,6 +178,8 @@ def _hero(raw: Json) -> Hero:
             regions=tuple(str(r) for r in cast("list[object]", hair["regions"])),
             forward=_vec(hair["forward"]),
             facial_hair=bool(hair["facial_hair"]),
+            skin_prim=str(hair["skin_prim"]),
+            rest_primvar=None if hair["rest_primvar"] is None else str(hair["rest_primvar"]),
         ),
     )
 

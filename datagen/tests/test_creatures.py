@@ -8,6 +8,7 @@ from unittest import mock
 import numpy as np
 from pxr import Usd, UsdGeom
 
+from strata_datagen import regions
 from strata_datagen.generators import feathers, groom
 from strata_datagen.library import coat, creatures, heroes
 from strata_datagen.rng import stream
@@ -79,7 +80,7 @@ class CombTest(unittest.TestCase):
         triangles[len(triangles) // 2 :] += len(skin.points)
         seamed = groom.Skin(split, triangles, skin.corner_st)
         front = int(np.argmin(split[:, 0] + 10 * split[:, 2]))
-        f = coat.field(seamed, np.zeros(len(triangles), dtype=np.int64), ("body",), front)
+        f = coat.field(seamed, {"body": np.ones(len(split))}, front)
         self.assertTrue(np.isfinite(f.distance[np.unique(triangles)]).all())
         used = np.unique(triangles)
         self.assertGreater(float(np.median(f.combs[used, 0] + f.combs[used, 2])), 0.9)
@@ -133,7 +134,7 @@ class CreatureTest(unittest.TestCase):
             creatures.write_pose(folder / "poses" / "rest.usdc", raw, rest[None])
             skin = groom.Skin(rest, raw.triangles, raw.corner_st)
             front = creatures.front_vertex(raw, rest)
-            field = coat.field(skin, raw.regions, raw.names, front)
+            field = coat.field(skin, creatures.region_weights(raw), front)
             hero = {
                 "key": "bare",
                 "poses": {"rest": "poses/rest.usdc"},
@@ -150,12 +151,27 @@ class CreatureTest(unittest.TestCase):
             self.assertTrue(stage.GetPrimAtPath("/hero/skin"))
             self.assertFalse(stage.GetPrimAtPath("/hero/groom"))
 
+    def test_pose_skins_carry_soft_region_weights_that_recover_their_faces(self) -> None:
+        raw = box_raw(1)
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rest.usdc"
+            creatures.write_pose(path, raw, creatures.orient(raw, None, 1.0)[:1])
+            weights = coat.read_regions(Usd.Stage.Open(str(path)), creatures.SKIN_PRIM)
+        self.assertEqual(sorted(weights), ["body", "head"])
+        np.testing.assert_allclose(weights["head"] + weights["body"], 1.0)
+        border = (weights["head"] > 0.0) & (weights["head"] < 1.0)
+        self.assertTrue(border.any())
+        counts, corners = np.full(len(raw.triangles), 3), raw.triangles.ravel()
+        recovered = regions.face_mask(weights["head"], counts, corners)
+        agree = float((recovered == (raw.regions == 0)).mean())
+        self.assertGreater(agree, 0.97)
+
     def test_capped_coats_thin_out_and_thicken(self) -> None:
         raw = box_raw(1)
         rest = creatures.orient(raw, None, 1.0)[0]
         skin = groom.Skin(rest, raw.triangles, raw.corner_st)
         front = creatures.front_vertex(raw, rest)
-        field = coat.field(skin, raw.regions, raw.names, front)
+        field = coat.field(skin, creatures.region_weights(raw), front)
         full = creatures.sample_coat(["short_coat"], field, rest, front, "box")
         with mock.patch.object(creatures, "MAX_HAIRS", 1000):
             capped = creatures.sample_coat(["short_coat"], field, rest, front, "box")
@@ -177,7 +193,7 @@ class CreatureTest(unittest.TestCase):
             creatures.write_pose(folder / "poses" / "walk.usdc", raw, creatures.in_place(oriented))
             skin = groom.Skin(oriented[0], raw.triangles, raw.corner_st)
             front = creatures.front_vertex(raw, oriented[0])
-            field = coat.field(skin, raw.regions, raw.names, front)
+            field = coat.field(skin, creatures.region_weights(raw), front)
             layers = creatures.sample_coat(["short_coat", "whiskers"], field, oriented[0], front, "box")
             hero = {
                 "key": "box",

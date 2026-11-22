@@ -18,13 +18,14 @@ Recipe fields:
 
 import json
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import numpy as np
 
-from strata_datagen import files
+from strata_datagen import files, regions
 from strata_datagen.generators import materials
 from strata_datagen.library import garments, human_regions, human_usd, mocap, retarget, textures
 from strata_datagen.library.megascans import TextureMap
@@ -48,6 +49,8 @@ SKIN_ROUGHNESS = 0.42
 SKIN_SUBSURFACE = 0.35
 SKIN_SUBSURFACE_RADIUS = (1.0, 0.37, 0.18)
 SKIN_SUBSURFACE_SCALE_M = 0.006
+REGIONS = ("scalp", "face", "brows", "beard", "ears", "lips", "body")
+ADULT_AGE = 0.45
 
 
 @dataclass(frozen=True)
@@ -297,7 +300,8 @@ def load_rest(path: Path) -> RestHuman:
     return RestHuman(rig, parts, groups)
 
 
-def body_regions(human: RestHuman) -> dict[str, IntArray]:
+def body_regions(human: RestHuman) -> dict[str, FloatArray]:
+    """Soft vertex weights per region, derived from the faces whose corners are mostly in the mask."""
     body = next(p for p in human.parts if p.kind == "body")
     eyes = next(p for p in human.parts if p.kind == "eyes").points
     names = human.rig.names
@@ -307,7 +311,20 @@ def body_regions(human: RestHuman) -> dict[str, IntArray]:
 
     marks = human_regions.Landmarks(eyes[eyes[:, 0] > 0].mean(axis=0), eyes[eyes[:, 0] < 0].mean(axis=0))
     masks = human_regions.regions(body.points, weight("Head"), weight("Neck1"), human.groups, marks)
-    return {k: human_regions.face_subset(m, body.counts, body.indices) for k, m in masks.items()}
+    faces = np.zeros(len(body.counts), dtype=bool)
+    out: dict[str, FloatArray] = {}
+    for name, mask in masks.items():
+        faces[:] = False
+        faces[human_regions.face_subset(mask, body.counts, body.indices)] = True
+        out[name] = regions.from_faces(faces, body.counts, body.indices, len(body.points))
+    return out
+
+
+def facial_hair(specs: Sequence[HumanSpec]) -> bool:
+    """Beards only on men past the teen ages in every corner of the hero."""
+    return all(float(cast("float", s.phenotype["gender"])) >= 0.5 for s in specs) and all(
+        float(cast("float", s.phenotype["age"])) >= ADULT_AGE for s in specs
+    )
 
 
 def _mhmat_textures(mhmat: Path) -> dict[str, Path]:
@@ -543,11 +560,9 @@ def manifest(
         "clips": clips,
         "skin_prim": f"{root}/body",
         "parts": {f"{root}/{p.name}": {"kind": p.kind, "source": Path(p.source).stem} for p in human.parts},
-        "regions": {
-            name: f"{root}/body/{name}"
-            for name in ("scalp", "face", "brows", "beard", "ears", "lips", "body")
-        },
-        "region_family": human_usd.REGION_FAMILY,
+        "regions": sorted(REGIONS),
+        "forward": [0.0, 0.0, 1.0],
+        "facial_hair": facial_hair([spec]),
         "rest_primvar": human_usd.REST_PRIMVAR,
         "phenotype": spec.phenotype,
         "face_targets": [[t, v] for t, v in spec.targets],

@@ -19,12 +19,11 @@ from strata_datagen.generators import (
     thin,
 )
 from strata_datagen.generators.scatter import Disk, Layer
-from strata_datagen.library import heroes
 from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
 from strata_datagen.render.pack import DEEP_STRIDE
 from strata_datagen.rng import stream
-from strata_datagen.scene import creature, layers, looks
+from strata_datagen.scene import creature, hair, layers, looks
 from strata_datagen.scene.spec import DEFAULT_FRAMES, REFERENCE_WIDTH_PX, ShotSpec, frames
 from strata_datagen.timeline import FPS
 from strata_datagen.usdutil import new_stage, relative_asset, tag_instances
@@ -288,31 +287,6 @@ def _author_ground(shot: Shot, library: Library, stage: Usd.Stage, root: Path) -
     materials.bind(prim, looks.ground(stage, root, shot.scene_dir, surface))
 
 
-def _author_hair(shot: Shot, entry: Hero, stage: Usd.Stage, root: Path, style: hairstyle.Style) -> None:
-    """Grow the shot's hairstyle on the posed skin into scene/hair.usdc, under the moving hero.
-
-    Keys every hairstyle.KEY_SECONDS morph it over the shot; USD interpolates the points between keys.
-    """
-    if entry.hair is None:
-        raise ValueError(f"hero {entry.key} has no hair regions")
-    first = shot.frames[0]
-    seconds = hairstyle.key_seconds((shot.frames[-1] - first) / FPS)
-    codes = tuple(first + s * FPS for s in seconds)
-    head = heroes.read_head(root / shot.pose.file, entry.hair.regions, entry.hair.forward)
-    built = hairstyle.build(head, style, stream(shot.spec.seed, "hairstyle", "build"), seconds)
-    layer = new_stage(shot.scene_dir / "hair.usdc")
-    names = hairstyle.author(layer, "/hair", built, codes if len(codes) > 1 else ())
-    layer.SetDefaultPrim(layer.GetPrimAtPath("/hair"))
-    layer.GetRootLayer().Save()
-    stage.DefinePrim("/World/hero/hair").GetReferences().AddReference("./hair.usdc")
-    keys = [(Usd.TimeCode(c), s) for c, s in zip(codes, seconds, strict=True)]
-    scalp, facial = looks.hair(stage, style, keys if len(keys) > 1 else [(Usd.TimeCode.Default(), 0.0)])
-    for name in names:
-        prim = stage.OverridePrim(f"/World/hero/hair/{name}")
-        materials.bind(prim, scalp if name == "scalp" else facial)
-        tag_instances(prim, np.array([hero.HAIR_ID]))
-
-
 def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Path:
     shot.scene_dir.mkdir(parents=True, exist_ok=True)
     path = shot.scene_dir / "shot.usda"
@@ -343,7 +317,19 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
             stage, "/World/hero", asset, shot.placement, first_frame=shot.frames[0], instance_id=hero.SKIN_ID
         )
     if shot.hair is not None:
-        _author_hair(shot, library.hero(shot.hero_key), stage, root, shot.hair)
+        entry = library.hero(shot.hero_key)
+        if entry.hair is None:
+            raise ValueError(f"hero {entry.key} has no hair regions")
+        hair.author(
+            stage,
+            shot.scene_dir,
+            root / shot.pose.file,
+            entry.hair,
+            shot.hair,
+            frames=shot.frames,
+            placement=shot.placement,
+            seed=shot.spec.seed,
+        )
     _author_scatter(shot, library, stage, root)
     _author_thin(shot, stage)
     camera.author(stage, "/World/camera", shot.track)

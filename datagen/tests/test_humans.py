@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 from pxr import Usd, UsdGeom, UsdShade
 
+from strata_datagen import regions
 from strata_datagen.generators import materials
 from strata_datagen.library import human_regions, human_usd, humans, mocap, retarget
 
@@ -218,7 +219,7 @@ class HumanUsdTest(unittest.TestCase):
                 samples=samples,
                 times=times,
                 looks={"body": look},
-                regions={"scalp": np.array([0])},
+                regions={"scalp": np.array([1.0, 0.5, 0.5, 0.0])},
             )
             stage = Usd.Stage.Open(str(path))
             mesh = UsdGeom.Mesh(stage.GetPrimAtPath("/hero/body"))
@@ -228,8 +229,9 @@ class HumanUsdTest(unittest.TestCase):
             )
             rest = UsdGeom.PrimvarsAPI(mesh).GetPrimvar(human_usd.REST_PRIMVAR).Get()
             np.testing.assert_allclose(np.asarray(rest), part.rest)
-            subsets = UsdGeom.Subset.GetGeomSubsets(mesh, UsdGeom.Tokens.face, human_usd.REGION_FAMILY)
-            self.assertEqual([s.GetPrim().GetName() for s in subsets], ["scalp"])
+            self.assertEqual(regions.names(mesh), ("scalp",))
+            np.testing.assert_allclose(regions.read(mesh, ("scalp",))["scalp"], [1.0, 0.5, 0.5, 0.0])
+            self.assertFalse(UsdGeom.Subset.GetAllGeomSubsets(mesh))
             bound = UsdShade.MaterialBindingAPI(mesh.GetPrim()).ComputeBoundMaterial()[0]
             surface = bound.GetPrim().GetChild("surface")
             self.assertAlmostEqual(surface.GetAttribute("inputs:subsurface").Get(), 0.3, places=6)

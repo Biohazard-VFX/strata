@@ -5,8 +5,8 @@ hero.json fields:
   skin_prim: mesh prim path in each pose file; guide_prims: curve prim paths (may be empty);
   albedo: texture file relative to the hero directory; groom: GroomParams fields, optional
   when a coat (library/coat.py) replaces it or the hero has none;
-  regions: names of float vertex primvars `region_<name>` (0..1) on the skin marking hair-growing areas,
-  any of scalp, brows, lashes, beard; a scalp region gives the hero a seeded hairstyle per shot;
+  regions: names of the skin's float vertex primvars `region_<name>` (strata_datagen.regions); hair
+  grows on scalp, brows, lashes and beard, and a scalp region gives the hero a seeded hairstyle per shot;
   forward: the direction the face looks in the pose files (Y is up), default [0, 0, 1];
   facial_hair: whether beards and stubble may be drawn on the beard region, default false;
   source, license, redistributable: provenance recorded in every shot manifest.
@@ -22,9 +22,11 @@ import numpy as np
 from pxr import Gf, Sdf, Usd, UsdGeom
 
 from strata_datagen import files
+from strata_datagen import regions as skin_regions
 from strata_datagen.generators import groom, hairstyle
+from strata_datagen.library import catalogue
 from strata_datagen.rng import stream
-from strata_datagen.usdutil import FloatArray, IntArray, floats, ints, new_stage, vec2f, vec3f
+from strata_datagen.usdutil import FloatArray, IntArray, ints, new_stage, vec2f, vec3f
 
 
 @dataclass(frozen=True)
@@ -62,9 +64,9 @@ def _groom(raw: dict[str, float]) -> groom.GroomParams:
 def load(directory: Path) -> HeroManifest:
     raw = cast("dict[str, object]", json.loads((directory / "hero.json").read_text()))
     regions = tuple(str(r) for r in cast("list[object]", raw.get("regions", [])))
-    unknown = set(regions) - set(hairstyle.REGIONS)
-    if unknown:
-        raise ValueError(f"{directory}: unknown hair regions {sorted(unknown)}")
+    malformed = [r for r in regions if not skin_regions.NAME.fullmatch(r)]
+    if malformed:
+        raise ValueError(f"{directory}: region names {malformed} are not lower-case identifiers")
     fx, fy, fz = (float(v) for v in cast("list[float]", raw.get("forward", [0.0, 0.0, 1.0])))
     return HeroManifest(
         key=str(raw["key"]),
@@ -81,6 +83,21 @@ def load(directory: Path) -> HeroManifest:
         license=str(raw["license"]),
         redistributable=bool(raw.get("redistributable", False)),
     )
+
+
+def hair(
+    regions: tuple[str, ...],
+    forward: tuple[float, float, float],
+    *,
+    facial_hair: bool,
+    skin_prim: str = "/hero/skin",
+    rest_primvar: str | None = None,
+) -> catalogue.HeroHair | None:
+    """The hero's hair settings when it has a scalp region; only hair-growing regions are kept."""
+    if "scalp" not in regions:
+        return None
+    grows = tuple(r for r in regions if r in hairstyle.REGIONS)
+    return catalogue.HeroHair(grows, forward, facial_hair, skin_prim, rest_primvar)
 
 
 def _world(prim: Usd.Prim) -> Gf.Matrix4d:
@@ -130,17 +147,16 @@ def read_guides(stage: Usd.Stage, paths: tuple[str, ...], samples: int) -> groom
     return groom.Guides(np.stack(curves)) if curves else None
 
 
-def read_regions(mesh: UsdGeom.Mesh, names: tuple[str, ...]) -> dict[str, FloatArray]:
-    primvars = UsdGeom.PrimvarsAPI(mesh)
-    return {n: np.asarray(primvars.GetPrimvar(f"region_{n}").Get(), dtype=np.float64) for n in names}
-
-
 def read_head(path: Path, regions: tuple[str, ...], forward: tuple[float, float, float]) -> hairstyle.Head:
     """The prepared skin of a pose file with its hair regions, as the hairstyle generator's head."""
     stage = Usd.Stage.Open(str(path))
     skin, mesh = read_skin(stage, "/hero/skin")
     return hairstyle.Head(
-        skin.points, skin.triangles, read_regions(mesh, regions), np.array([0.0, 1.0, 0.0]), np.array(forward)
+        skin.points,
+        skin.triangles,
+        skin_regions.read(mesh, regions),
+        np.array([0.0, 1.0, 0.0]),
+        np.array(forward),
     )
 
 
@@ -154,11 +170,7 @@ def _write_skin(stage: Usd.Stage, skin: groom.Skin, regions: dict[str, FloatArra
         "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.faceVarying
     )
     st.Set(vec2f(skin.corner_st))
-    for name, weight in regions.items():
-        primvar = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar(
-            f"region_{name}", Sdf.ValueTypeNames.FloatArray, UsdGeom.Tokens.vertex
-        )
-        primvar.Set(floats(weight))
+    skin_regions.author(mesh, regions)
     mesh.CreateExtentAttr(UsdGeom.PointBased.ComputeExtent(mesh.GetPointsAttr().Get()))
 
 
@@ -177,7 +189,7 @@ def prepare_pose(manifest: HeroManifest, pose: str, output: Path) -> PreparedPos
     output.parent.mkdir(parents=True, exist_ok=True)
     stage = new_stage(output)
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/hero").GetPrim())
-    _write_skin(stage, skin, read_regions(mesh, manifest.regions))
+    _write_skin(stage, skin, skin_regions.read(mesh, manifest.regions))
     hairs = 0
     if manifest.groom is not None:
         guides = read_guides(source, manifest.guide_prims, manifest.groom.segments + 1)

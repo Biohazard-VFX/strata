@@ -22,8 +22,8 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   time samples. QA bounds per-frame camera steps.
 - `strata_datagen/render/pack.py`: after each render task, K-layer targets for every frame
   (`strata_contract.layers`, in `../contract/dataset`) and raw deep kept on a frame stride.
-- `blender/`: FBX to USD conversion, run inside Blender.
-- `blender/`: FBX to USD conversion and MPFB human export, run inside Blender.
+- `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).
+- `blender/`: FBX to USD conversion, MPFB human export and creature export, run inside Blender.
 - `garments/`: GarmentCode pattern export, run in GarmentCode's Python; `houdini/`: Vellum drape, run in hython.
 
 ## Use
@@ -44,10 +44,31 @@ poses, body length, coat classes, provenance); see `strata_datagen/library/creat
 Infinigen in its own Python 3.11 environment (`INFINIGEN_MINIMAL_INSTALL=True uv pip install -e
 ".[infinigen1]"`) and pass that interpreter; glTF animals use a system Blender.
 `sources.json` lists `megascans_roots`, `hdris`, `hero_library`, `heroes` and `max_variations`.
-A hero whose `hero.json` lists a `scalp` region (float vertex primvar `region_scalp` on its skin) gets a
-seeded hairstyle in every shot; see `strata_datagen/library/heroes.py` for the manifest fields.
+A hero whose `hero.json` lists a `scalp` region gets a seeded hairstyle in every shot; see
+`strata_datagen/library/heroes.py` for the manifest fields.
 Run Python with `PYTHONPATH` unset when the environment exports another interpreter's path.
 Design choices and measurements are in `DECISIONS.md`.
+
+## Hero regions
+
+Every hero (static pose, human clip, morph take, creature) marks named skin areas the same way: a
+float **vertex** primvar `region_<name>` on the skin prim, one weight in [0, 1] per point, listed by
+name in `hero.json` `regions`. Weights are soft: a library that labels faces writes each vertex's
+share of labelled faces (`regions.from_faces`), so borders read as 0.5 and the weights serve as groom
+density; a face belongs to a region when its corners' mean weight is at least 0.5
+(`regions.face_mask`). `regions.read` rejects a missing primvar, a non-float or non-vertex primvar, a
+wrong length or values outside [0, 1], and `prepare` reads every listed region of every hero.
+
+| region | heroes | used by |
+| --- | --- | --- |
+| `scalp`, `brows`, `lashes`, `beard` | humans (no `lashes`), test heads | hairstyle generator; `scalp` turns it on, `beard` needs `facial_hair` |
+| `face`, `ears`, `lips`, `body` | humans | analysis only |
+| creature parts (`head`, `jaw`, `body`, `tail`, `leg`, ...) | creatures | coat layers (`library/coat.py`) |
+
+`forward` (default `[0, 0, 1]`) is the facing direction in the pose files with Y up; `facial_hair`
+(default false) allows stubble and beards. Hair grows per shot on the skin's rest shape (the clip's
+`rest` primvar for animated heroes) and follows the animated skin: a similarity transform fitted to
+the upper scalp per clip sample, plus each root's remaining offset at every hairstyle key.
 
 ## Human heroes
 
@@ -68,7 +89,8 @@ Animated `hero.json` (a hero with `clips` instead of `poses`):
 | `clips.<name>` | `file`, `category`, `frames` (usable frames), `first_frame` (1: time code 0 and `frames + 1` are blur handles), `fps`, `subframes` (sample offsets, -0.25/0/0.25), `speed_mps`, `bounds_min`/`bounds_max` (body extent around the root, feet at y = 0), `track` (root position per time code), `source` |
 | `skin_prim` | the skin mesh, `/hero/body`; topology is constant over time |
 | `parts` | every mesh prim with its `kind` (`body`, `eyes`, `garment`, `garment_sim`) and source asset |
-| `regions` | `scalp`, `face`, `brows`, `beard`, `ears`, `lips`, `body`: GeomSubset prims (face indices) on the skin, family `region_family` (`hero_region`); scalp, face, ears and body partition the head and body, brows lie in the face, beard covers the lower face and throat |
+| `regions` | `scalp`, `face`, `brows`, `beard`, `ears`, `lips`, `body` (see Hero regions); scalp, face, ears and body partition the head and body, brows lie in the face, beard covers the lower face and throat |
+| `forward`, `facial_hair` | `[0, 0, 1]`; beards allowed when every corner is male and past the teen ages |
 | `rest_primvar` | `rest`: bind-pose points on every part, for binding grooms in rest space and following the animated points |
 | `phenotype`, `face_targets`, `skin`, `eyes`, `outfit` | MPFB recipe of the human |
 | `source`, `license`, `licenses`, `redistributable` | provenance; `licenses` has one line per source |
@@ -85,5 +107,5 @@ corner weights, the blended phenotype per frame and the chained CMU windows. The
 corner skins through `albedo_mix<i>` nodes whose `mix` inputs are time-sampled. Regions are on the
 fixed topology, so they move with the morph.
 
-A groom generator binds strands to skin faces in a region using `rest`, then moves each root with its
-face's animated points at every time sample of the clip.
+Shots on a human with a scalp region grow a hairstyle on the `rest` points and carry it with the
+animated skin (see Hero regions), across morph takes too.
