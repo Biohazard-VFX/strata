@@ -130,8 +130,8 @@ def bake(
     track = track - np.array([centre[0], 0.0, centre[2]])
     track[:, 1] -= drop[on_frame]
     local = [s[on_frame] - (track * np.array([1.0, 0.0, 1.0]))[:, None] for s in samples.values()]
-    low = np.min([s.min(axis=(0, 1)) for s in local], axis=0)
-    high = np.max([s.max(axis=(0, 1)) for s in local], axis=0)
+    low: FloatArray = np.stack([s.min(axis=(0, 1)) for s in local]).min(axis=0)
+    high: FloatArray = np.stack([s.max(axis=(0, 1)) for s in local]).max(axis=0)
     low[1] = 0.0
     return Take(name, times, samples, weights, track, low, high, windows)
 

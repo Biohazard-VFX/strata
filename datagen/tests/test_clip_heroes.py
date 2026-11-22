@@ -69,8 +69,8 @@ class ClipHeroTest(unittest.TestCase):
     def test_same_seed_same_placement(self) -> None:
         lib = clip_library()
         with TemporaryDirectory() as tmp:
-            a = compose.plan(ShotSpec(seed=5), lib, Path(tmp))
-            b = compose.plan(ShotSpec(seed=5), lib, Path(tmp))
+            a = compose.plan(ShotSpec(seed=5, frame_count=24), lib, Path(tmp))
+            b = compose.plan(ShotSpec(seed=5, frame_count=24), lib, Path(tmp))
         assert a.placement is not None and b.placement is not None
         self.assertEqual(
             (a.pose.pose, a.placement.start, a.placement.yaw_deg),

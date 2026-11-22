@@ -65,6 +65,8 @@ def _hero_pose(
 ) -> tuple[Hero, HeroPose]:
     entry = library.hero(_choice(rng, sorted(h.key for h in library.heroes), spec.hero))
     fits = sorted(p.pose for p in entry.poses if p.frames == 0 or p.frames >= frames)
+    if not fits:
+        raise ValueError(f"hero {entry.key} has no clip of at least {frames} frames")
     pose = _choice(rng, fits, spec.pose)
     return entry, next(p for p in entry.poses if p.pose == pose)
 
