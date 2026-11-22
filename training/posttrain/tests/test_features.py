@@ -10,7 +10,7 @@ import torch
 from numpy.testing import assert_allclose
 
 from strata_training.data.cache import display_rgb
-from strata_training.data.dataset import Frame
+from strata_training.data.dataset import Frame, batch
 from strata_training.data.metadata import CONTRACT
 from strata_training.io import save_arrays, write_json
 
@@ -87,6 +87,9 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
     frame = Frame(entry, root)
     assert_allclose(frame.arrays["beauty"], denoised)
     assert_allclose(frame.arrays["target_beauty"], denoised * 2)
+    inputs, targets, _ = batch([frame], [(0, 0, 0)], 32, 0, "cpu")
+    assert_allclose(inputs["image"][0].numpy(), denoised)
+    assert_allclose(targets["beauty"][0].numpy(), denoised * 2)
     features.extract(index, root, "depthpro2-s", device="cpu")
     assert len(observed) == 1
     with np.load(cache) as data:

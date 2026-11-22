@@ -48,7 +48,8 @@ def layered_shot(seed: int, size: tuple[int, int] = (24, 32)) -> Shot:
     return Shot(deep, image.astype(np.float32), image.astype(np.float32))
 
 
-def test_empty_native_sky_keeps_image_without_inventing_occluder_depth() -> None:
+@pytest.mark.parametrize("stored_sky", [False, True])
+def test_empty_native_sky_keeps_image_without_inventing_occluder_depth(stored_sky: bool) -> None:
     empty = np.empty(0, dtype=np.float32)
     deep = from_unsorted(
         (8, 8),
@@ -58,14 +59,54 @@ def test_empty_native_sky_keeps_image_without_inventing_occluder_depth() -> None
         np.empty((0, 3), dtype=np.float32),
         empty.astype(np.int64),
     )
+    if stored_sky:
+        deep = from_unsorted(
+            (8, 8),
+            np.arange(64),
+            np.full(64, 3000, dtype=np.float32),
+            np.ones(64, dtype=np.float32),
+            np.full((64, 3), 0.25, dtype=np.float32),
+            np.zeros(64, dtype=np.int64),
+        )
     image = np.full((3, 8, 8), 0.25, dtype=np.float32)
     shot = Shot(deep, image, image)
     sample = augment_sample(
         shot, ROLES, deep.targets(), None, np.random.default_rng(71), replace(OFF, occluders=1.0)
     )
     assert_array_equal(sample.image, image)
-    assert not sample.layers.alpha.any()
+    assert bool(sample.layers.alpha.any()) == stored_sky
+    assert not sample.layers.inverse_depth.any()
     assert sample.record["occluders_skipped"] == "no_geometry"
+
+
+def test_sky_depth_does_not_set_the_placement_range_of_inserted_geometry() -> None:
+    background = from_unsorted(
+        (1, 1),
+        np.array([0, 0]),
+        np.array([2.0, 3000.0]),
+        np.array([0.5, 1.0]),
+        np.array([[0.1, 0.1, 0.1], [0.6, 0.6, 0.6]]),
+        np.array([1, 0]),
+    )
+    element = from_unsorted(
+        (1, 1),
+        np.array([0]),
+        np.array([4.0]),
+        np.ones(1),
+        np.full((1, 3), 0.3),
+        np.array([2]),
+    )
+    image, _ = flatten(background)
+    donor_image, _ = flatten(element)
+    sample = augment_sample(
+        Shot(background, image, image),
+        ROLES,
+        background.targets(),
+        Donor(Shot(element, donor_image, donor_image), ROLES),
+        np.random.default_rng(81),
+        replace(OFF, recompose=1.0, hero=1.0, element_front=0.0),
+    )
+    assert 0.5 <= sample.record["element_depth_scale"] <= 0.505
 
 
 def test_config_rejects_unknown_and_invalid_settings() -> None:

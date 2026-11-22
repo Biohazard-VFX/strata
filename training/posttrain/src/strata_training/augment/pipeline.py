@@ -155,7 +155,7 @@ def recompose(
         if element is not None:
             layers.append(element)
     if rng.random() < config.occluders:
-        if shot.deep.z.size:
+        if np.any(shot.deep.ids != 0):
             layers.append(Layer(_occluders(shot, rng, config, record), None))
         else:
             record["occluders_skipped"] = "no_geometry"
@@ -253,6 +253,8 @@ def _in_front_of(deep: DeepSamples, chosen: Array) -> Array:
 def _placement(
     background: DeepSamples, element: DeepSamples, front: bool, rng: np.random.Generator
 ) -> float | None:
+    background = background.select(background.ids != 0)
+    element = element.select(element.ids != 0)
     both = (background.counts > 0) & (element.counts > 0)
     if not both.any():
         return None
@@ -270,7 +272,7 @@ def _placement(
 def _occluders(
     shot: Shot, rng: np.random.Generator, config: AugmentConfig, record: dict[str, Any]
 ) -> DeepSamples:
-    deep = shot.deep
+    deep = shot.deep.select(shot.deep.ids != 0)
     size = deep.shape
     filled = deep.counts > 0
     nearest = deep.z[deep.offsets[:-1][filled]]

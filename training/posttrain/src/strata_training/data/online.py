@@ -14,6 +14,7 @@ from strata_training.augment.pipeline import AugmentConfig, Donor, Roles, augmen
 from strata_training.data.cache import display_rgb
 from strata_training.data.dataset import Frame, batch
 from strata_training.data.exr import read_rgb
+from strata_training.data.targets import composite
 from strata_training.io import save_array
 from strata_training.model.dp2 import DeepDepthPro
 from strata_training.model.live import FrozenEncoder
@@ -155,7 +156,8 @@ class OnlineLoader:
                     rng,
                     self.augmentation,
                 )
-                image, beauty, layers = sample.image, sample.clean, sample.layers
+                image, layers = sample.image, sample.layers
+                beauty = composite(layers.alpha, layers.rgb)
 
                 # Native cropping changes normalized width, not focal length in pixels.
                 scale = frame.scale * size / frame.base.shape[1]
