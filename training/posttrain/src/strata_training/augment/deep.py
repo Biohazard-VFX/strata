@@ -13,7 +13,7 @@ from strata_training.types import Array, Layers
 exr: Any = import_module("OpenEXR")
 
 FIELDS = ("offsets", "z", "alpha", "rgb", "ids")
-SPLIT_EPSILON = 1e-3
+SPLIT_EPSILON = 1e-6
 
 
 @dataclass(frozen=True)
