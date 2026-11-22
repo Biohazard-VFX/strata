@@ -88,6 +88,8 @@ class QaTest(unittest.TestCase):
             self.assertGreater(checks.deep_metrics(path, dark, ranges)["flatten_excess"], 0.04)
             write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
             self.assertEqual(checks.deep_metrics(path, beauty, ranges)["uncovered"], 0.5)
+            write_deep(path, [[(0.5, 1.0, 0)], [(0.2, 0.5, 2), (0.6, 1.0, 0, 3000.0)]])
+            self.assertGreater(checks.deep_metrics(path, beauty, ranges)["sky_id_in_front"], 0.0)
 
 
 class GroomTest(unittest.TestCase):
