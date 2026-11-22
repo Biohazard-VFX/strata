@@ -207,7 +207,16 @@ def run_blender(recipe: Recipe, jobs: list[dict[str, object]], scratch: Path) ->
     listing = scratch / "mpfb_jobs.json"
     files.write_text(listing, json.dumps(jobs))
     subprocess.run(
-        [recipe.blender, "-b", "--python", str(BLENDER_SCRIPT), "--", str(listing)],
+        [
+            recipe.blender,
+            "-b",
+            "--python-exit-code",
+            "1",
+            "--python",
+            str(BLENDER_SCRIPT),
+            "--",
+            str(listing),
+        ],
         check=True,
         capture_output=True,
         timeout=7200,
