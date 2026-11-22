@@ -22,6 +22,12 @@ cpu=0
 if [[ $# -gt 0 ]]; then
   case "$1" in normal|sanitize) presets=("$1");; --cpu) presets=(cpu); cpu=1;; *) printf 'usage: %s [normal|sanitize|--cpu]\n' "$0" >&2; exit 2;; esac
 fi
+uv lock --project training --check
+if [[ "$cpu" == 0 ]]; then
+  UV_PROJECT_ENVIRONMENT=$("$python" -c 'import sys; print(sys.prefix)') \
+    uv sync --project training --locked --extra cuda --check
+  "$python" -c 'import onnxruntime; assert "CUDAExecutionProvider" in onnxruntime.get_available_providers()'
+fi
 for preset in "${presets[@]}"; do
   options=("-DSTRATA_TEST_PYTHON=$python")
   if [[ -n ${ONNXRUNTIME_ROOT:-} ]]; then options+=("-DONNXRUNTIME_ROOT=$ONNXRUNTIME_ROOT"); fi
