@@ -18,7 +18,8 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   qa.json           optional: the generator's acceptance report
 ```
 
-Frames are numbered from 1 and zero-padded to four digits. v0 shots have 24 frames at 24 fps.
+Frames are numbered from 1 and zero-padded to four digits, at 24 fps. `manifest.render.frames` is the
+rendered range: most shots are 8-frame clips, a minority are 24-96-frame sequences.
 
 ## Units and conventions
 

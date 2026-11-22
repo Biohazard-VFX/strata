@@ -97,21 +97,22 @@ def _poses(
     target: FloatArray,
     *,
     t: FloatArray,
+    span: float,
     azimuth: float,
     distance: float,
     height: float,
 ) -> FloatArray:
     if move == "orbit":
-        sweep = rng.choice([-1.0, 1.0]) * rng.uniform(8.0, 30.0)
+        sweep = rng.choice([-1.0, 1.0]) * rng.uniform(8.0, 30.0) * span
         return np.stack(
             [look_at(_eye(ground, target, azimuth + sweep * s, distance, height), target) for s in t]
         )
     eye = _eye(ground, target, azimuth, distance, height)
     if move == "dolly":
-        travel = _rotate_y(np.array([0.0, 0.0, 1.0]), rng.uniform(0.0, 360.0)) * rng.uniform(0.4, 2.0)
+        travel = _rotate_y(np.array([0.0, 0.0, 1.0]), rng.uniform(0.0, 360.0)) * rng.uniform(0.4, 2.0) * span
         return np.stack([look_at(eye + travel * (s - 0.5), target) for s in t])
     if move == "pan_tilt":
-        pan, tilt = rng.uniform(-18.0, 18.0), rng.uniform(-5.0, 5.0)
+        pan, tilt = rng.uniform(-18.0, 18.0) * span, rng.uniform(-5.0, 5.0) * span
         aims = [target + np.array([0.0, np.tan(np.radians(tilt * (s - 0.5))) * distance, 0.0]) for s in t]
         return np.stack(
             [
@@ -179,7 +180,8 @@ def sample(
     focal = float(np.clip(SENSOR_MM[0] * distance * fill / subject_m, 18.0, 135.0))
     aim = target + rng.normal(0.0, 0.08 * subject_m, 3)
     t = np.linspace(0.0, 1.0, len(frames) + 2)
-    poses = _poses(move, rng, ground, aim, t=t, azimuth=azimuth, distance=distance, height=height)
+    span = (len(frames) + 1) / 25.0
+    poses = _poses(move, rng, ground, aim, t=t, span=span, azimuth=azimuth, distance=distance, height=height)
     middle: FloatArray = poses[len(poses) // 2][:3, 3] - target
     lens = Lens(focal, fstop if dof else 0.0, float(np.linalg.norm(middle)))
     return CameraTrack(move, frames, poses, lens, (-0.25, 0.25) if blur else (0.0, 0.0))

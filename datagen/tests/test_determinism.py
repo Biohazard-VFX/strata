@@ -5,8 +5,9 @@ from tempfile import TemporaryDirectory
 
 from strata_datagen.library.catalogue import Hdri, Hero, HeroPose, Library, Model, Provenance, Surface
 from strata_datagen.presets import PRESETS
+from strata_datagen.rng import stream
 from strata_datagen.scene import compose, export
-from strata_datagen.scene.spec import ShotSpec
+from strata_datagen.scene.spec import LONG_FRAMES, SHORT_FRAMES, ShotSpec, frames
 
 PROVENANCE = Provenance("test", "test", "test")
 TEXTURES = {
@@ -102,3 +103,15 @@ class DeterminismTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClipLengthTest(unittest.TestCase):
+    def test_most_shots_are_short_clips_and_a_share_are_long_sequences(self) -> None:
+        lengths = [len(frames(ShotSpec(seed=s), 0.1, stream(s, "frames"))) for s in range(2000)]
+        long = [n for n in lengths if n != SHORT_FRAMES]
+        self.assertAlmostEqual(len(long) / len(lengths), 0.1, delta=0.02)
+        self.assertTrue(all(LONG_FRAMES[0] <= n <= LONG_FRAMES[1] for n in long))
+        self.assertEqual(len(frames(ShotSpec(seed=1, frame_count=24), 0.1, stream(1, "frames"))), 24)
+        self.assertEqual(
+            {len(frames(ShotSpec(seed=s), 0.0, stream(s, "f"))) for s in range(50)}, {SHORT_FRAMES}
+        )

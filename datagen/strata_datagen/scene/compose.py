@@ -13,7 +13,7 @@ from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
 from strata_datagen.rng import stream
 from strata_datagen.scene import layers, looks
-from strata_datagen.scene.spec import FRAMES, ShotSpec
+from strata_datagen.scene.spec import LONG_SHARE, ShotSpec, frames
 from strata_datagen.usdutil import new_stage, relative_asset
 
 TERRAIN_ID = 1
@@ -41,6 +41,7 @@ class Shot:
     pose: HeroPose
     motion: hero.HeroMotion
     track: camera.CameraTrack
+    frames: tuple[int, ...]
     light: lighting.Lighting
     layers: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     assets: dict[str, Model] = field(default_factory=dict[str, Model])
@@ -75,13 +76,14 @@ def _hdris(library: Library, root: Path, scene_dir: Path) -> tuple[lighting.Hdri
     )
 
 
-def plan(spec: ShotSpec, library: Library, root: Path) -> Shot:
+def plan(spec: ShotSpec, library: Library, root: Path, long_share: float = LONG_SHARE) -> Shot:
     directory = root / "shots" / spec.shot_id
+    clip = frames(spec, long_share, stream(spec.seed, "frames"))
     params = terrain.sample_params(stream(spec.seed, "terrain"))
     ground = terrain.build(params, stream(spec.seed, "terrain", "noise"))
     surface = _choice(stream(spec.seed, "ground"), sorted(s.asset_id for s in library.surfaces), spec.ground)
     entry, pose = _hero_pose(library, spec, stream(spec.seed, "hero"))
-    samples = len(FRAMES) + 2
+    samples = len(clip) + 2
     motion = hero.sample_motion(
         stream(spec.seed, "hero", "motion"), ground, samples, -pose.bounds_min[1], spec.hero_speed_mps
     )
@@ -90,7 +92,7 @@ def plan(spec: ShotSpec, library: Library, root: Path) -> Shot:
     subject = max(pose.bounds_max[0] - pose.bounds_min[0], pose.bounds_max[2] - pose.bounds_min[2])
     target = middle + np.array([0.0, 0.5 * height, 0.0])
     track = camera.sample(
-        stream(spec.seed, "camera"), ground, target, subject, frames=FRAMES, choices=spec.camera
+        stream(spec.seed, "camera"), ground, target, subject, frames=clip, choices=spec.camera
     )
     light = lighting.sample(
         _hdris(library, root, directory / "scene"),
@@ -99,7 +101,7 @@ def plan(spec: ShotSpec, library: Library, root: Path) -> Shot:
         spec.hdri,
         spec.hdri_rotation_deg,
     )
-    return Shot(spec, directory, ground, params, surface, entry.key, pose, motion, track, light)
+    return Shot(spec, directory, ground, params, surface, entry.key, pose, motion, track, clip, light)
 
 
 def _exclusions(shot: Shot, hero_radius: float) -> list[Disk]:
@@ -186,8 +188,8 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
     shot.scene_dir.mkdir(parents=True, exist_ok=True)
     path = shot.scene_dir / "shot.usda"
     stage = new_stage(path)
-    stage.SetStartTimeCode(FRAMES[0])
-    stage.SetEndTimeCode(FRAMES[-1])
+    stage.SetStartTimeCode(shot.frames[0])
+    stage.SetEndTimeCode(shot.frames[-1])
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/World").GetPrim())
     _author_ground(shot, library, stage, root)
     skin, groom = looks.hero(stage, root, shot.scene_dir, library.hero(shot.hero_key))
@@ -196,7 +198,7 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
         "/World/hero",
         relative_asset(root / shot.pose.file, shot.scene_dir),
         shot.motion,
-        first_frame=FRAMES[0],
+        first_frame=shot.frames[0],
         skin=skin,
         groom=groom,
     )
@@ -210,7 +212,7 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
             render.width,
             render.height,
             render.path_traced_samples,
-            FRAMES,
+            shot.frames,
             shot.track.motion_blur,
             shot.track.depth_of_field,
         ),

@@ -115,8 +115,9 @@ def check_shot(shot: Path) -> dict[str, object]:
     camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
     frames = cast("list[dict[str, object]]", camera["frames"])
     failures = _camera_consistency(camera)
-    if len(frames) != 24:
-        failures.append(f"camera.json has {len(frames)} frames")
+    first, last = cast("list[int]", cast("dict[str, object]", manifest["render"])["frames"])
+    if [f["frame"] for f in frames] != list(range(first, last + 1)):
+        failures.append(f"camera.json frames do not cover the rendered range {first}..{last}")
     ranges = _id_ranges(manifest)
     results = [check_frame(shot, cast("int", f["frame"]), f, ranges) for f in frames]
     failures += [f"frame {r.frame}: {f}" for r in results for f in r.failures]

@@ -127,7 +127,7 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
             "width": render.width,
             "height": render.height,
             "path_traced_samples": render.path_traced_samples,
-            "frames": [1, 24],
+            "frames": [shot.frames[0], shot.frames[-1]],
             "aovs": [a.name for a in settings.BEAUTY_AOVS],
             "deep_aovs": list(settings.DEEP_AOVS),
         },

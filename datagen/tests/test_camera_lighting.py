@@ -37,6 +37,19 @@ class CameraTest(unittest.TestCase):
         self.assertEqual(track.shutter, (0.0, 0.0))
         self.assertEqual(len(track.camera_to_world), len(FRAMES))
 
+    def test_moves_keep_their_speed_whatever_the_clip_length(self) -> None:
+        def angle(frames: tuple[int, ...]) -> float:
+            choices = camera.CameraChoices(move="orbit")
+            track = camera.sample(
+                stream(4, "c"), self.ground, self.target, 1.6, frames=frames, choices=choices
+            )
+            eyes = np.array([m[:3, 3] - self.target for m in track.camera_to_world])
+            first, last = eyes[0, [0, 2]], eyes[-1, [0, 2]]
+            cos = first @ last / np.linalg.norm(first) / np.linalg.norm(last)
+            return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))) / (len(frames) - 1))
+
+        self.assertAlmostEqual(angle(tuple(range(1, 9))), angle(FRAMES), delta=0.02)
+
     def test_every_move_projects_the_subject_into_frame(self) -> None:
         for move in camera.MOVES:
             track = camera.sample(
