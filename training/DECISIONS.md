@@ -1,5 +1,7 @@
 # Architecture decisions
 
+- Shared K-layer reduction uses stable per-pixel compiled segments and float64 sums; sky membership is reduced in the same pass, not reclustered.
+- Photometric-only crops never materialize raw samples; deep composition uses stable segmented merging and accumulation.
 - Frame objects retain metadata only; bounded per-process LRU mappings serve immutable NPY targets, bases and features; compressed NPZ caches migrate atomically once.
 - Deep crops concatenate only contiguous row sample spans from mmap offsets, never a whole-frame sample-index array.
 - Deep targets use K=4 front-to-back slots at native resolution; labels are never resized or interpolated.

@@ -25,6 +25,8 @@ def reduce_samples(
     shape: tuple[int, int],
     layers: int = 4,
     gap_ratio: float = 1.15,
+    *,
+    sky: Array | None = None,
 ) -> Layers:
     if layers < 1 or gap_ratio <= 1:
         raise ValueError("layers must be positive and gap_ratio must exceed one")
@@ -33,13 +35,14 @@ def reduce_samples(
     if not np.isfinite(rgb).all() or not np.isfinite(alpha).all():
         raise ValueError("deep colors and alpha must be finite")
     result = contract_reduce(
-        depth.astype(np.float64),
-        alpha.astype(np.float64),
-        rgb.astype(np.float64),
-        counts.astype(np.int64),
+        depth.astype(np.float64, copy=False),
+        alpha.astype(np.float64, copy=False),
+        rgb,
+        counts.astype(np.int64, copy=False),
         shape,
         layers=layers,
         gap_ratio=gap_ratio,
+        sky=sky,
     )
     return Layers(result.inverse_depth, result.alpha, result.rgb)
 
@@ -54,8 +57,4 @@ def reduce_identified_samples(
     layers: int = 4,
 ) -> Layers:
     """Own reduced arrays; mask depth of any cluster containing visible sky, not its color/alpha."""
-    result = reduce_samples(depth, alpha, rgb, counts, shape, layers)
-    sky = np.repeat((alpha * (ids == 0))[:, None], 3, axis=1)
-    membership = reduce_samples(depth, alpha, sky, counts, shape, layers)
-    result.inverse_depth[membership.rgb[:, 0] > 1e-12] = 0
-    return result
+    return reduce_samples(depth, alpha, rgb, counts, shape, layers, sky=ids == 0)

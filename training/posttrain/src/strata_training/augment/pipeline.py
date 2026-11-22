@@ -149,17 +149,21 @@ def recompose(
         record["scene_gain"] = gains.tolist()
     layers = _graded_background(shot, shot_roles, rng, config, record)
     if donor is not None and rng.random() < config.recompose:
-        if donor.shot.deep.shape != shot.deep.shape:
+        if donor.shot.denoised.shape != shot.denoised.shape:
             raise ValueError("Recomposition donors must share the pixel grid")
         element = _element(shot, donor, rng, config, record)
         if element is not None:
+            if not layers:
+                layers.append(Layer(shot.deep, shot))
             layers.append(element)
     if rng.random() < config.occluders:
         if np.any(shot.deep.ids != 0):
+            if not layers:
+                layers.append(Layer(shot.deep, shot))
             layers.append(Layer(_occluders(shot, rng, config, record), None))
         else:
             record["occluders_skipped"] = "no_geometry"
-    if len(layers) == 1:
+    if not layers:
         rgb = np.einsum("ij,kjhw->kihw", scene, targets.rgb).astype(np.float32)
         image = np.tensordot(scene, shot.denoised, axes=1).astype(np.float32)
         return image, Layers(targets.inverse_depth, targets.alpha, rgb)
@@ -182,10 +186,12 @@ def _graded_background(
     config: AugmentConfig,
     record: dict[str, Any],
 ) -> list[Layer]:
+    if rng.random() >= config.instance_grade:
+        return []
     deep = shot.deep
     present = np.unique(deep.ids)
-    if rng.random() >= config.instance_grade or not present.size:
-        return [Layer(deep, shot)]
+    if not present.size:
+        return []
     count = min(
         int(rng.integers(config.instance_count[0], config.instance_count[1] + 1)), present.size
     )

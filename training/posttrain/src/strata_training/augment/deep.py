@@ -3,7 +3,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from strata_contract.segmented import transmittance as sample_transmittance
 
+from strata_training.augment.segmented import contributions_arrays, merge_arrays
 from strata_training.data.exr import decode_instance_ids
 from strata_training.data.exr import read_samples as read_channels
 from strata_training.data.targets import reduce_identified_samples
@@ -70,9 +72,9 @@ class DeepSamples:
 
     def targets(self, layers: int = 4) -> Layers:
         return reduce_identified_samples(
-            self.z.astype(np.float64),
-            self.alpha.astype(np.float64),
-            self.rgb.astype(np.float64),
+            self.z,
+            self.alpha,
+            self.rgb,
             self.counts,
             self.shape,
             self.ids,
@@ -130,41 +132,26 @@ def merge(parts: Sequence[DeepSamples]) -> tuple[DeepSamples, Array]:
     shape = parts[0].shape
     if any(p.shape != shape for p in parts):
         raise ValueError("Deep merge needs identical pixel grids")
-    labels = np.concatenate([np.full(p.z.size, i) for i, p in enumerate(parts)])
-    pixel = np.concatenate([p.pixel for p in parts])
-    z = np.concatenate([p.z for p in parts])
-    order = depth_order(pixel, z)
-    counts = np.bincount(pixel, minlength=shape[0] * shape[1])
-    merged = DeepSamples(
-        shape,
-        np.concatenate(([0], np.cumsum(counts))),
-        z[order],
-        np.concatenate([p.alpha for p in parts])[order],
-        np.concatenate([p.rgb for p in parts])[order],
-        np.concatenate([p.ids for p in parts])[order],
+    offsets, z, alpha, rgb, ids, labels = merge_arrays(
+        tuple(np.asarray(p.offsets) for p in parts),
+        tuple(np.asarray(p.z) for p in parts),
+        tuple(np.asarray(p.alpha) for p in parts),
+        tuple(np.asarray(p.rgb) for p in parts),
+        tuple(np.asarray(p.ids) for p in parts),
     )
-    return merged, labels[order]
+    return DeepSamples(shape, offsets, z, alpha, rgb, ids), labels
 
 
 def transmittance(samples: DeepSamples) -> Array:
-    log_t = np.log1p(-np.minimum(np.clip(samples.alpha, 0, 1).astype(np.float64), 1 - 1e-15))
-    cumulative = np.concatenate(([0.0], np.cumsum(log_t)))
-    before = cumulative[:-1] - np.repeat(cumulative[samples.offsets[:-1]], samples.counts)
-    return np.exp(before)
+    return sample_transmittance(samples.alpha, samples.counts)
 
 
 def contributions(samples: DeepSamples, labels: Array, groups: int) -> tuple[Array, Array]:
     height, width = samples.shape
-    pixels = height * width
-    index = labels * pixels + samples.pixel
-    visible = transmittance(samples)
-    coverage = np.bincount(index, visible * samples.alpha, groups * pixels)
-    rgb = np.stack(
-        [np.bincount(index, visible * samples.rgb[:, c], groups * pixels) for c in range(3)]
+    rgb, coverage = contributions_arrays(
+        samples.offsets, samples.alpha, samples.rgb, labels, transmittance(samples), groups
     )
-    return rgb.reshape(3, groups, height, width).transpose(1, 0, 2, 3), coverage.reshape(
-        groups, height, width
-    )
+    return rgb.reshape(groups, 3, height, width), coverage.reshape(groups, height, width)
 
 
 def flatten(samples: DeepSamples) -> tuple[Array, Array]:
@@ -172,17 +159,30 @@ def flatten(samples: DeepSamples) -> tuple[Array, Array]:
     return rgb[0], coverage[0]
 
 
-@dataclass(frozen=True)
 class Shot:
-    deep: DeepSamples
-    noisy: Array
-    denoised: Array
+    """Borrow native images; materialize raw deep only on first use of a crop."""
+
+    def __init__(self, deep: DeepSamples, noisy: Array, denoised: Array) -> None:
+        self._deep: DeepSamples | None = deep
+        self._source: tuple[Shot, int, int, int, int] | None = None
+        self.noisy = noisy
+        self.denoised = denoised
+
+    @property
+    def deep(self) -> DeepSamples:
+        if self._deep is None:
+            assert self._source is not None
+            shot, top, left, height, width = self._source
+            self._deep = shot.deep.crop(top, left, height, width)
+        return self._deep
 
     def crop(self, top: int, left: int, height: int, width: int) -> "Shot":
         window = (slice(None), slice(top, top + height), slice(left, left + width))
-        return Shot(
-            self.deep.crop(top, left, height, width), self.noisy[window], self.denoised[window]
-        )
+        result = Shot.__new__(Shot)
+        result._deep = None
+        result._source = (self, top, left, height, width)
+        result.noisy, result.denoised = self.noisy[window], self.denoised[window]
+        return result
 
 
 @dataclass(frozen=True)

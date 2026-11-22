@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from strata_training.augment.deep import Layer, Shot, compose, flatten, from_unsorted
+from strata_training.augment.deep import DeepSamples, Layer, Shot, compose, flatten, from_unsorted
 from strata_training.augment.pipeline import (
     AugmentConfig,
     AugmentedSample,
@@ -46,6 +46,20 @@ def layered_shot(seed: int, size: tuple[int, int] = (24, 32)) -> Shot:
     deep = from_unsorted(size, pixel, z, alpha, colour, ids)
     image, _ = flatten(deep)
     return Shot(deep, image.astype(np.float32), image.astype(np.float32))
+
+
+def test_photometric_crop_never_materializes_raw_deep(monkeypatch: pytest.MonkeyPatch) -> None:
+    shot = layered_shot(11)
+    targets = shot.deep.targets()
+
+    def forbidden(*_args: object) -> DeepSamples:
+        raise AssertionError("Photometric-only crops must not read raw deep")
+
+    monkeypatch.setattr(DeepSamples, "crop", forbidden)
+    crop = shot.crop(0, 0, 24, 32)
+    sample = augment_sample(crop, ROLES, targets, None, np.random.default_rng(9), OFF)
+    assert_array_equal(sample.image, shot.denoised)
+    assert_array_equal(sample.layers.rgb, targets.rgb)
 
 
 @pytest.mark.parametrize("stored_sky", [False, True])

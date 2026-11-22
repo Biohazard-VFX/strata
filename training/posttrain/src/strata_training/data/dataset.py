@@ -101,7 +101,6 @@ def batch(
 
     selected = [(frames[i], y, x) for i, y, x in selections]
     inputs = {
-        "features": tensor([f.features[:, y : y + size, x : x + size] for f, y, x in selected]),
         "image": tensor(
             [f.arrays["beauty"][:, y : y + size, x : x + size] for f, y, x in selected]
         ),
@@ -110,6 +109,10 @@ def batch(
             :, None, None, None
         ],
     }
+    if not decoder:
+        inputs["features"] = tensor(
+            [f.features[:, y : y + size, x : x + size] for f, y, x in selected]
+        )
     targets = {
         key: tensor(
             [
