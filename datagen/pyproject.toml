@@ -10,11 +10,15 @@ dependencies = [
   "OpenEXR>=3.3",
   "pillow>=11.3",
   "scipy>=1.18.1",
+  "strata-contract",
   "usd-core>=25.5",
 ]
 
 [project.scripts]
 strata-datagen = "strata_datagen.cli:main"
+
+[tool.uv.sources]
+strata-contract = { path = "../contract/dataset", editable = true }
 
 [dependency-groups]
 dev = [

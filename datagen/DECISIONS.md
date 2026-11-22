@@ -30,3 +30,4 @@
 - Job lists (`jobs.json`, `jobs.sh`) hold one husk command per shot with paths relative to the build root.
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
+- Every frame gets K=4 layer targets (contract strata_contract.layers, the training merge rule); raw deep is kept every 24th frame, as long shots are 720 frames.

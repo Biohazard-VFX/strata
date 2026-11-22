@@ -84,17 +84,18 @@ def check_frame(
 ) -> FrameResult:
     name = f"{frame:04d}.exr"
     beauty_path, deep_path = shot / "beauty" / name, shot / "deep" / name
-    if not beauty_path.exists() or not deep_path.exists():
-        return FrameResult(frame, {}, ["missing beauty or deep"])
+    if not beauty_path.exists():
+        return FrameResult(frame, {}, ["missing beauty"])
     beauty = read_flat(beauty_path)
     metrics = _beauty_metrics(beauty)
-    metrics.update(deep_metrics(deep_path, beauty, ranges))
+    if deep_path.exists():
+        metrics.update(deep_metrics(deep_path, beauty, ranges))
     metrics["camera_error"] = _camera_error(beauty_path, record)
-    failures = [f"{k}={metrics[k]:.4g}" for k in ("nonfinite", "bad_depth") if metrics[k] > 0]
+    failures = [f"{k}={metrics[k]:.4g}" for k in ("nonfinite", "bad_depth") if metrics.get(k, 0.0) > 0]
     failures += [
         f"{k}={metrics[k]:.4g} outside {low}..{high}"
         for k, (low, high) in LIMITS.items()
-        if not low <= metrics[k] <= high
+        if k in metrics and not low <= metrics[k] <= high
     ]
     return FrameResult(frame, metrics, failures)
 
@@ -147,6 +148,8 @@ def check_shot(shot: Path) -> dict[str, object]:
     ranges = _id_ranges(manifest)
     results = [check_frame(shot, cast("int", f["frame"]), f, ranges) for f in frames]
     failures += [f"frame {r.frame}: {f}" for r in results for f in r.failures]
+    if not any("mean_samples" in r.metrics for r in results):
+        failures.append("no raw deep frame")
     summary = {
         k: float(np.mean([r.metrics[k] for r in results if k in r.metrics]))
         for k in sorted({k for r in results for k in r.metrics})

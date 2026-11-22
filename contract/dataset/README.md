@@ -13,7 +13,8 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   manifest.json
   camera.json
   beauty/0001.exr ... 0024.exr
-  deep/0001.exr ... 0024.exr
+  deep/0001.exr ... 0024.exr     raw deep, kept on a frame stride (`manifest.render.deep_stride`)
+  layers/0001.exr ... 0024.exr   K = 4 layer targets for every frame (`strata_contract.layers`)
   scene/            optional: the USD the shot was rendered from (reproducibility, not training input)
   qa.json           optional: the generator's acceptance report
 ```
@@ -57,15 +58,26 @@ Multi-part scanline EXR, one part per AOV, all at the camera resolution:
 
 | part | channels | meaning |
 | --- | --- | --- |
-| `C` | `R G B A` | beauty (half) |
+| `C` | `R G B A` | raw path-traced beauty (half); the deep flattens to this |
 | `albedo` | `albedo.R/G/B` | diffuse albedo |
-| `N` | `N.x/y/z` | shading normal in camera space (float) |
+| `N` | `N.x/y/z` | shading normal in camera space (half) |
 | `roughness` | `roughness.roughness` | specular roughness of the front surface |
 | `metallic` | `metallic.metallic` | metalness of the front surface |
 | `diffuse_direct`, `diffuse_indirect` | `<part>.R/G/B` | diffuse lighting split (LPE `C<RD>L`, `C<RD>.+L`) |
 | `specular_direct`, `specular_indirect` | `<part>.R/G/B` | glossy/specular reflection split |
 | `Z` | `Z.Z` | camera-plane depth of the nearest surface (float, min filter) |
 | `instance_id` | `instance_id.instance_id` | id of the nearest surface (float holding an integer) |
+| `denoised` | `denoised.R/G/B/A` | `C` denoised by OIDN with albedo and normal guides: the model input; targets stay raw |
+
+## layers/NNNN.exr
+
+Scanline EXR with, for each layer k in 0..3 (front to back), `L<k>.invdepth` (float, 1/metres,
+coverage-weighted), `L<k>.A` (the layer's own alpha) and `L<k>.R/G/B` (premultiplied colour
+composited within the layer), all half except invdepth. They are `strata_contract.layers.reduce_samples`
+applied to the frame's deep samples: sort by Z, split at the largest three log-depth gaps above
+ln(1.15), merge front to back. Training reads these for every frame; raw deep exists only on the
+stride. Draw training frames sparsely along a shot for diversity and as full windows for
+temporal training.
 
 ## deep/NNNN.exr
 

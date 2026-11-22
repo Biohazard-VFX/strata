@@ -50,7 +50,7 @@ class DeepTest(unittest.TestCase):
         self.assertEqual(instance_ids(deep).tolist(), [1000, 7, 2, 3])
 
 
-def _write_deep(path: Path, samples: list[list[tuple[float, float, float]]]) -> None:
+def write_deep(path: Path, samples: list[list[tuple[float, float, float]]]) -> None:
     """Pixels of (premultiplied grey, alpha, id) samples at depth 2 m in a 2x1 deep image."""
     chans: dict[str, NDArray[np.object_]] = {}
     for name, index in (("R", 0), ("G", 0), ("B", 0), ("A", 1), ("instance_id", 2)):
@@ -72,7 +72,7 @@ class QaTest(unittest.TestCase):
     def test_sky_behind_partial_pixels_is_allowed_but_deep_may_not_exceed_beauty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "d.exr"
-            _write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
+            write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
             sky = np.array([[0.5, 0.2 + 0.5 * 0.6]], np.float32)
             beauty = dict.fromkeys("RGB", sky)
             metrics = checks.deep_metrics(path, beauty, [(1, 4), (1000, 1001)])

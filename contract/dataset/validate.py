@@ -24,8 +24,10 @@ BEAUTY = {
     "specular_indirect": {"specular_indirect.R", "specular_indirect.G", "specular_indirect.B"},
     "Z": {"Z.Z"},
     "instance_id": {"instance_id.instance_id"},
+    "denoised": {"denoised.R", "denoised.G", "denoised.B", "denoised.A"},
 }
 DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id"}
+LAYERS = {f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B")}
 
 
 def _schema_errors(record: dict[str, object], definition: str) -> list[str]:
@@ -54,6 +56,13 @@ def _beauty_errors(path: Path, size: tuple[int, int]) -> list[str]:
     return errors
 
 
+def _layer_errors(path: Path, size: tuple[int, int]) -> list[str]:
+    part = OpenEXR.File(str(path), header_only=True).parts[0]
+    missing = LAYERS - _channels(part.header)
+    errors = [f"{path.name}: layer targets lack {sorted(missing)}"] if missing else []
+    return errors if _size(part.header) == size else [*errors, f"{path.name}: layer resolution differs"]
+
+
 def _deep_errors(path: Path, size: tuple[int, int]) -> list[str]:
     part = OpenEXR.File(str(path), header_only=True).parts[0]
     errors: list[str] = []
@@ -76,13 +85,17 @@ def validate(shot: Path) -> list[str]:
     errors = _schema_errors(manifest, "manifest") + _schema_errors(camera, "camera")
     if errors:
         return errors
+    deep_frames = 0
     for record in cast("list[dict[str, int]]", camera["frames"]):
         name = f"{record['frame']:04d}.exr"
         size = (record["width"], record["height"])
-        for folder, check in (("beauty", _beauty_errors), ("deep", _deep_errors)):
+        for folder, check in (("beauty", _beauty_errors), ("layers", _layer_errors)):
             path = shot / folder / name
             errors += check(path, size) if path.is_file() else [f"missing {folder}/{name}"]
-    return errors
+        if (shot / "deep" / name).is_file():
+            deep_frames += 1
+            errors += _deep_errors(shot / "deep" / name, size)
+    return errors if deep_frames else [*errors, "no raw deep frame"]
 
 
 def main() -> None:

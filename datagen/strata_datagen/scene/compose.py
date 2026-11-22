@@ -11,6 +11,7 @@ from strata_datagen.generators import camera, hero, lighting, materials, scatter
 from strata_datagen.generators.scatter import Disk, Layer
 from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
+from strata_datagen.render.pack import DEEP_STRIDE
 from strata_datagen.rng import stream
 from strata_datagen.scene import layers, looks
 from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec, frames
@@ -27,6 +28,7 @@ class RenderParams:
     width: int
     height: int
     path_traced_samples: int
+    deep_stride: int = DEEP_STRIDE
 
 
 @dataclass

@@ -18,31 +18,34 @@ RENDERER = "BRAY_HdKarmaXPU"
 GPU_ONLY = {"KARMA_XPU_DISABLE_EMBREE_DEVICE": "1"}
 
 
+CHUNK_FRAMES = 60
+
+
 @dataclass(frozen=True)
 class Job:
-    """One shot: run `command` from `workdir` (both relative to the build root)."""
+    """One farm task: run `command` (husk) then `post` (layer packing) from `workdir`.
+
+    Paths are relative to the build root. A shot is split into tasks of CHUNK_FRAMES frames so the
+    per-task scene load and kernel compile are amortised over many frames.
+    """
 
     shot_id: str
     workdir: str
     command: list[str]
     outputs: list[str]
+    post: list[str]
 
 
-def job(root: Path, shot_dir: Path, frames: tuple[int, ...]) -> Job:
+def jobs(shot_dir: Path, root: Path, frames: tuple[int, ...], chunk: int, stride: int) -> list[Job]:
     workdir = shot_dir.relative_to(root).as_posix()
-    command = [
-        "husk",
-        "-R",
-        RENDERER,
-        "-f",
-        str(frames[0]),
-        "-n",
-        str(len(frames)),
-        "-V",
-        "2",
-        "scene/shot.usda",
-    ]
-    return Job(shot_dir.name, workdir, command, ["beauty", "deep"])
+    tasks: list[Job] = []
+    for start in range(0, len(frames), chunk):
+        first, count = frames[start], len(frames[start : start + chunk])
+        command = ["husk", "-R", RENDERER, "-f", str(first), "-n", str(count), "-V", "2", "scene/shot.usda"]
+        post = ["strata-datagen", "pack", "--shot", ".", "--first", str(first), "--count", str(count)]
+        post += ["--shot-first", str(frames[0]), "--stride", str(stride)]
+        tasks.append(Job(shot_dir.name, workdir, command, ["beauty", "deep", "layers"], post))
+    return tasks
 
 
 def write_job_list(root: Path, jobs: list[Job]) -> None:
@@ -50,7 +53,8 @@ def write_job_list(root: Path, jobs: list[Job]) -> None:
     files.write_text(root / "jobs.json", json.dumps([asdict(j) for j in jobs], indent=1) + "\n")
     lines = ["#!/bin/sh", "set -e", 'cd "$(dirname "$0")"']
     lines.extend(
-        f"(cd {shlex.quote(j.workdir)} && mkdir -p {' '.join(j.outputs)} && {shlex.join(j.command)})"
+        f"(cd {shlex.quote(j.workdir)} && mkdir -p {' '.join(j.outputs)} && {shlex.join(j.command)}"
+        f" && {shlex.join(j.post)})"
         for j in jobs
     )
     files.write_text(root / "jobs.sh", "\n".join(lines) + "\n")

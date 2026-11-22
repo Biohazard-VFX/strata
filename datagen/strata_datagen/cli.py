@@ -12,7 +12,7 @@ from strata_datagen.library import build as library_build
 from strata_datagen.library import catalogue, fetch
 from strata_datagen.presets import PRESETS
 from strata_datagen.qa import checks, contact
-from strata_datagen.render import husk
+from strata_datagen.render import husk, pack
 from strata_datagen.scene import compose, export
 from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec
 
@@ -46,13 +46,13 @@ def cmd_prepare(args: argparse.Namespace) -> None:
 
 def cmd_build(args: argparse.Namespace) -> None:
     library = catalogue.load(args.root)
-    render = compose.RenderParams(args.width, args.height, args.samples)
+    render = compose.RenderParams(args.width, args.height, args.samples, args.deep_stride)
     jobs: list[husk.Job] = []
     for spec in _specs(args):
         shot = compose.plan(spec, library, args.root, args.frames)
         compose.write(shot, library, args.root, render)
         export.write(shot, library, render)
-        jobs.append(husk.job(args.root, shot.directory, shot.frames))
+        jobs += husk.jobs(shot.directory, args.root, shot.frames, args.chunk, args.deep_stride)
         print("built", spec.shot_id, shot.track.move, shot.light.hdri.key, flush=True)
     husk.write_job_list(args.root, jobs)
 
@@ -63,11 +63,23 @@ def cmd_render(args: argparse.Namespace) -> None:
         if args.shots and job.shot_id not in args.shots:
             continue
         timings = husk.run(args.root, job, args.husk)
+        first, count = (
+            int(job.post[job.post.index("--first") + 1]),
+            int(job.post[job.post.index("--count") + 1]),
+        )
+        shot_first, stride = int(job.post[job.post.index("--shot-first") + 1]), int(job.post[-1])
+        if timings["exit_code"] == 0:
+            pack.pack(args.root / job.workdir, range(first, first + count), shot_first, stride)
         manifest_path = args.root / job.workdir / "manifest.json"
         manifest = export.load_json(manifest_path)
         manifest["timings"] = timings
         files.write_text(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
         print("rendered", job.shot_id, timings["device"], timings["mean_frame_seconds"], flush=True)
+
+
+def cmd_pack(args: argparse.Namespace) -> None:
+    kept = pack.pack(args.shot, range(args.first, args.first + args.count), args.shot_first, args.stride)
+    print("packed", args.first, args.count, "deep kept", kept, flush=True)
 
 
 def _label(shot: Path) -> str:
@@ -117,12 +129,21 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--frames", type=int, default=DEFAULT_FRAMES, help="frames per shot (presets fix their own)"
     )
+    p.add_argument("--chunk", type=int, default=husk.CHUNK_FRAMES, help="frames per farm task")
+    p.add_argument("--deep-stride", type=int, default=pack.DEEP_STRIDE, help="keep raw deep every N frames")
     p.set_defaults(run=cmd_build)
     p = sub.add_parser("render", help="render the job list locally")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--shots", nargs="*", default=[])
     p.add_argument("--husk", default=DEFAULT_HUSK)
     p.set_defaults(run=cmd_render)
+    p = sub.add_parser("pack", help="write layer targets for rendered frames, keep deep on the stride")
+    p.add_argument("--shot", type=Path, required=True)
+    p.add_argument("--first", type=int, required=True)
+    p.add_argument("--count", type=int, required=True)
+    p.add_argument("--shot-first", type=int, required=True)
+    p.add_argument("--stride", type=int, required=True)
+    p.set_defaults(run=cmd_pack)
     p = sub.add_parser("qa", help="check every shot, reject failures, write the report and contact sheet")
     p.add_argument("--root", type=Path, required=True)
     p.set_defaults(run=cmd_qa)

@@ -52,7 +52,7 @@ def _frame_seconds(_shot: Path) -> list[float]:
 
 class HuskTest(unittest.TestCase):
     def test_gpu_failure_retries_with_the_cpu_device_and_says_so(self) -> None:
-        job = husk.Job("s", "shots/s", ["husk", "scene/shot.usda"], ["beauty", "deep"])
+        job = husk.Job("s", "shots/s", ["husk", "scene/shot.usda"], ["beauty", "deep"], [])
         calls: list[dict[str, str]] = []
 
         def launch(_root: Path, _job: husk.Job, _husk: str, env: dict[str, str], _log: Path) -> int:
