@@ -1,11 +1,12 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git libgomp1 && rm -rf /var/lib/apt/lists/*
-WORKDIR /opt/strata/training
-COPY posttrain/pyproject.toml posttrain/uv.lock ./
+WORKDIR /opt/strata/training/posttrain
+COPY contract/dataset /opt/strata/contract/dataset
+COPY training/posttrain/pyproject.toml training/posttrain/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
-COPY posttrain/src ./src
+COPY training/posttrain/src ./src
 RUN uv sync --frozen --no-dev
-COPY posttrain/configs ./configs
+COPY training/posttrain/configs ./configs
 ENV TORCH_HOME=/data/torch-home PYTHONPATH=""
 ENTRYPOINT ["uv", "run", "--frozen", "--no-dev", "strata-train"]
 CMD ["pipeline", "configs/runpod.json"]

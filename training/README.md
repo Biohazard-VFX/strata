@@ -68,7 +68,7 @@ When holdout sequences exist, evaluation computes front-layer depth, coverage an
 Mount a contract dataset at `/data/dataset` and persistent output/checkpoint storage at `/data`. Adjust the ordinary JSON config for dataset size, clip length and available GPU memory. The default uses S, frozen encoder, trainable decoder and four-frame temporal contexts (short/single-frame shots remain valid). Batch size counts clips. No paid resource is created by this repository.
 
 ```sh
-docker build -t strata-training:v0 training
+docker build -f training/Dockerfile -t strata-training:v0 .
 docker run --rm --gpus all --memory=32g --memory-swap=32g -v /absolute/persistent/data:/data strata-training:v0
 ```
 

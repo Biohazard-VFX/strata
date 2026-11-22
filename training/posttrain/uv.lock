@@ -995,6 +995,17 @@ wheels = [
 ]
 
 [[package]]
+name = "strata-contract"
+version = "0.1.0"
+source = { editable = "../../contract/dataset" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "numpy", specifier = ">=2.0" }]
+
+[[package]]
 name = "strata-training"
 version = "0.1.0"
 source = { editable = "." }
@@ -1005,6 +1016,7 @@ dependencies = [
     { name = "openexr" },
     { name = "pillow" },
     { name = "scipy" },
+    { name = "strata-contract" },
     { name = "torch" },
 ]
 
@@ -1024,6 +1036,7 @@ requires-dist = [
     { name = "openexr", specifier = ">=3.3" },
     { name = "pillow", specifier = ">=11" },
     { name = "scipy", specifier = ">=1.14" },
+    { name = "strata-contract", editable = "../../contract/dataset" },
     { name = "torch", specifier = ">=2.6" },
 ]
 
