@@ -16,5 +16,6 @@
   "warmup_steps": 20,
   "log_every": 20,
   "output": "/data/strata_v0/runs/h_diagnostic",
-  "input_mode": "cached"
+  "input_mode": "cached",
+  "early_stopping": false
 }

@@ -17,6 +17,7 @@ def save_checkpoint(
     rng: np.random.Generator,
     step: int,
     seconds: float,
+    validation: dict[str, Any] | None = None,
 ) -> None:
     state = {
         "model": {k: v for k, v in model.state_dict().items() if not k.startswith("base.encoder.")},
@@ -26,6 +27,7 @@ def save_checkpoint(
         "torch_rng": torch.get_rng_state(),
         "step": step,
         "seconds": seconds,
+        "validation": validation,
     }
     with atomic_path(path) as temporary:
         torch.save(state, temporary)

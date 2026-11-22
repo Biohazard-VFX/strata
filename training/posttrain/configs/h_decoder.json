@@ -16,5 +16,8 @@
   "output": "/data/strata_v0/runs/h_decoder",
   "decoder_learning_rate": 5e-06,
   "warmup_steps": 2000,
-  "input_mode": "cached"
+  "input_mode": "cached",
+  "validation_index": "/data/validation/targets/index.json",
+  "validation_protocol": "/data/validation/protocol.json",
+  "validation_features": "/data/validation/features_h"
 }

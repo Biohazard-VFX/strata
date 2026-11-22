@@ -30,6 +30,9 @@ def pipeline(config_path: Path) -> None:
         index,
         protocol,
         Path(config["output"]) / "evaluation",
-        [Path(config["output"]) / "final.pt"],
+        [
+            Path(config["output"])
+            / ("best.pt" if config.get("early_stopping", True) else "final.pt")
+        ],
         device=config.get("device", "cuda"),
     )

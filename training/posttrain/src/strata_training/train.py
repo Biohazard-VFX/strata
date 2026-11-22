@@ -1,3 +1,4 @@
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from strata_training.model.head import DeepHead
 from strata_training.model.live import FrozenEncoder
 from strata_training.optim import gradient_norm, learning_rate_multiplier, parameter_groups
 from strata_training.torch_api import api
+from strata_training.validation import evaluate_validation, validation_frames
 
 
 def train(config_path: Path) -> dict[str, Any]:
@@ -38,6 +40,12 @@ def train(config_path: Path) -> dict[str, Any]:
             "must be published before training this representation"
         )
     frames = [Frame(e, Path(config["features"]), config["scale_mode"]) for e in entries]
+    validation = validation_frames(config, entries) if config["early_stopping"] else []
+    if validation:
+        for name in ("index", "protocol"):
+            config[f"validation_{name}_sha256"] = hashlib.sha256(
+                Path(config[f"validation_{name}"]).read_bytes()
+            ).hexdigest()
     online = (
         OnlineLoader(
             frames, Path(config["samples"]), config["clean_fraction"], config.get("augmentation")
@@ -83,6 +91,11 @@ def train(config_path: Path) -> dict[str, Any]:
     optimizer = torch.optim.AdamW(parameter_groups(model, config), weight_decay=1e-4)
     start_step = 0
     previous_seconds = 0.0
+    validation_state: dict[str, Any] | None = (
+        {"best_metric": None, "best_step": 0, "stale_evals": 0, "history": []}
+        if validation
+        else None
+    )
     if config.get("resume"):
         state: dict[str, Any] = torch.load(config["resume"], map_location="cpu", weights_only=True)
         keys = (
@@ -101,10 +114,22 @@ def train(config_path: Path) -> dict[str, Any]:
             "input_mode",
             "crop",
             "halo",
+            "early_stopping",
         )
+        if validation:
+            keys += (
+                "validation_index",
+                "validation_protocol",
+                "validation_features",
+                "validation_index_sha256",
+                "validation_protocol_sha256",
+                "validation_every",
+                "validation_patience",
+                "output",
+            )
         if config["input_mode"] == "hybrid":
             keys += ("clean_fraction", "samples", "augmentation", "compile_encoder")
-        saved_config = {"input_mode": "cached", **state["config"]}
+        saved_config = {"input_mode": "cached", "early_stopping": False, **state["config"]}
         if any(saved_config.get(key) != config.get(key) for key in keys):
             raise ValueError("Resume model/data/scale does not match config")
         missing, unexpected = cast(
@@ -116,14 +141,51 @@ def train(config_path: Path) -> dict[str, Any]:
         rng.bit_generator.state = state["rng"]
         torch.set_rng_state(state["torch_rng"].cpu())
         start_step, previous_seconds = state["step"], state["seconds"]
+        if validation:
+            validation_state = state.get("validation")
+            if validation_state is None:
+                raise ValueError("Resume checkpoint is missing validation stopping state")
+            if validation_state["stale_evals"] >= config["validation_patience"]:
+                raise ValueError("Resume checkpoint already exhausted validation patience")
     start = time.monotonic()
     if start_step >= config["steps"]:
         raise ValueError("Resume step already reaches the requested final step")
     history: list[dict[str, Any]] = []
     if config.get("resume") and (output / "history.json").exists():
         history = json.loads((output / "history.json").read_text())
+
+    def check_validation(step: int) -> dict[str, Any]:
+        assert validation_state is not None
+        metrics = evaluate_validation(model, config, validation)
+        metric = float(metrics["mixed_alpha_mae"])
+        improved = (
+            validation_state["best_metric"] is None or metric < validation_state["best_metric"]
+        )
+        validation_state["stale_evals"] = 0 if improved else validation_state["stale_evals"] + 1
+        if improved:
+            validation_state["best_metric"], validation_state["best_step"] = metric, step
+        elapsed = previous_seconds + time.monotonic() - start
+        validation_state["history"].append({"step": step, "seconds": elapsed, **metrics})
+        write_json(output / "validation.json", validation_state)
+        if improved:
+            save_checkpoint(
+                output / "best.pt",
+                model,
+                optimizer,
+                config,
+                rng,
+                step,
+                elapsed,
+                validation=validation_state,
+            )
+        return metrics
+
+    if validation and not config.get("resume"):
+        check_validation(0)
     crop, halo = config["crop"], config["halo"]
     running: list[float] = []
+    last_step = start_step
+    stopped = False
     for step in range(start_step + 1, config["steps"] + 1):
         selections: list[tuple[int, int, int]] = []
         while len(selections) < config["batch_size"]:
@@ -175,7 +237,17 @@ def train(config_path: Path) -> dict[str, Any]:
         torch.nn.utils.clip_grad_norm_(parameters, 5)
         api.optim.AdamW.step(optimizer)
         running.append(loss.item())
-        if step % config["log_every"] == 0 or step == config["steps"]:
+        last_step = step
+        validation_result: dict[str, Any] | None = None
+        if validation and (step % config["validation_every"] == 0 or step == config["steps"]):
+            validation_result = check_validation(step)
+            assert validation_state is not None
+            stopped = validation_state["stale_evals"] >= config["validation_patience"]
+        if (
+            step % config["log_every"] == 0
+            or step == config["steps"]
+            or validation_result is not None
+        ):
             row: dict[str, Any] = {
                 "step": step,
                 "seconds": previous_seconds + time.monotonic() - start,
@@ -197,13 +269,34 @@ def train(config_path: Path) -> dict[str, Any]:
                 "loader_seconds": loader_seconds,
                 "clean_samples": len(prepared.clean) if prepared else len(selections),
                 "live_samples": len(prepared.live) if prepared else 0,
+                "validation": validation_result,
             }
             history.append(row)
             running.clear()
             write_json(output / "history.json", history)
-            save_checkpoint(output / "last.pt", model, optimizer, config, rng, step, row["seconds"])
+            save_checkpoint(
+                output / "last.pt",
+                model,
+                optimizer,
+                config,
+                rng,
+                step,
+                row["seconds"],
+                validation=validation_state,
+            )
+        if stopped:
+            break
     seconds = previous_seconds + time.monotonic() - start
-    save_checkpoint(output / "final.pt", model, optimizer, config, rng, config["steps"], seconds)
+    save_checkpoint(
+        output / "final.pt",
+        model,
+        optimizer,
+        config,
+        rng,
+        last_step,
+        seconds,
+        validation=validation_state,
+    )
     report = {
         "config": config,
         "seconds": seconds,
@@ -212,6 +305,13 @@ def train(config_path: Path) -> dict[str, Any]:
         "trainable_parameters": sum(p.numel() for p in parameters),
         "train_frames": len(frames),
         "final_train_loss": history[-1]["train_loss"],
+        "stopped_step": last_step,
+        "stopping_reason": "validation_patience" if stopped else "step_ceiling",
+        "best_step": validation_state["best_step"] if validation_state else last_step,
+        "best_validation_mixed_alpha_mae": validation_state["best_metric"]
+        if validation_state
+        else None,
+        "selected_checkpoint": str(output / ("best.pt" if validation else "final.pt")),
     }
     write_json(output / "training.json", report)
     return report

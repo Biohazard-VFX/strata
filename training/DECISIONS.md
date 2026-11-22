@@ -29,3 +29,4 @@
 - Sorted pixel and cluster segments use contiguous extrema reductions; ordered first candidates preserve stable depth-gap ties.
 - Hybrid training uses native 512² independent crops, 40% clean-cache reuse and frozen bf16/SDPA encoding otherwise; augmented features are never cached.
 - Sky ID 0 retains colour/coverage targets; clusters containing visible sky have no depth supervision, including when the K limit merges sky and geometry.
+- Select best checkpoints by OOD-validation mixed-alpha MAE every 250 steps; stop after four stale checks and treat step budgets as ceilings.

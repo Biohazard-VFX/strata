@@ -9,12 +9,20 @@ def training_defaults(config: dict[str, Any]) -> dict[str, Any]:
         "crop": 512,
         "halo": 0,
         "compile_encoder": False,
+        "early_stopping": True,
+        "validation_every": 250,
+        "validation_patience": 4,
         **config,
     }
     return result
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    if config.get("early_stopping", True):
+        for key, default in (("validation_every", 250), ("validation_patience", 4)):
+            value = config.get(key, default)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{key} must be a positive integer")
     mode = config.get("input_mode", "hybrid")
     if mode not in {"cached", "hybrid"}:
         raise ValueError("input_mode must be cached or hybrid")

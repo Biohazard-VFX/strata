@@ -15,7 +15,7 @@ def freeze(index: Path, output: Path) -> dict[str, Any]:
         "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
         "seed": 4004,
         "mixed": "legacy v004 masks for reference comparison; native K-layer masks also reported",
-        "selection": "final fixed-step checkpoints, no best-holdout selection",
+        "selection": "best OOD-validation mixed-alpha checkpoint; step budget is a ceiling",
         "scale": "oracle per-frame global alignment on eroded single surfaces, including holdout",
     }
     if not split["train"] or not split["test"] or set(split["train"]) & set(split["test"]):

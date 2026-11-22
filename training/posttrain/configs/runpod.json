@@ -20,5 +20,8 @@
   "warmup_steps": 500,
   "input_mode": "hybrid",
   "samples": "/data/samples",
-  "clean_fraction": 0.4
+  "clean_fraction": 0.4,
+  "validation_index": "/data/validation/targets/index.json",
+  "validation_protocol": "/data/validation/protocol.json",
+  "validation_features": "/data/validation/features_s"
 }

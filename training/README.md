@@ -49,13 +49,39 @@ Decoder configs use separate AdamW groups: the new head's `learning_rate` and th
 
 ## Frozen evaluation
 
-The saved protocol preserves all 28 train and 8 pose-240 holdout frames. Training uses native crops and final fixed-step checkpoints, not best-holdout selection. `metrics.json` has pooled mixed-pixel alpha MAE, front/back and ordered inverse-depth median relative errors, layer color/count/order diagnostics, native and affine-aligned directed boundary F1, silhouette recall, calibration reliability bins, composite and fixed-magenta-plane insertion errors, and edge-band recomposition errors. Raw metric-depth AbsRel/δ1 are distinct from oracle global-scale-aligned diagnostics. The historical frozen probe remains oracle-scale-conditioned; it is not a raw metric competitor.
+The saved protocol preserves all 28 train and 8 pose-240 holdout frames. Training uses native crops. Historical v004 checkpoints used fixed final steps; new runs use the separate OOD-validation policy below. `metrics.json` has pooled mixed-pixel alpha MAE, front/back and ordered inverse-depth median relative errors, layer color/count/order diagnostics, native and affine-aligned directed boundary F1, silhouette recall, calibration reliability bins, composite and fixed-magenta-plane insertion errors, and edge-band recomposition errors. Raw metric-depth AbsRel/δ1 are distinct from oracle global-scale-aligned diagnostics. The historical frozen probe remains oracle-scale-conditioned; it is not a raw metric competitor.
 
 The original v004 reference table compares the first predicted coverage/depth and last GT-valid ordered depth slot with its two-layer GT; it never compacts away a transparent foreground or sorts predictions after inference. Native K-layer scores remain separate. Analytical methods use the same 95th/5th local percentiles and 20-bin curves fitted only on the frozen training IDs. Fake deep has a single opaque sample. The frozen probe can be rerun on new native data with its original weights and training-only normalization. Baseline color is observed beauty copied into both layers, so their zero self-composite error is tautological; the insertion test exposes geometry errors but does not establish hidden-color recovery.
 
 Boundary evaluation is a documented paper-style adaptation: four directed adjacent-pixel contours; 5/10/15/20/25% thresholds weighted proportionally to threshold; exact native-pixel matching, with separate positive affine inverse-depth alignment. The papers do not fully specify the discrete threshold weights. Silhouette recall uses alpha>0.1 and scanline connected-run nonmaximum suppression; v004 lacks true instance masks, so its silhouette is explicitly a Z<3m coverage proxy, not a published segmentation benchmark. No label interpolation occurs in evaluation either.
 
 Deep predictions retain every positive-coverage sample, including low-alpha HDR contributions. Outputs are NPZ plus point-sample deep EXRs (`R G B A Z ZBack`, ZBack=Z) for the requested first N holdout frames. Set the Nuke working color space to match the input EXR; legacy v004's scene-linear primaries are unverified and are not silently labeled ACEScg. No interactive Nuke canary acceptance is claimed.
+
+## OOD-validation early stopping
+
+New runs default to `early_stopping: true`, `validation_every: 250` and
+`validation_patience: 4`. Supply `validation_index`, `validation_protocol` and
+`validation_features`; the protocol's `test` IDs are the validation set. Use a
+separate scene-distribution cohort, not a different pose of a training scene. The
+loader rejects the training index itself and overlapping shot/frame/target/manifest
+identities. Reserve different shots again for the final OOD test; never select
+checkpoints on that test set.
+
+A step-zero validation establishes the initial best. Full native-frame validation
+then runs every N steps and at the ceiling. Checkpoint selection uses pooled
+first-layer mixed-pixel alpha MAE, not training loss. Four consecutive checks without
+a lower MAE stop training. `best.pt` is the selected checkpoint; `last.pt` and
+`final.pt` retain the actual stopping-step state. Pipeline evaluation uses `best.pt`.
+`history.json` logs training loss and validation points, and `validation.json` retains
+all validation loss/MAE points, best step and patience state. Validation loss uses
+the same objective on full-frame predictions, with logits reconstructed from clipped
+inference probabilities; selection uses unclipped predicted alpha MAE.
+
+Resume retains validation history/patience and requires identical validation sources,
+cadence and output directory. It rejects a checkpoint whose patience is exhausted.
+`early_stopping: false` is explicit opt-out for historical reproduction and fixed
+400-step diagnostics, not the default. The ordinary configs expect prepared OOD
+validation assets under `/data/validation`; adjust these paths for the deployment.
 
 ## Sequences
 

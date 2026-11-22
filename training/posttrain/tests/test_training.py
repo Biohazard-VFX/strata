@@ -1,6 +1,8 @@
 import hashlib
 import json
+from importlib import import_module
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -10,7 +12,7 @@ from strata_training.io import atomic_path, save_array, save_arrays, write_json
 from strata_training.train import train
 
 
-def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) -> None:
+def _configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
     cache, index, protocol = (tmp_path / name for name in ("frame.npz", "index.json", "split.json"))
     alpha = np.zeros((4, 32, 32), dtype=np.float32)
     inverse = alpha.copy()
@@ -47,6 +49,7 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) ->
         "mode": "head",
         "scale_mode": "raw",
         "input_mode": "cached",
+        "early_stopping": False,
         "seed": 4004,
         "crop": 32,
         "halo": 0,
@@ -59,6 +62,11 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) ->
     }
     path = tmp_path / "config.json"
     write_json(path, config)
+    return config, path
+
+
+def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) -> None:
+    config, path = _configuration(tmp_path)
     report = train(path)
     assert report["train_frames"] == 1
     history = json.loads((tmp_path / "run/history.json").read_text())
@@ -81,3 +89,116 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) ->
     write_json(path, {**config, "resume": str(historical)})
     with pytest.raises(ValueError, match="already reaches"):
         train(path)
+
+
+def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import shutil
+
+    config, path = _configuration(tmp_path)
+    entries = json.loads(Path(config["index"]).read_text())
+    root = Path(config["features"])
+    shutil.copytree(root / "train", root / "validation")
+    cache = tmp_path / "validation.npz"
+    shutil.copy2(entries[0]["cache"], cache)
+    entry = {**entries[0], "id": "validation", "shot": "ood", "cache": str(cache)}
+    index, protocol = tmp_path / "validation-index.json", tmp_path / "validation-protocol.json"
+    write_json(index, [entry])
+    write_json(
+        protocol,
+        {"test": [entry["id"]], "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()},
+    )
+    config.update(
+        early_stopping=True,
+        validation_every=2,
+        validation_patience=2,
+        steps=20,
+        validation_index=str(index),
+        validation_protocol=str(protocol),
+        validation_features=str(root),
+        log_every=1,
+    )
+    write_json(path, config)
+    metrics = iter([0.4, 0.3, 0.31, 0.32])
+
+    def evaluate(model: object, config: object, frames: object) -> dict[str, Any]:
+        del model, config, frames
+        value = next(metrics)
+        return {"mixed_alpha_mae": value, "loss": value * 2, "mixed_pixels": 1024, "frames": 1}
+
+    trainer: Any = import_module("strata_training.train")
+    monkeypatch.setattr(trainer, "evaluate_validation", evaluate)
+    report = train(path)
+    assert report["stopped_step"] == 6
+    assert report["best_step"] == 2
+    assert report["stopping_reason"] == "validation_patience"
+    assert report["best_validation_mixed_alpha_mae"] == 0.3
+    output = Path(config["output"])
+    best = torch.load(output / "best.pt", weights_only=True)
+    final = torch.load(output / "final.pt", weights_only=True)
+    assert best["step"] == 2
+    assert final["step"] == 6
+    assert not torch.equal(best["model"]["output.weight"], final["model"]["output.weight"])
+    state = json.loads((output / "validation.json").read_text())
+    assert [row["step"] for row in state["history"]] == [0, 2, 4, 6]
+    assert [row["mixed_alpha_mae"] for row in state["history"]] == [0.4, 0.3, 0.31, 0.32]
+    assert final["validation"]["stale_evals"] == 2
+    write_json(path, {**config, "resume": str(output / "last.pt")})
+    with pytest.raises(ValueError, match="exhausted validation patience"):
+        train(path)
+
+
+def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode(
+    tmp_path: Path,
+) -> None:
+    from torch import nn
+
+    from strata_training.data.dataset import Frame
+    from strata_training.model.head import DeepHead
+    from strata_training.validation import evaluate_validation, validation_frames
+
+    config, _ = _configuration(tmp_path)
+    entries = json.loads(Path(config["index"]).read_text())
+    frame = Frame(entries[0], Path(config["features"]))
+    model = DeepHead(128, nn.Identity(), 4)
+    result = evaluate_validation(model, config, [frame])
+    assert result["mixed_alpha_mae"] == pytest.approx(0.3)
+    assert result["mixed_pixels"] == 1024
+    assert result["loss"] > 0
+    assert model.training
+    assert all(parameter.grad is None for parameter in model.parameters())
+    frame.arrays["mixed"][:] = False
+    with pytest.raises(ValueError, match="requires mixed pixels"):
+        evaluate_validation(model, config, [frame])
+    assert model.training
+    with pytest.raises(ValueError, match="explicit OOD validation"):
+        validation_frames(config, entries)
+    with pytest.raises(ValueError, match="separate scene-distribution index"):
+        validation_frames(
+            {
+                **config,
+                "validation_index": config["index"],
+                "validation_protocol": config["protocol"],
+                "validation_features": config["features"],
+            },
+            entries,
+        )
+    index, protocol = tmp_path / "alias-index.json", tmp_path / "alias-protocol.json"
+    alias = {**entries[0], "id": "renamed", "shot": "different-label"}
+    write_json(index, [alias])
+    write_json(
+        protocol,
+        {"test": [alias["id"]], "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()},
+    )
+    with pytest.raises(ValueError, match="disjoint from training"):
+        validation_frames(
+            {
+                **config,
+                "validation_index": str(index),
+                "validation_protocol": str(protocol),
+                "validation_features": config["features"],
+            },
+            entries,
+        )

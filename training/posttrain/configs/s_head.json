@@ -14,5 +14,8 @@
   "learning_rate": 0.0004,
   "log_every": 250,
   "output": "/data/strata_v0/runs/s_head",
-  "input_mode": "cached"
+  "input_mode": "cached",
+  "validation_index": "/data/validation/targets/index.json",
+  "validation_protocol": "/data/validation/protocol.json",
+  "validation_features": "/data/validation/features_s"
 }

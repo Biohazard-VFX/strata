@@ -161,6 +161,15 @@ def test_hybrid_policy_defaults_and_unsupported_temporal_or_oracle_inputs() -> N
         512,
         0,
     )
+    assert (
+        config["early_stopping"],
+        config["validation_every"],
+        config["validation_patience"],
+    ) == (
+        True,
+        250,
+        4,
+    )
     validate_config(config)
     for changes in ({"scale_mode": "oracle-aligned"}, {"clip_length": 2}, {"clean_fraction": -0.1}):
         with pytest.raises(ValueError, match=r"Hybrid native crops|clean_fraction"):
