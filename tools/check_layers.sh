@@ -69,6 +69,9 @@ for directory,forbidden,message in LAYERS:
 for directory in PROJECTS:
     errors += project_violations(directory)
 errors += lock_violations()
+for path in (*Path('training/posttrain/src').rglob('*.py'), *Path('training/posttrain/configs').rglob('*.json')):
+    if re.search(r'v004|legacy', path.read_text(), re.I):
+        errors.append(f'{path}: obsolete training reference')
 for path in Path('training/posttrain/src').rglob('*.py'):
     tree = ast.parse(path.read_text())
     for node in ast.walk(tree):

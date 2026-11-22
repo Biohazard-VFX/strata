@@ -185,7 +185,9 @@ def test_target_cache_rebuilds_for_changed_content(
         assert str(data["content_identity"]) == identity
 
 
-def test_torch_reducer_matches_published_producer_samples(packed_shot: Path) -> None:
+def test_torch_reducer_matches_published_producer_samples(
+    packed_shot: Path, math_device: str
+) -> None:
     from strata_training.augment.torch_deep import TensorSamples
 
     directory = next((packed_shot / "samples").iterdir())
@@ -195,18 +197,24 @@ def test_torch_reducer_matches_published_producer_samples(packed_shot: Path) -> 
     )
     tensor = TensorSamples(
         deep.shape,
-        *(torch.tensor(getattr(deep, k)) for k in ("counts", "z", "alpha", "rgb", "ids", "roles")),
+        *(
+            torch.tensor(getattr(deep, k), device=math_device)
+            for k in ("counts", "z", "alpha", "rgb", "ids", "roles")
+        ),
     )
     for key, expected in deep.targets().arrays().items():
-        np.testing.assert_array_equal(tensor.targets()[key].numpy(), expected)
+        np.testing.assert_array_equal(tensor.targets()[key].cpu().numpy(), expected)
 
 
-def test_torch_reducer_matches_real_render_crop() -> None:
+def test_torch_reducer_matches_real_render_crop(math_device: str) -> None:
     from strata_training.augment.torch_deep import TensorSamples
 
-    record = json.loads((Path(__file__).parent / "fixtures/render_crop_040.json").read_text())
+    fixture = Path(__file__).parent / "fixtures/render_crop_040.json"
+    assert fixture.stat().st_size < 100_000
+    record = json.loads(fixture.read_text())
+    assert min(record["shape"]) > 1
     deep = DeepSamples(
-        (1, 1),
+        tuple(record["shape"]),
         *(
             np.array(record[k], dtype=np.int64 if k in {"offsets", "ids"} else np.float32)
             for k in FIELDS
@@ -214,10 +222,13 @@ def test_torch_reducer_matches_real_render_crop() -> None:
     )
     tensor = TensorSamples(
         deep.shape,
-        *(torch.tensor(getattr(deep, k)) for k in ("counts", "z", "alpha", "rgb", "ids", "roles")),
+        *(
+            torch.tensor(getattr(deep, k), device=math_device)
+            for k in ("counts", "z", "alpha", "rgb", "ids", "roles")
+        ),
     )
     for key, expected in deep.targets().arrays().items():
-        np.testing.assert_array_equal(tensor.targets()[key].numpy(), expected)
+        np.testing.assert_array_equal(tensor.targets()[key].cpu().numpy(), expected)
 
 
 @pytest.mark.parametrize("mode", ["numpy", "torch"])

@@ -15,7 +15,7 @@ def freeze(index: Path, output: Path) -> dict[str, Any]:
         "test": [e["id"] for e in entries if e["split"] == "test"],
         "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
         "seed": 4004,
-        "mixed": "legacy v004 masks for reference comparison; native K-layer masks also reported",
+        "mixed": "native K-layer mixed-coverage masks",
         "selection": "best OOD-validation mixed-alpha checkpoint; step budget is a ceiling",
         "scale": "oracle per-frame global alignment on eroded single surfaces, including holdout",
     }

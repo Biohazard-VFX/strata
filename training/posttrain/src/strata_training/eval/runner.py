@@ -301,9 +301,7 @@ def evaluate(
         "prediction_metadata": {
             str(p): json.loads((p / "prediction.json").read_text()) for p in prediction_caches or []
         },
-        "temporal_reason": (
-            "Report static-track proxy only when contiguous frames exist; v004 has none."
-        ),
+        "temporal_reason": ("Report static-track proxy only when contiguous frames exist."),
         "boundary_protocol": (
             "Directed adjacent-pixel ratios at 5,10,15,20,25%, threshold-proportional "
             "weighting. Exact native-pixel matching, four directed orientations. "
@@ -318,9 +316,9 @@ def evaluate(
         ),
         "historical_protocol": (
             "First predicted coverage/depth and last GT-valid ordered depth slot are "
-            "compared with original v004 two-layer GT/masks. No visibility compaction "
+            "compared with the two-layer projection of native GT/masks. No visibility compaction "
             "or posthoc depth sorting. Native K metrics remain separate; the historical "
-            "probe is oracle-conditioned. protocol.scale documents that legacy track, "
+            "probe is oracle-conditioned. protocol.scale documents that reference track, "
             "not the raw checkpoint inputs."
         ),
         "peak_vram_bytes": torch.cuda.max_memory_allocated()

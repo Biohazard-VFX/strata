@@ -189,6 +189,52 @@ def test_loader_reports_eligibility_and_configurable_warning(
             OnlineLoader(frames, samples, eligibility_warning_fraction=threshold)
 
 
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_adversarial_reducer_precision(math_device: str, dtype: str) -> None:
+    from strata_training.data.targets import reduce_samples
+    from strata_training.torch_layers import reduce_sorted_samples
+
+    rng = np.random.default_rng(481991)
+    shape = (24, 32)
+    counts = rng.integers(64, 513, size=shape[0] * shape[1], dtype=np.int64)
+    counts[::71] = 0
+    counts[1] = 16384
+    pixel = np.repeat(np.arange(counts.size), counts)
+    n = int(counts.sum())
+    z = rng.choice(np.array([1, 1.1499999, 1.15, 1.1500001, 2, 4, 8], np.float32), n)
+    z *= rng.choice(np.array([1, 1.0000001], np.float32), n)
+    alpha = rng.choice(
+        np.array(
+            [0, 1e-12 * (1 - 1e-8), 1e-12 * (1 + 1e-8), 1e-8, 1e-4, 0.01, 0.1, 0.5, 0.999999999, 1],
+            np.float64,
+        ),
+        n,
+    )
+    alpha[pixel == 1] = np.float64(0.0003)
+    alpha = alpha.astype(dtype)
+    rgb = (rng.uniform(-2, 32, (n, 3)) * alpha[:, None]).astype(dtype)
+    ids = rng.integers(0, 4, n, dtype=np.int64)
+    order = np.lexsort((z, pixel))
+    z, alpha, rgb, ids = z[order], alpha[order], rgb[order], ids[order]
+    expected = reduce_samples(
+        z.astype(np.float64),
+        alpha.astype(np.float64),
+        rgb.astype(np.float64),
+        counts,
+        shape,
+        sky=ids == 0,
+    )
+    actual = reduce_sorted_samples(
+        torch.tensor(z, device=math_device),
+        torch.tensor(alpha, device=math_device),
+        torch.tensor(rgb, device=math_device),
+        torch.tensor(counts, device=math_device),
+        shape,
+        torch.tensor(ids == 0, device=math_device),
+    )
+    for key, reference in expected.arrays().items():
+        np.testing.assert_allclose(actual[key].cpu().numpy(), reference, atol=2e-6, rtol=2e-6)
+
 
 def test_hero_group_marker_is_named_once() -> None:
     import ast

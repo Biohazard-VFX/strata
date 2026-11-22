@@ -89,6 +89,9 @@ BASE.update({
     'datagen/pyproject.toml': project('strata-datagen',['numpy','strata-dataset'],{'strata-dataset':'../contract/dataset'}),
 })
 CASES = [
+    ('versioned training prose', {'training/posttrain/src/unit.py': 'label = "v004 frozen probe"\n'}, 'obsolete training reference'),
+    ('obsolete training config content', {'training/posttrain/configs/neutral.json': '{"masks": "legacy masks"}'}, 'obsolete training reference'),
+    ('nested versioned config content', {'training/posttrain/configs/nested/neutral.json': '{"baseline": "V004"}'}, 'obsolete training reference'),
     ('legacy training input', {'training/posttrain/src/unit.py': 'value = entry["legacy_data"]\n'}, 'legacy training inputs'),
     ('legacy training reader', {'training/posttrain/src/unit.py': 'def read_deep(path): pass\n'}, 'legacy training readers'),
     ('legacy RGB option', {'training/posttrain/src/unit.py': 'def read_rgb(path, *, legacy=False): pass\n'}, 'legacy training readers'),

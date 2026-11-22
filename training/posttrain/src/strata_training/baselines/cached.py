@@ -35,7 +35,7 @@ def cached_baselines(identifier: str, root: Path, beauty: Array) -> dict[str, La
                     alpha, arrays["inv_fg"] * ratio, arrays["inv_bg"] * ratio, beauty
                 )
     probe = np.load(data / "probe.npz")
-    results["v004 frozen probe oracle-aligned"] = two_layer(
+    results["frozen probe oracle-aligned"] = two_layer(
         probe["alpha"], probe["inv_fg"], probe["inv_bg"], beauty
     )
     return results
