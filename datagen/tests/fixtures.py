@@ -120,6 +120,14 @@ def write_shot(shot: Path, frames: list[list[Sample | list[Sample]]], stride: in
         ],
         "background": {"instance_id": 0, "radius_m": 3000.0, "far_clip_m": 5000.0},
         "render": {"frames": [1, len(frames)], "deep_stride": stride},
+        "scene": {
+            "camera": {
+                "move": "locked",
+                "focal_length_mm": FOCAL_MM,
+                "motion_blur": False,
+                "depth_of_field": False,
+            }
+        },
     }
     shot.mkdir(parents=True, exist_ok=True)
     (shot / "manifest.json").write_text(json.dumps(manifest))
