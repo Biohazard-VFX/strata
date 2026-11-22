@@ -89,7 +89,16 @@ def test_native_raw_and_sidecar_samples_preserve_unlabelled_roles(
             for name in ("counts", "z", "alpha", "rgb", "ids", "roles")
         ),
     )
-    for actual in (deep.targets().arrays(), tensors.targets()):
+    from dataclasses import replace
+
+    unlabelled = replace(deep, ids=np.full_like(deep.ids, -1))
+    unlabelled_tensors = replace(tensors, ids=torch.full_like(tensors.ids, -1))
+    for actual in (
+        deep.targets().arrays(),
+        tensors.targets(),
+        unlabelled.targets().arrays(),
+        unlabelled_tensors.targets(),
+    ):
         for name, value in expected.arrays().items():
             a = actual[name]
             np.testing.assert_allclose(

@@ -8,13 +8,13 @@ import tomllib
 
 LAYERS = (
     ('training', ('runtime', 'datagen', 'strata_datagen'), 'cross-side imports must use contract'),
-    ('contract/strata_contract', ('runtime', 'training', 'datagen', 'strata_train', 'strata_datagen', 'strata_dataset'),
+    ('contract/strata_contract', ('runtime', 'training', 'datagen', 'strata_train', 'strata_training', 'strata_datagen', 'strata_dataset'),
      'cross-side imports must use contract'),
-    ('contract/dataset', ('runtime', 'training', 'datagen', 'contract', 'strata_train', 'strata_datagen', 'strata_contract'),
+    ('contract/dataset', ('runtime', 'training', 'datagen', 'contract', 'strata_train', 'strata_training', 'strata_datagen', 'strata_contract'),
      'the dataset contract imports no Strata layer'),
-    ('datagen', ('runtime', 'training', 'contract', 'strata_train', 'strata_contract'),
+    ('datagen', ('runtime', 'training', 'contract', 'strata_train', 'strata_training', 'strata_contract'),
      'datagen may depend only on the dataset contract'),
-    ('hosts', ('runtime', 'training', 'datagen', 'strata_train', 'strata_datagen', 'contract', 'strata_contract',
+    ('hosts', ('runtime', 'training', 'datagen', 'strata_train', 'strata_training', 'strata_datagen', 'contract', 'strata_contract',
                'strata_dataset'), 'hosts may not import implementation layers'),
 )
 PROJECTS = {

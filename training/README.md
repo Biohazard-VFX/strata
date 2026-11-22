@@ -15,27 +15,21 @@ env -u PYTHONPATH PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --frozen pytest -q
 
 The tests protect independently computed compositing/depth values, occlusion/empty samples, native three-scale gradients, mixed-pixel masking, directed boundary sign/location/scale behavior, calibration, temporal tracks, sequence isolation, model ordering and actual deep EXR read/write. Pyright is strict. `torch_api.py` isolates the small set of upstream Torch bindings whose annotations are incomplete; no strict diagnostics are disabled.
 
-## Existing v004 smoke data
+## Dataset migration
 
-```sh
-P=$PWD/research
-D=$P/data/strata_v0
-uv run strata-train convert-v004 "$P" "$P/data/v004_contract"
-uv run strata-train targets "$P/data/v004_contract" "$D/targets"
-uv run strata-train freeze "$D/targets/index.json" ../eval/v004_split.json
-TORCH_HOME=$P/torch-home uv run strata-train features "$D/targets/index.json" "$D/features_s" --preset depthpro2-s
-TORCH_HOME=$P/torch-home uv run strata-train features "$D/targets/index.json" "$D/features_h_fp32" --preset depthpro2-h
-uv run strata-train train configs/s_head.json
-uv run strata-train train configs/s_decoder.json
-uv run strata-train train configs/h_head.json
-uv run strata-train train configs/h_decoder.json
-uv run strata-train baselines "$D/targets/index.json" ../eval/v004_split.json "$D/features_h_fp32" "$D/baselines" "$P/results/v004_probe/probe_B.pt" "$P/results/v004_probe/normalization.npz"
-uv run strata-train evaluate "$D/targets/index.json" ../eval/v004_split.json "$D/evaluation" --baselines "$D/baselines" --checkpoint "$D/runs/s_head/final.pt" --checkpoint "$D/runs/s_decoder/final.pt" --checkpoint "$D/runs/h_head/final.pt" --checkpoint "$D/runs/h_decoder/final.pt"
-```
+New ingestion accepts only `strata-dataset-0.4.0` through the shared records check.
+The historical v004 converter is removed: older images lack linear role channels
+and both identity checks, so relabelling their JSON cannot produce conformant data.
+Re-render or drop old shots, and rebuild old role caches. Historical cached-model
+configs and frozen evaluation protocols remain available for research reproduction.
 
-On this shared workstation every GPU command must additionally run under the standing exclusive `gpu.lock`, a Signet GPU-thread claim/release and `systemd-run --user -p MemoryMax=32G -p MemorySwapMax=0`. The examples above are commands, not permission to bypass that coordination. Cached prediction also supports `predict ... --device cpu` for a CUDA-disabled evaluation phase. Host resource policy is external: measure peak VRAM and require an additional 2 GiB free before acquiring a GPU phase. The library imposes no allocator or thread policy; the CLI's optional `--threads N` sets a positive Torch thread count explicitly. H+ encoder extraction streams original-fp32-weight blocks from CPU; the v004 adapter reuses the already verified dense H+ activations while building its encoder pyramid. New sequence extraction computes features with joint DP2 temporal attention. Frozen encoder parameters are not uploaded for cached decoder training.
-
-For published native contract shots, all camera records belong to one shot-level split. If a manifest has no explicit split, a deterministic SHA256 ranking holds out max(1,floor(N/5)) shots; at least two completed shots are needed. Native roles are linear coverage channels, never object-id classifications. Legacy material and ID AOVs are not invented: its JSON bridge conforms to the published schema but explicitly reports image-AOV nonconformance. Check the pilot has all beauty/deep frames before preparing it.
+Run `bash tools/check_training.sh` from the checkout root for the isolated
+post-training lint, strict types and CPU tests. It generates a tiny packed shot with
+the real 0.4.0 producer and supplies it through `STRATA_DATASET_FIXTURE`; training
+tests only consume the files through the dataset contract, never import datagen.
+For direct pytest runs, generate that fixture with the datagen environment first
+and set the variable to the packed shot directory. CUDA math tests require the
+external GPU coordination and memory policy appropriate to the deployment.
 
 ## Representation and objective
 

@@ -163,7 +163,7 @@ def collect(
         **(
             {
                 f"{entry['category']} / fur": data["fur"] > 1e-12,
-                f"{entry['category']} / hard": ~data["fur"] > 1e-12,
+                f"{entry['category']} / hard": data["fur"] <= 1e-12,
             }
             if "fur" in data
             else {}

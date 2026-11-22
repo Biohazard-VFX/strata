@@ -81,9 +81,11 @@ BASE.update({
     '.gitignore': (ROOT/'.gitignore').read_text(),
     'training/uv.lock': lock(TRAINING_LOCK),
     'datagen/uv.lock': lock(DATAGEN_LOCK),
+    'training/posttrain/uv.lock': lock({'strata-training':{'dependencies':['strata-dataset']},'strata-dataset':{}}),
     'contract/pyproject.toml': project('strata-contract'),
     'contract/dataset/pyproject.toml': project('strata-dataset',['numpy>=2.0']),
     'training/pyproject.toml': project('strata-train',['numpy','strata-contract'],{'strata-contract':'../contract'}),
+    'training/posttrain/pyproject.toml': project('strata-training',['strata-dataset'],{'strata-dataset':'../../contract/dataset'}),
     'datagen/pyproject.toml': project('strata-datagen',['numpy','strata-dataset'],{'strata-dataset':'../contract/dataset'}),
 })
 CASES = [
@@ -103,6 +105,8 @@ CASES = [
     ('root C build', {'CMakeLists.txt':''}, 'build files belong'),
     ('datagen uses dataset contract', {'datagen/strata_datagen/unit.py':'import numpy\nfrom strata_dataset import samples\n',
                                        'training/strata_train/unit.py':'from strata_dataset.layers import Layers\n'}, None),
+    ('datagen imports post-training', {'datagen/strata_datagen/unit.py':'from strata_training import config\n'}, 'datagen may depend only'),
+    ('dataset imports post-training', {'contract/dataset/strata_dataset/unit.py':'import strata_training\n'}, 'dataset contract imports no'),
     ('datagen imports training', {'datagen/strata_datagen/unit.py':'from strata_train import export\n'}, 'datagen may depend only'),
     ('datagen imports model contract', {'datagen/tests/unit.py':'import strata_contract\n'}, 'datagen may depend only'),
     ('datagen dynamic runtime import', {'datagen/tools/unit.py':'__import__("runtime")\n'}, 'datagen may depend only'),
@@ -233,6 +237,9 @@ ENVIRONMENT_CASES = [
     ('datagen path file reaches model contract', {'datagen':{'escape.pth':'{root}/contract\n'},
                                                   'repo':{'contract/strata_contract/__init__.py':''}}, 'can import strata_contract'),
     ('datagen holds training distribution', {'datagen':{'strata_train-0.1.0.dist-info/METADATA':'Metadata-Version: 2.1\nName: strata-train\nVersion: 0.1.0\n'}}, 'holds strata-train'),
+    ('post-training finds datagen', {'training/posttrain':{'strata_datagen.py':''}}, 'training/posttrain environment'),
+    ('datagen finds post-training', {'datagen':{'strata_training.py':''}}, 'can import strata_training'),
+    ('post-training holds model contract', {'training/posttrain':{'strata_contract-1.0.dist-info/METADATA':'Metadata-Version: 2.1\nName: strata-contract\nVersion: 1.0\n'}}, 'holds strata-contract'),
     ('training finds datagen', {'training':{'strata_datagen.py':''}}, 'training environment'),
 ]
 
@@ -246,7 +253,7 @@ def run_environment(name, files, error):
         for relative,text in files.get('repo',{}).items():
             (directory/relative).parent.mkdir(parents=True,exist_ok=True)
             (directory/relative).write_text(text)
-        for project in ('training','datagen'):
+        for project in ('training','training/posttrain','datagen'):
             venv = directory/project/'.venv'
             subprocess.run([sys.executable,'-m','venv','--without-pip',str(venv)],check=True)
             site = subprocess.check_output([str(venv/'bin'/'python'),'-c','import sysconfig; print(sysconfig.get_path("purelib"))'],text=True)

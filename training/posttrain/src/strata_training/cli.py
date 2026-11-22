@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 
 from strata_training.data.cache import prepare
-from strata_training.data.convert import convert_v004
 from strata_training.eval.protocol import freeze
 from strata_training.torch_api import api
 
@@ -12,9 +11,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="strata-train")
     parser.add_argument("--threads", type=int)
     sub = parser.add_subparsers(dest="command", required=True)
-    convert = sub.add_parser("convert-v004")
-    convert.add_argument("project", type=Path)
-    convert.add_argument("output", type=Path)
     targets = sub.add_parser("targets")
     targets.add_argument("dataset", type=Path)
     targets.add_argument("output", type=Path)
@@ -58,9 +54,7 @@ def main() -> None:
         if args.threads < 1:
             parser.error("--threads must be positive")
         api.set_num_threads(args.threads)
-    if args.command == "convert-v004":
-        print(convert_v004(args.project, args.output))
-    elif args.command == "targets":
+    if args.command == "targets":
         print(json.dumps({"frames": len(prepare(args.dataset, args.output, args.layers))}))
     elif args.command == "freeze":
         print(json.dumps(freeze(args.index, args.output)))

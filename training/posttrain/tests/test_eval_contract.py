@@ -73,10 +73,17 @@ def test_evaluation_uses_fractional_stored_foreground_beyond_three_metres() -> N
     prediction = fake_deep(inverse, beauty)
     foreground = np.full((8, 12), 0.5)
     foreground[:, 6:] = 0.05
-    data = {"mixed": np.zeros((8, 12), dtype=bool), "beauty": beauty, "foreground": foreground}
+    data = {
+        "mixed": np.zeros((8, 12), dtype=bool),
+        "beauty": beauty,
+        "foreground": foreground,
+        "fur": np.where(foreground > 0.1, 0.025, 0).astype(np.float32),
+    }
     results: dict[tuple[str, str], Collected] = {}
     collect(prediction, target, data, "stored", {"category": "sharp"}, results)
     assert results["all", "stored"].summary()["silhouette_recall_foreground"] == 1
+    assert results["sharp / fur", "stored"].pixels == 48
+    assert results["sharp / hard", "stored"].pixels == 48
 
 
 def test_directed_boundary_detects_sign_and_location_not_global_scale() -> None:
