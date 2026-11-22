@@ -6,6 +6,12 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def absolute(*parts):
+    return '/' + '/'.join(parts)
+
+
 BASE = {
     'runtime/src/core/unit.c': '#include <stdint.h>\n',
     'runtime/src/backend/unit.c': '#include "strata.h"\n',
@@ -47,6 +53,14 @@ DECISION_CASES = [
     ('long entry', {'docs/DECISIONS.md':'# Decisions\n\n- ' + 'x' * 201 + '\n'}, 'exceeds 200 characters'),
     ('valid entries', {'docs/DECISIONS.md':'# Decisions\n\n- one\n- two\n'}, None),
 ]
+PATH_CASES = [
+    ('absolute Python', {'runtime/tests/unit.py':f'run(["{absolute("usr","bin","python3")}", "x"])\n'}, 'absolute interpreter path'),
+    ('absolute shebang', {'tools/unit.sh':f'#!{absolute("bin","bash")}\n'}, 'absolute interpreter path'),
+    ('home path', {'training/strata_train/unit.py':f'ROOT = "{absolute("home","user","strata")}"\n'}, 'machine-specific absolute path'),
+    ('mnt path', {'runtime/README.md':f'cmake -S {absolute("mnt","work","strata")}\n'}, 'machine-specific absolute path'),
+    ('portable paths', {'tools/unit.sh':'#!/usr/bin/env bash\n"$PWD/training/.venv/bin/python" -V\n',
+                        'runtime/tests/unit.py':'import sys\nURL = "https://example.com/home/page"\nrun([sys.executable])\n'}, None),
+]
 (ROOT/'build').mkdir(exist_ok=True)
 
 
@@ -70,7 +84,7 @@ def run(name, files, error, script):
             assert result.returncode != 0 and error in result.stderr, (name,result.stdout,result.stderr)
 
 
-for cases,script in ((CASES,'check_layers.sh'),(COMMENT_CASES,'check_comments.sh'),(DECISION_CASES,'check_decisions.sh')):
+for cases,script in ((CASES,'check_layers.sh'),(COMMENT_CASES,'check_comments.sh'),(DECISION_CASES,'check_decisions.sh'),(PATH_CASES,'check_paths.sh')):
     for name,files,error in cases:
         run(name,files,error,script)
-print(f'rule cases: {len(CASES)} layer, {len(COMMENT_CASES)} comment and {len(DECISION_CASES)} decision scenarios passed')
+print(f'rule cases: {len(CASES)} layer, {len(COMMENT_CASES)} comment, {len(DECISION_CASES)} decision and {len(PATH_CASES)} path scenarios passed')

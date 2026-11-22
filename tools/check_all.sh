@@ -10,6 +10,7 @@ bash tools/check_commits.sh
 bash tools/check_layers.sh
 bash tools/check_comments.sh
 bash tools/check_decisions.sh
+bash tools/check_paths.sh
 bash tools/check_format.sh
 "$python" -m ruff check training contract --config training/pyproject.toml
 "$python" -m ruff format --check training contract --config training/pyproject.toml
