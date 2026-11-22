@@ -58,21 +58,24 @@ def reduce_samples(
     gaps = np.full(z.size, -np.inf)
     same = pix[1:] == pix[:-1]
     gaps[1:] = np.where(same, np.diff(np.log(z)), -np.inf)
+    pixel_starts = np.flatnonzero(np.concatenate(([True], ~same)))
+    pixel_counts = counts[counts > 0]
     split = np.zeros(z.size, dtype=bool)
     for _ in range(layers - 1):
-        maxima = np.full(pixels, -np.inf)
-        np.maximum.at(maxima, pix, gaps)
-        candidates = (gaps == maxima[pix]) & (gaps > np.log(gap_ratio))
-        first = np.full(pixels, z.size)
-        np.minimum.at(first, pix[candidates], np.flatnonzero(candidates))
-        chosen = first[first < z.size]
+        maxima = np.maximum.reduceat(gaps, pixel_starts)
+        candidates = np.flatnonzero(
+            (gaps == np.repeat(maxima, pixel_counts)) & (gaps > np.log(gap_ratio))
+        )
+        candidate_pixels = pix[candidates]
+        chosen = candidates[np.diff(candidate_pixels, prepend=-1) != 0]
         split[chosen] = True
         gaps[chosen] = -np.inf
     number = np.cumsum(split)
     index = pix * layers + number - number[starts]
     visible = np.bincount(index, weights=weight, minlength=pixels * layers)
     trans_start = np.zeros(pixels * layers)
-    np.maximum.at(trans_start, index, trans)
+    cluster_starts = np.flatnonzero(np.concatenate(([True], index[1:] != index[:-1])))
+    trans_start[index[cluster_starts]] = np.maximum.reduceat(trans, cluster_starts)
     local_trans = np.divide(
         trans, trans_start[index], out=np.zeros_like(trans), where=trans_start[index] > 1e-12
     )

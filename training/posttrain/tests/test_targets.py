@@ -60,3 +60,17 @@ def test_hidden_depth_gaps_do_not_consume_visible_layer_slots() -> None:
 def test_invalid_deep_samples_fail_instead_of_silently_reordering_bad_data() -> None:
     with pytest.raises(ValueError, match="positive"):
         reduce_samples(np.array([0.0]), np.ones(1), np.zeros((1, 3)), np.ones(1, dtype=int), (1, 1))
+
+
+def test_equal_depth_gaps_choose_the_first_boundary() -> None:
+    target = reduce_samples(
+        np.array([1.0, 2.0, 4.0]),
+        np.full(3, 0.5),
+        np.eye(3) * 0.5,
+        np.array([3]),
+        (1, 1),
+        layers=2,
+    )
+    assert_allclose(target.alpha[:, 0, 0], [0.5, 0.75])
+    assert_allclose(target.inverse_depth[:, 0, 0], [1, 5 / 12])
+    assert_allclose(target.rgb[:, :, 0, 0], [[0.5, 0, 0], [0, 0.5, 0.25]])
