@@ -143,7 +143,14 @@ The NumPy reference hook is `OnlineLoader.prepare` in
 `NativeBatches` to `LoadedBatch.to`, as described below. No augmented features are
 written. `augmentation` passes explicit settings to `AugmentConfig.from_dict`;
 use top-level `clean_fraction`, not `augmentation.clean`. Logs include loader seconds
-and clean/live counts. Augmentation is not silently pre-baked.
+and clean/live counts. `training.json` reports `recomposition_eligible_fraction`.
+The index records published-sample eligibility before sampling: eligible frames may
+recompose, occlude or grade objects; other frames retain cached targets and use
+photometric/codec/grain transforms only. Donors are always eligible frames.
+Target-cache filenames include their input-content digest (manifest semantics,
+camera record, beauty, packed layers, sample identity, K and cache-code version).
+Changed content builds a new cache without invalidating existing mmap readers.
+Augmentation is not silently pre-baked.
 
 ### Parallel CPU preparation
 
@@ -158,14 +165,15 @@ machine-specific thread counts. Peak image memory scales with workers × prefetc
 batch/crop size and raw sample density, not frame count. Metadata still scales
 linearly with the number of index records.
 
-NumPy sampling is intentionally versioned as `step-seed-v1`: each absolute training step
+NumPy sampling is intentionally versioned as `step-seed-v2`: each absolute training step
 uses `SeedSequence([seed, step])`. Crop selection and augmentation draws within a
-step remain sequential and unchanged. This makes outputs independent of worker
+step remain sequential. Version 2 routes by published-sample eligibility before
+augmentation and draws donors only from eligible frames. This makes outputs independent of worker
 count, queue scheduling and prefetch position, including resumed runs. It does
 change the old single-global-RNG training trajectory; resume refuses checkpoints
 without the matching sampling version rather than pretending to continue their
 sequence. Calling `OnlineLoader.prepare` with the same selections and RNG retains
-its existing per-view semantics. `loader_seconds` now measures the main process's
+deterministic per-view semantics. `loader_seconds` now measures the main process's
 wait plus device transfer; overlapped worker CPU time is not added to it.
 
 ### Device-side hybrid preparation
@@ -212,13 +220,13 @@ quantization run on the device. Targets never pass through grain, camera transfo
 or codecs. Codecs are not pre-baked because their input depends on that view's
 actual recomposition and grain.
 
-The Torch sampling successor is `step-seed-gpu-v1`: retain the absolute-step seed,
+The Torch sampling successor is `step-seed-gpu-v2`: retain the absolute-step seed,
 then draw clean/live identity, independent augmentation-stage enable flags and a
 per-view math seed. Donor selection follows that plan. This permits workers to omit
 raw mappings for photometric-only views without executing augmentation. Worker
 count, prefetch and resumed absolute-step slices preserve the same view. Resume
 rejects changing between the two sampling versions. Direct NumPy `prepare` retains
-its historical semantics.
+its sequential per-view draw order.
 
 Tests compare device and CPU/contract targets, composition, occluders and grain at
 `atol=rtol=2e-6`; camera examples use `atol=5e-5, rtol=2e-5`. These are numerical,

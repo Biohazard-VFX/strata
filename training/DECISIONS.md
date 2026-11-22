@@ -7,7 +7,7 @@
 - CUDA hybrid batches default to Torch math; raw target rebuilds and Alexa fields batch across views, while final-image codecs alone use bounded CPU threads.
 
 - Persistent spawned workers prepare native I/O; raw CSR samples cross queues as privately owned mmap descriptors, then gather crop columns on the device.
-- Step-keyed RNG preserves worker/prefetch/resume identity; Torch uses independent stage flags and per-view math seeds (step-seed-gpu-v1), NumPy retains step-seed-v1.
+- Step-keyed RNG preserves worker/prefetch/resume identity; Torch uses independent stage flags and per-view math seeds (step-seed-gpu-v2), NumPy retains step-seed-v2.
 - Shared K-layer reduction uses stable per-pixel compiled segments and float64 sums; sky membership is reduced in the same pass, not reclustered.
 - Photometric-only crops never materialize raw samples; deep composition uses stable segmented merging and accumulation.
 - Frame objects retain metadata only; bounded per-process LRU mappings serve immutable NPY targets, bases and features; compressed NPZ caches migrate atomically once.
