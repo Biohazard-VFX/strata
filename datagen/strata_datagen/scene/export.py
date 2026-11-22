@@ -7,7 +7,17 @@ from pathlib import Path
 import numpy as np
 
 from strata_datagen import files
-from strata_datagen.generators import camera, groom, hero, lighting, materials, scatter, terrain, thin
+from strata_datagen.generators import (
+    camera,
+    groom,
+    hairstyle,
+    hero,
+    lighting,
+    materials,
+    scatter,
+    terrain,
+    thin,
+)
 from strata_datagen.library.catalogue import Library, Provenance
 from strata_datagen.render import settings
 from strata_datagen.scene.compose import FIRST_SCATTER_ID, TERRAIN_ID, RenderParams, Shot, samples_for
@@ -16,7 +26,7 @@ from strata_datagen.scene.spec import RECIPE_VERSION
 CONTRACT_VERSION = "strata-dataset-0.1.0"
 GENERATORS = {
     m.__name__.rsplit(".", 1)[-1]: m.VERSION
-    for m in (terrain, scatter, materials, lighting, camera, hero, groom, thin, settings)
+    for m in (terrain, scatter, materials, lighting, camera, hero, groom, hairstyle, thin, settings)
 }
 
 
@@ -89,6 +99,8 @@ def _ids(shot: Shot) -> list[dict[str, object]]:
         {"name": "hero_skin", "first_id": hero.SKIN_ID, "count": 1},
         {"name": "hero_groom", "first_id": hero.GROOM_ID, "count": 1},
     ]
+    if shot.hair is not None:
+        fixed.append({"name": "hero_hair", "first_id": hero.HAIR_ID, "count": 1})
     return fixed + shot.layers
 
 
@@ -109,6 +121,7 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
                 "pose": shot.pose.pose,
                 "speed_mps": shot.motion.speed_mps,
                 "hairs": shot.pose.hairs,
+                "hairstyle": None if shot.hair is None else hairstyle.record(shot.hair),
             },
             "lighting": {
                 "hdri": shot.light.hdri.key,

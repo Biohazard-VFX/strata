@@ -12,6 +12,7 @@ from strata_datagen.usdutil import FloatArray, tag_instances
 VERSION = "hero-0.2.0"
 SKIN_ID = 2
 GROOM_ID = 3
+HAIR_ID = 4
 
 
 @dataclass(frozen=True)

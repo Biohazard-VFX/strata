@@ -7,14 +7,16 @@ import numpy as np
 from pxr import Usd, UsdGeom
 
 from strata_datagen.fields import Ground
-from strata_datagen.generators import camera, hero, lighting, materials, scatter, terrain, thin
+from strata_datagen.generators import camera, hairstyle, hero, lighting, materials, scatter, terrain, thin
 from strata_datagen.generators.scatter import Disk, Layer
+from strata_datagen.library import heroes
 from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
 from strata_datagen.render.pack import DEEP_STRIDE
 from strata_datagen.rng import stream
 from strata_datagen.scene import layers, looks
 from strata_datagen.scene.spec import DEFAULT_FRAMES, REFERENCE_WIDTH_PX, ShotSpec, frames
+from strata_datagen.timeline import FPS
 from strata_datagen.usdutil import new_stage, relative_asset, tag_instances
 
 TERRAIN_ID = 1
@@ -50,6 +52,7 @@ class Shot:
     thin: list[thin.Structure]
     layers: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     assets: dict[str, Model] = field(default_factory=dict[str, Model])
+    hair: hairstyle.Style | None = None
 
     @property
     def scene_dir(self) -> Path:
@@ -125,8 +128,30 @@ def plan(spec: ShotSpec, library: Library, root: Path, frame_count: int = DEFAUL
     )
     view = thin_view(track, motion, 0.5 * subject, height)
     structures = thin.sample(stream(spec.seed, "thin"), ground, view, spec.thin)
+    hair = (
+        None
+        if entry.hair is None
+        else hairstyle.sample(
+            stream(spec.seed, "hairstyle"),
+            entry.hair.regions,
+            facial_hair=entry.hair.facial_hair,
+            duration_s=(clip[-1] - clip[0]) / FPS,
+        )
+    )
     return Shot(
-        spec, directory, ground, params, surface, entry.key, pose, motion, track, clip, light, structures
+        spec,
+        directory,
+        ground,
+        params,
+        surface,
+        entry.key,
+        pose,
+        motion,
+        track,
+        clip,
+        light,
+        structures,
+        hair=hair,
     )
 
 
@@ -239,6 +264,31 @@ def _author_ground(shot: Shot, library: Library, stage: Usd.Stage, root: Path) -
     materials.bind(prim, looks.ground(stage, root, shot.scene_dir, surface))
 
 
+def _author_hair(shot: Shot, entry: Hero, stage: Usd.Stage, root: Path, style: hairstyle.Style) -> None:
+    """Grow the shot's hairstyle on the posed skin into scene/hair.usdc, under the moving hero.
+
+    Keys every hairstyle.KEY_SECONDS morph it over the shot; USD interpolates the points between keys.
+    """
+    if entry.hair is None:
+        raise ValueError(f"hero {entry.key} has no hair regions")
+    first = shot.frames[0]
+    seconds = hairstyle.key_seconds((shot.frames[-1] - first) / FPS)
+    codes = tuple(first + s * FPS for s in seconds)
+    head = heroes.read_head(root / shot.pose.file, entry.hair.regions, entry.hair.forward)
+    built = hairstyle.build(head, style, stream(shot.spec.seed, "hairstyle", "build"), seconds)
+    layer = new_stage(shot.scene_dir / "hair.usdc")
+    names = hairstyle.author(layer, "/hair", built, codes if len(codes) > 1 else ())
+    layer.SetDefaultPrim(layer.GetPrimAtPath("/hair"))
+    layer.GetRootLayer().Save()
+    stage.DefinePrim("/World/hero/hair").GetReferences().AddReference("./hair.usdc")
+    keys = [(Usd.TimeCode(c), s) for c, s in zip(codes, seconds, strict=True)]
+    scalp, facial = looks.hair(stage, style, keys if len(keys) > 1 else [(Usd.TimeCode.Default(), 0.0)])
+    for name in names:
+        prim = stage.OverridePrim(f"/World/hero/hair/{name}")
+        materials.bind(prim, scalp if name == "scalp" else facial)
+        tag_instances(prim, np.array([hero.HAIR_ID]))
+
+
 def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Path:
     shot.scene_dir.mkdir(parents=True, exist_ok=True)
     path = shot.scene_dir / "shot.usda"
@@ -260,6 +310,8 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
         skin=skin,
         groom=groom,
     )
+    if shot.hair is not None:
+        _author_hair(shot, library.hero(shot.hero_key), stage, root, shot.hair)
     _author_scatter(shot, library, stage, root)
     _author_thin(shot, stage)
     camera.author(stage, "/World/camera", shot.track)

@@ -39,3 +39,8 @@
 - Thin structures are anchored at times along the camera path (per 8 s window) and stay static in the world, so long shots pass structures that enter and leave frame without popping.
 - Hanging thin spans sway about their chord and vary sag as timeline curves, authored as per-frame transforms on rest-pose curves rather than per-frame points.
 - Each thin structure is written to its own usdc layer beside shot.usda and referenced, with material bindings as overrides, so shot layers stay small.
+- Human hair comes from the hairstyle generator: guides grown under gravity against the skin, dense strands interpolated, then Blender hair-node deformers ported to numpy (strands.py).
+- Hair renders with Karma's kma_hair melanin shader on `outputs:kma:surface`; Karma XPU skips MaterialX chiang_hair graphs (ND_surface roots).
+- Heroes mark hair-growing skin with float vertex primvars `region_<scalp|brows|lashes|beard>`; a scalp region gives the hero a seeded hairstyle in every shot.
+- Hairstyles are grown per shot into `scene/hair.usdc` so each seed gets its own style; skins and fur grooms stay baked per pose at prepare time.
+- Hairstyles morph over a shot on timeline curves with one topology: length trims, density fades widths, cut and updo stay fixed; points keyed every 3 s, USD interpolates.

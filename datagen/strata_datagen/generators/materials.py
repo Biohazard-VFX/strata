@@ -2,9 +2,10 @@
 
 Every shader node id and input is checked against the MaterialX standard library before authoring.
 Each surface shader also exports roughness and metallic as Karma AOVs (`inputs:aov:<name>`).
+Hair uses Karma's own melanin hair shader (`kma_hair`): Karma XPU skips MaterialX chiang_hair graphs.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 
@@ -53,6 +54,20 @@ class Look:
     macro_variation: float = 0.0
     base_color: tuple[float, float, float] = (0.18, 0.18, 0.18)
     metallic: float = 0.0
+
+
+@dataclass(frozen=True)
+class HairLook:
+    """Karma hair from melanin concentration and redness (pheomelanin share); coat adds a wet sheen."""
+
+    melanin: float
+    redness: float
+    randomize: float
+    roughness: float = 0.3
+    coat: float = 0.0
+
+
+HAIR_SHADER = "kma_hair"
 
 
 @cache
@@ -195,3 +210,25 @@ def animate_tint(material: UsdShade.Material, tints: FloatArray, first_frame: in
     tint = UsdShade.Shader(material.GetPrim().GetChild("tint")).GetInput("in2")
     for index, rgb in enumerate(tints):
         tint.Set(Gf.Vec3f(*(float(v) for v in rgb)), Usd.TimeCode(first_frame - 1 + index))
+
+
+def author_hair(
+    stage: Usd.Stage, path: str, looks: Sequence[tuple[Usd.TimeCode, HairLook]]
+) -> UsdShade.Material:
+    """Karma hair whose parameters may be time-sampled, one look per time code."""
+    material = UsdShade.Material.Define(stage, path)
+    shader = UsdShade.Shader.Define(stage, f"{path}/hair")
+    shader.CreateIdAttr(HAIR_SHADER)
+    for time, look in looks:
+        for name, value in (
+            ("melanin", look.melanin),
+            ("melaninRedness", look.redness),
+            ("melaninRandomize", look.randomize),
+            ("roughness", look.roughness),
+            ("roughnessAzimuthal", look.roughness),
+            ("coat", look.coat),
+        ):
+            shader.CreateInput(name, Sdf.ValueTypeNames.Float).Set(value, time)
+    output = shader.CreateOutput("out", Sdf.ValueTypeNames.Token)
+    material.CreateSurfaceOutput("kma").ConnectToSource(output)
+    return material

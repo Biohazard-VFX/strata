@@ -60,11 +60,21 @@ class HeroPose:
 
 
 @dataclass(frozen=True)
+class HeroHair:
+    """Hair-growing skin regions of a hero, its facing direction and whether facial hair is allowed."""
+
+    regions: tuple[str, ...]
+    forward: tuple[float, float, float]
+    facial_hair: bool
+
+
+@dataclass(frozen=True)
 class Hero:
     key: str
     albedo: str
     poses: tuple[HeroPose, ...]
     provenance: Provenance
+    hair: HeroHair | None = None
 
 
 @dataclass(frozen=True)
@@ -145,8 +155,19 @@ def _hero(raw: Json) -> Hero:
         )
         for p in cast("list[Json]", raw["poses"])
     )
+    hair = cast("Json | None", raw.get("hair"))
     return Hero(
-        key=str(raw["key"]), albedo=str(raw["albedo"]), poses=poses, provenance=_provenance(raw["provenance"])
+        key=str(raw["key"]),
+        albedo=str(raw["albedo"]),
+        poses=poses,
+        provenance=_provenance(raw["provenance"]),
+        hair=None
+        if hair is None
+        else HeroHair(
+            regions=tuple(str(r) for r in cast("list[object]", hair["regions"])),
+            forward=_vec(hair["forward"]),
+            facial_hair=bool(hair["facial_hair"]),
+        ),
     )
 
 

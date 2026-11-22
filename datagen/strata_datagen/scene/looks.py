@@ -1,11 +1,12 @@
 """Material looks for library entries, authored once per asset under /World/materials."""
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
 from pxr import Usd, UsdShade
 
-from strata_datagen.generators import materials, thin
+from strata_datagen.generators import hairstyle, materials, thin
 from strata_datagen.library.catalogue import Hero, Model, Surface
 from strata_datagen.usdutil import relative_asset
 
@@ -74,3 +75,31 @@ def thin_finish(stage: Usd.Stage, finish: thin.Finish) -> UsdShade.Material:
         return UsdShade.Material(stage.GetPrimAtPath(path))
     look = materials.Look(None, roughness=finish.roughness, base_color=finish.color, metallic=finish.metallic)
     return materials.author(stage, path, look)
+
+
+def hair(
+    stage: Usd.Stage, style: hairstyle.Style, keys: Sequence[tuple[Usd.TimeCode, float]]
+) -> tuple[UsdShade.Material, UsdShade.Material]:
+    """Scalp and facial hair materials whose melanin follows the style at each (time code, seconds) key.
+
+    Wet hair is smoother with a clear coat.
+    """
+    roughness, coat = (0.18, 0.6) if style.wet else (0.3, 0.0)
+    scalp: list[tuple[Usd.TimeCode, materials.HairLook]] = []
+    facial: list[tuple[Usd.TimeCode, materials.HairLook]] = []
+    for code, seconds in keys:
+        now = hairstyle.at(style, seconds)
+        scalp.append(
+            (
+                code,
+                materials.HairLook(
+                    now.colour.melanin, now.colour.redness, now.colour.randomize, roughness, coat
+                ),
+            )
+        )
+        face = now.facial_colour
+        facial.append((code, materials.HairLook(face.melanin, face.redness, face.randomize)))
+    return (
+        materials.author_hair(stage, f"{MATERIALS}/hero_hair", scalp),
+        materials.author_hair(stage, f"{MATERIALS}/hero_facial_hair", facial),
+    )
