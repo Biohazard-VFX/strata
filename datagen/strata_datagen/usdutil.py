@@ -59,16 +59,19 @@ def relative_asset(target: Path, layer_dir: Path) -> str:
 
 
 def tag_instances(prim: Usd.Prim, ids: IntArray) -> None:
-    """Set `instance_id` and a matching `coverage` of 1 (constant for one id, per-instance otherwise).
+    """Set `instance_id`, a matching `coverage` of 1 and a `foreground` of 1 (constant or per instance).
 
     Karma premultiplies deep extra channels by the sample's float alpha but stores A as half, so
-    round(instance_id / A) is wrong for ids above ~1000; round(instance_id / coverage) is exact.
+    `coverage` is the sample's float alpha and round(instance_id / coverage) is its exact id.
+    `foreground` feeds the flat geometry mask; the sky backdrop overrides it to 0.
     """
     api = UsdGeom.PrimvarsAPI(prim)
     if ids.size == 1:
         api.CreatePrimvar("instance_id", Sdf.ValueTypeNames.Int, UsdGeom.Tokens.constant).Set(int(ids[0]))
-        api.CreatePrimvar("coverage", Sdf.ValueTypeNames.Float, UsdGeom.Tokens.constant).Set(1.0)
+        for name in ("coverage", "foreground"):
+            api.CreatePrimvar(name, Sdf.ValueTypeNames.Float, UsdGeom.Tokens.constant).Set(1.0)
         return
     api.CreatePrimvar("instance_id", Sdf.ValueTypeNames.IntArray, UsdGeom.Tokens.vertex).Set(ints(ids))
-    coverage = cast("Vt.FloatArray", Vt.FloatArray.FromNumpy(np.ones(ids.size, np.float32)))  # pyright: ignore[reportUnknownMemberType]
-    api.CreatePrimvar("coverage", Sdf.ValueTypeNames.FloatArray, UsdGeom.Tokens.vertex).Set(coverage)
+    ones = cast("Vt.FloatArray", Vt.FloatArray.FromNumpy(np.ones(ids.size, np.float32)))  # pyright: ignore[reportUnknownMemberType]
+    for name in ("coverage", "foreground"):
+        api.CreatePrimvar(name, Sdf.ValueTypeNames.FloatArray, UsdGeom.Tokens.vertex).Set(ones)

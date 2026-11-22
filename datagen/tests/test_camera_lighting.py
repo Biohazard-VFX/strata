@@ -1,11 +1,13 @@
 import unittest
 
 import numpy as np
-from pxr import Usd, UsdGeom
+from pxr import Usd, UsdGeom, UsdRender
 
 from strata_datagen.generators import camera, lighting
 from strata_datagen.generators.terrain import build, sample_params
+from strata_datagen.render import settings
 from strata_datagen.rng import stream
+from strata_datagen.usdutil import tag_instances
 
 FRAMES = tuple(range(1, 25))
 
@@ -71,6 +73,37 @@ class CameraTest(unittest.TestCase):
                 self.assertLess(z, 0.0, move)
                 self.assertLess(abs(fx * x / -z), cx, move)
                 self.assertLess(abs(fy * y / -z), cy, move)
+
+
+class ForegroundTest(unittest.TestCase):
+    def test_the_sky_has_full_sample_coverage_but_no_foreground(self) -> None:
+        stage = Usd.Stage.CreateInMemory()
+        hdri = lighting.Hdri("h", "h.exr", (0.48, 0.6, -0.64), 5.0, (1.0, 1.0, 1.0), 1.0)
+        lighting.author(stage, "/lights", lighting.Lighting(hdri, 0.0, 1.0), 1)
+        ground = UsdGeom.Mesh.Define(stage, "/ground").GetPrim()
+        tag_instances(ground, np.array([1]))
+        sky = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/lights/backdrop"))
+        self.assertEqual(sky.GetPrimvar("instance_id").Get(), lighting.SKY_ID)
+        self.assertEqual(sky.GetPrimvar("coverage").Get(), 1.0)
+        self.assertEqual(sky.GetPrimvar("foreground").Get(), 0.0)
+        self.assertEqual(UsdGeom.PrimvarsAPI(ground).GetPrimvar("foreground").Get(), 1.0)
+        settings.author(
+            stage, "/cam", settings.RenderConfig(4, 4, 8, (1,), motion_blur=False, depth_of_field=False)
+        )
+
+        def variables(product: str) -> list[str]:
+            prim = stage.GetPrimAtPath(f"/Render/products/{product}")
+            return [t.name for t in UsdRender.Product(prim).GetOrderedVarsRel().GetTargets()]
+
+        def source(variable: str) -> str:
+            return UsdRender.Var(stage.GetPrimAtPath(f"/Render/vars/{variable}")).GetSourceNameAttr().Get()
+
+        self.assertIn("foreground", variables("beauty"))
+        self.assertIn("coverage", variables("deep"))
+        self.assertLessEqual(
+            set(variables("deep")), set(variables("beauty")), "Karma deep writes only rendered AOVs"
+        )
+        self.assertEqual((source("foreground"), source("coverage")), ("foreground", "coverage"))
 
 
 class SunTest(unittest.TestCase):

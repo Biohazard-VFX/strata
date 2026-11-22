@@ -158,7 +158,7 @@ class SettingsTest(unittest.TestCase):
         names = {aov.name: aov for aov in settings.BEAUTY_AOVS}
         self.assertEqual(names["denoised"].source_name, names["C"].source_name)
         self.assertTrue({"albedo", "N"} <= names.keys())
-        self.assertEqual(names["coverage"].file_format, "float")
+        self.assertEqual((names["foreground"].file_format, names["coverage"].file_format), ("float", "float"))
         for aov in settings.BEAUTY_AOVS:
             var = stage.GetPrimAtPath(f"/Render/vars/{aov.name}")
             self.assertIn(

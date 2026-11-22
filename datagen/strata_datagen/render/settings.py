@@ -28,6 +28,7 @@ BEAUTY_AOVS = (
     Aov("Z", "raw", "ray:hitPz", "float", "float", '["minmax",{"mode":"zmin"}]'),
     Aov("instance_id", "primvar", "instance_id", "int", "float", '["minmax",{"mode":"zmin"}]'),
     Aov("denoised", "lpe", "C.*[LO]", "color4f", "color4h"),
+    Aov("foreground", "primvar", "foreground", "float", "float"),
     Aov("coverage", "primvar", "coverage", "float", "float"),
 )
 DENOISER = json.dumps(
