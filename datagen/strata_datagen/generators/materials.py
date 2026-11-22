@@ -2,6 +2,7 @@
 
 Every shader node id and input is checked against the MaterialX standard library before authoring.
 Each surface shader also exports roughness and metallic as Karma AOVs (`inputs:aov:<name>`).
+Hair uses Karma's own melanin hair shader (`kma_hair`): Karma XPU skips MaterialX chiang_hair graphs.
 """
 
 from collections.abc import Mapping
@@ -49,6 +50,20 @@ class Look:
     roughness: float = 0.6
     tint: tuple[float, float, float] = (1.0, 1.0, 1.0)
     macro_variation: float = 0.0
+
+
+@dataclass(frozen=True)
+class HairLook:
+    """Karma hair from melanin concentration and redness (pheomelanin share); coat adds a wet sheen."""
+
+    melanin: float
+    redness: float
+    randomize: float
+    roughness: float = 0.3
+    coat: float = 0.0
+
+
+HAIR_SHADER = "kma_hair"
 
 
 @cache
@@ -180,3 +195,21 @@ def animate_tint(material: UsdShade.Material, tints: FloatArray, first_frame: in
     tint = UsdShade.Shader(material.GetPrim().GetChild("tint")).GetInput("in2")
     for index, rgb in enumerate(tints):
         tint.Set(Gf.Vec3f(*(float(v) for v in rgb)), Usd.TimeCode(first_frame - 1 + index))
+
+
+def author_hair(stage: Usd.Stage, path: str, look: HairLook) -> UsdShade.Material:
+    material = UsdShade.Material.Define(stage, path)
+    shader = UsdShade.Shader.Define(stage, f"{path}/hair")
+    shader.CreateIdAttr(HAIR_SHADER)
+    for name, value in (
+        ("melanin", look.melanin),
+        ("melaninRedness", look.redness),
+        ("melaninRandomize", look.randomize),
+        ("roughness", look.roughness),
+        ("roughnessAzimuthal", look.roughness),
+        ("coat", look.coat),
+    ):
+        shader.CreateInput(name, Sdf.ValueTypeNames.Float).Set(value)
+    output = shader.CreateOutput("out", Sdf.ValueTypeNames.Token)
+    material.CreateSurfaceOutput("kma").ConnectToSource(output)
+    return material
