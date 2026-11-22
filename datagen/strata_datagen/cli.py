@@ -75,9 +75,20 @@ def cmd_build(args: argparse.Namespace) -> None:
         shot = compose.plan(spec, library, args.root, args.frames)
         compose.write(shot, library, args.root, render)
         export.write(shot, library, render)
-        jobs += husk.jobs(shot.directory, args.root, shot.frames, args.chunk, args.deep_stride)
+        jobs += husk.jobs(shot.directory, args.root, shot.frames, args.chunk)
         print("built", spec.shot_id, shot.track.move, shot.light.hdri.key, flush=True)
     husk.write_job_list(args.root, jobs)
+
+
+def _post(root: Path, job: husk.Job) -> bool:
+    """Run the job's post commands in order; a failing step (raw QA) stops the chain."""
+    shot = str(root / job.workdir)
+    for command in job.post:
+        try:
+            main([shot if a == "." else a for a in command[1:]])
+        except SystemExit:
+            return False
+    return True
 
 
 def cmd_render(args: argparse.Namespace) -> None:
@@ -86,13 +97,8 @@ def cmd_render(args: argparse.Namespace) -> None:
         if args.shots and job.shot_id not in args.shots:
             continue
         timings = husk.run(args.root, job, args.husk)
-        first, count = (
-            int(job.post[job.post.index("--first") + 1]),
-            int(job.post[job.post.index("--count") + 1]),
-        )
-        shot_first, stride = int(job.post[job.post.index("--shot-first") + 1]), int(job.post[-1])
         if timings["exit_code"] == 0:
-            pack.pack(args.root / job.workdir, range(first, first + count), shot_first, stride)
+            timings["post_passed"] = _post(args.root, job)
         manifest_path = args.root / job.workdir / "manifest.json"
         manifest = export.load_json(manifest_path)
         manifest["timings"] = timings
@@ -100,9 +106,27 @@ def cmd_render(args: argparse.Namespace) -> None:
         print("rendered", job.shot_id, timings["device"], timings["mean_frame_seconds"], flush=True)
 
 
+def _frames(args: argparse.Namespace) -> range:
+    return range(args.first, args.first + args.count)
+
+
 def cmd_pack(args: argparse.Namespace) -> None:
-    kept = pack.pack(args.shot, range(args.first, args.first + args.count), args.shot_first, args.stride)
-    print("packed", args.first, args.count, "deep kept", kept, flush=True)
+    pack.pack(args.shot, _frames(args))
+    print("packed", args.first, args.count, flush=True)
+
+
+def cmd_accept(args: argparse.Namespace) -> None:
+    results = checks.accept(args.shot, _frames(args))
+    failed = [r for r in results if r.failures]
+    for result in failed:
+        print("frame", result.frame, "FAIL", result.failures[:3], flush=True)
+    if failed:
+        raise SystemExit(1)
+    print("accepted", args.first, args.count, flush=True)
+
+
+def cmd_prune(args: argparse.Namespace) -> None:
+    print("pruned raw deep", checks.prune(args.shot, _frames(args)), flush=True)
 
 
 def _label(shot: Path) -> str:
@@ -174,20 +198,28 @@ def parser() -> argparse.ArgumentParser:
         "--frames", type=int, default=DEFAULT_FRAMES, help="frames per shot (presets fix their own)"
     )
     p.add_argument("--chunk", type=int, default=husk.CHUNK_FRAMES, help="frames per farm task")
-    p.add_argument("--deep-stride", type=int, default=pack.DEEP_STRIDE, help="keep raw deep every N frames")
+    p.add_argument(
+        "--deep-stride",
+        type=int,
+        default=pack.DEEP_STRIDE,
+        help="keep raw deep and sample sidecars every N frames",
+    )
     p.set_defaults(run=cmd_build)
     p = sub.add_parser("render", help="render the job list locally")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--shots", nargs="*", default=[])
     p.add_argument("--husk", default=DEFAULT_HUSK)
     p.set_defaults(run=cmd_render)
-    p = sub.add_parser("pack", help="write layer targets for rendered frames, keep deep on the stride")
-    p.add_argument("--shot", type=Path, required=True)
-    p.add_argument("--first", type=int, required=True)
-    p.add_argument("--count", type=int, required=True)
-    p.add_argument("--shot-first", type=int, required=True)
-    p.add_argument("--stride", type=int, required=True)
-    p.set_defaults(run=cmd_pack)
+    for name, run, text in (
+        ("pack", cmd_pack, "write layer targets for rendered frames and sidecars on the deep stride"),
+        ("accept", cmd_accept, "raw QA of packed frames; records each frame's acceptance"),
+        ("prune", cmd_prune, "delete off-stride raw deep of accepted, unchanged frames"),
+    ):
+        p = sub.add_parser(name, help=text)
+        p.add_argument("--shot", type=Path, required=True)
+        p.add_argument("--first", type=int, required=True)
+        p.add_argument("--count", type=int, required=True)
+        p.set_defaults(run=run)
     p = sub.add_parser("qa", help="check every shot, reject failures, write the report and contact sheet")
     p.add_argument("--root", type=Path, required=True)
     p.set_defaults(run=cmd_qa)

@@ -24,7 +24,7 @@ from strata_datagen.render import settings
 from strata_datagen.scene.compose import FIRST_SCATTER_ID, TERRAIN_ID, RenderParams, Shot, samples_for
 from strata_datagen.scene.spec import RECIPE_VERSION
 
-CONTRACT_VERSION = "strata-dataset-0.1.0"
+CONTRACT_VERSION = "strata-dataset-0.2.0"
 GENERATORS = {
     m.__name__.rsplit(".", 1)[-1]: m.VERSION
     for m in (terrain, scatter, materials, lighting, camera, hero, human, groom, hairstyle, thin, settings)

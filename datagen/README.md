@@ -20,8 +20,10 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   time-varying parameter. A generator's `sample_*` returns one value per frame sample (frames plus
   a motion-blur handle each side, sample i at USD time first_frame - 1 + i); `author` writes them as
   time samples. QA bounds per-frame camera steps.
-- `strata_datagen/render/pack.py`: after each render task, K-layer targets for every frame
-  (`strata_contract.layers`, in `../contract/dataset`) and raw deep kept on a frame stride.
+- `strata_datagen/render/pack.py`: after each render task, sky-inclusive K-layer targets for every
+  frame (`strata_contract.layers`, in `../contract/dataset`) and raw-sample sidecars on the deep
+  stride. It never deletes: `accept` runs raw QA per frame and records it, then `prune` drops
+  off-stride raw deep of accepted, unchanged frames only.
 - `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).
 - `blender/`: FBX to USD conversion, MPFB human export and creature export, run inside Blender.
 
@@ -32,7 +34,7 @@ uv sync
 strata-datagen creatures --recipes creatures.json --library HEROES --infinigen-python PY  # creature heroes
 strata-datagen prepare --root BUILD --sources sources.json      # assets/library.json
 strata-datagen build --root BUILD --presets hero_in_terrain --first-seed 1 --count 10  # 720-frame shots
-strata-datagen render --root BUILD --husk /path/to/husk          # or BUILD/jobs.sh: 60-frame tasks, each husk + pack
+strata-datagen render --root BUILD --husk /path/to/husk          # or BUILD/jobs.sh: 60-frame tasks: husk, pack, accept, prune
 strata-datagen qa --root BUILD                                   # qa_report.json, contact_sheet.jpg
 python ../contract/dataset/validate.py BUILD/shots/*
 ./check.sh                                                       # ruff, pyright, layer and identifier checks, tests

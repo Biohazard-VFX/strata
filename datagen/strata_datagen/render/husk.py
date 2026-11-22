@@ -19,32 +19,40 @@ GPU_ONLY = {"KARMA_XPU_DISABLE_EMBREE_DEVICE": "1"}
 
 
 CHUNK_FRAMES = 60
+OUTPUTS = ("beauty", "deep", "layers", "samples", "qa")
 
 
 @dataclass(frozen=True)
 class Job:
-    """One farm task: run `command` (husk) then `post` (layer packing) from `workdir`.
+    """One farm task: run `command` (husk), then each `post` command in order, from `workdir`.
 
-    Paths are relative to the build root. A shot is split into tasks of CHUNK_FRAMES frames so the
-    per-task scene load and kernel compile are amortised over many frames.
+    Post commands pack targets, run raw QA on the task's frames and only then prune off-stride raw
+    deep; a failing command stops the chain, so unaccepted frames keep their raw deep. Paths are
+    relative to the build root. A shot is split into tasks of CHUNK_FRAMES frames so the per-task
+    scene load and kernel compile are amortised over many frames.
     """
 
     shot_id: str
     workdir: str
     command: list[str]
     outputs: list[str]
-    post: list[str]
+    post: list[list[str]]
 
 
-def jobs(shot_dir: Path, root: Path, frames: tuple[int, ...], chunk: int, stride: int) -> list[Job]:
+POST_STEPS = ("pack", "accept", "prune")
+
+
+def jobs(shot_dir: Path, root: Path, frames: tuple[int, ...], chunk: int) -> list[Job]:
     workdir = shot_dir.relative_to(root).as_posix()
     tasks: list[Job] = []
     for start in range(0, len(frames), chunk):
         first, count = frames[start], len(frames[start : start + chunk])
         command = ["husk", "-R", RENDERER, "-f", str(first), "-n", str(count), "-V", "2", "scene/shot.usda"]
-        post = ["strata-datagen", "pack", "--shot", ".", "--first", str(first), "--count", str(count)]
-        post += ["--shot-first", str(frames[0]), "--stride", str(stride)]
-        tasks.append(Job(shot_dir.name, workdir, command, ["beauty", "deep", "layers"], post))
+        post = [
+            ["strata-datagen", step, "--shot", ".", "--first", str(first), "--count", str(count)]
+            for step in POST_STEPS
+        ]
+        tasks.append(Job(shot_dir.name, workdir, command, list(OUTPUTS), post))
     return tasks
 
 
@@ -53,8 +61,9 @@ def write_job_list(root: Path, jobs: list[Job]) -> None:
     files.write_text(root / "jobs.json", json.dumps([asdict(j) for j in jobs], indent=1) + "\n")
     lines = ["#!/bin/sh", "set -e", 'cd "$(dirname "$0")"']
     lines.extend(
-        f"(cd {shlex.quote(j.workdir)} && mkdir -p {' '.join(j.outputs)} && {shlex.join(j.command)}"
-        f" && {shlex.join(j.post)})"
+        f"(cd {shlex.quote(j.workdir)} && mkdir -p {' '.join(j.outputs)} && "
+        + " && ".join(shlex.join(c) for c in (j.command, *j.post))
+        + ")"
         for j in jobs
     )
     files.write_text(root / "jobs.sh", "\n".join(lines) + "\n")

@@ -8,7 +8,7 @@ import numpy as np
 import OpenEXR
 from pxr import Usd
 
-from strata_datagen.exr import Deep
+from strata_datagen.exr import Deep, read_deep
 from strata_datagen.generators import groom
 from strata_datagen.library import hdri
 from strata_datagen.qa import checks
@@ -80,16 +80,16 @@ class QaTest(unittest.TestCase):
             path = Path(tmp) / "d.exr"
             write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2), (0.6, 1.0, 0, 3000.0)]])
             beauty = {c: np.array([[0.5, 0.2 + 0.5 * 0.6]], np.float32) for c in "RGB"}
-            metrics = checks.deep_metrics(path, beauty, ranges)
+            metrics = checks.deep_metrics(read_deep(path), beauty, ranges)
             self.assertLess(metrics["flatten_error"], 1e-6)
             self.assertEqual(metrics["uncovered"], 0.0)
             self.assertEqual(metrics["valid_id_fraction"], 1.0)
             dark = {c: np.array([[0.5, 0.1]], np.float32) for c in "RGB"}
-            self.assertGreater(checks.deep_metrics(path, dark, ranges)["flatten_excess"], 0.04)
+            self.assertGreater(checks.deep_metrics(read_deep(path), dark, ranges)["flatten_excess"], 0.04)
             write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
-            self.assertEqual(checks.deep_metrics(path, beauty, ranges)["uncovered"], 0.5)
+            self.assertEqual(checks.deep_metrics(read_deep(path), beauty, ranges)["uncovered"], 0.5)
             write_deep(path, [[(0.5, 1.0, 0)], [(0.2, 0.5, 2), (0.6, 1.0, 0, 3000.0)]])
-            self.assertGreater(checks.deep_metrics(path, beauty, ranges)["sky_id_in_front"], 0.0)
+            self.assertGreater(checks.deep_metrics(read_deep(path), beauty, ranges)["sky_id_in_front"], 0.0)
 
 
 class GroomTest(unittest.TestCase):
