@@ -1,8 +1,10 @@
-"""Python layer boundaries: which imports each layer may make."""
+"""Python layer boundaries: which imports each layer may make and which Strata packages each project may name."""
 import ast
 import importlib.util
 import os
 from pathlib import Path
+import re
+import tomllib
 
 LAYERS = (
     ('training', ('runtime', 'datagen', 'strata_datagen'), 'cross-side imports must use contract'),
@@ -15,6 +17,12 @@ LAYERS = (
     ('hosts', ('runtime', 'training', 'datagen', 'strata_train', 'strata_datagen', 'contract', 'strata_contract',
                'strata_dataset'), 'hosts may not import implementation layers'),
 )
+PROJECTS = {
+    'contract': ('strata-contract', {}),
+    'contract/dataset': ('strata-dataset', {}),
+    'training': ('strata-train', {'strata-contract': '../contract', 'strata-dataset': '../contract/dataset'}),
+    'datagen': ('strata-datagen', {'strata-dataset': '../contract/dataset'}),
+}
 IMPORTERS = {
     'importlib.import_module': ('name', 0, 'package', 1),
     'importlib.util.find_spec': ('name', 0, 'package', 1),
@@ -26,6 +34,14 @@ MACHINERY_MODULES = ('importlib', 'importlib.util', 'builtins')
 SAFE_MACHINERY = ('importlib.resources', 'importlib.metadata')
 PATH_STATE = ('sys.path', 'sys.meta_path', 'sys.path_hooks', 'sys.path_importer_cache')
 OWN_DIRECTORY = ast.dump(ast.parse('sys.path.insert(0, str(Path(__file__).resolve().parent))', mode='eval').body)
+
+
+def distribution(name):
+    return re.sub(r'[-_.]+', '-', name).lower()
+
+
+def is_strata(name):
+    return distribution(name).startswith('strata')
 
 
 def python_files(directory):
@@ -187,4 +203,57 @@ def import_violations(path, forbidden, message):
             errors.append(f'{path}:{node.lineno}: {problem}')
         if any(root in forbidden for root in roots):
             errors.append(f'{path}:{node.lineno}: {message}')
+    return errors
+
+
+def requirements(data):
+    """(where, distribution) for every requirement in every dependency table uv reads."""
+    project = data.get('project', {})
+    uv = data.get('tool', {}).get('uv', {})
+    found = [('dependencies', r) for r in project.get('dependencies', [])]
+    found += [(f'optional-dependencies.{extra}', r) for extra, rs in project.get('optional-dependencies', {}).items()
+              for r in rs]
+    found += [(f'dependency-groups.{group}', r) for group, rs in data.get('dependency-groups', {}).items()
+              for r in rs if isinstance(r, str)]
+    found += [(f'tool.uv.{table}', r) for table in ('dev-dependencies', 'override-dependencies', 'constraint-dependencies')
+              for r in uv.get(table, [])]
+    found += [('build-system.requires', r) for r in data.get('build-system', {}).get('requires', [])]
+    return [(where, distribution(re.split(r'[\s<>=!~;\[@(]', r.strip(), maxsplit=1)[0])) for where, r in found]
+
+
+def sources(data):
+    """(distribution, entry) for every uv source, flattening list-valued sources."""
+    found = []
+    for key, value in data.get('tool', {}).get('uv', {}).get('sources', {}).items():
+        found += [(distribution(key), entry) for entry in (value if isinstance(value, list) else [value])]
+    return found
+
+
+def project_violations(directory):
+    """A project's pyproject may name only its allowed Strata packages, each from its own local path."""
+    name, allowed = PROJECTS[directory]
+    path = Path(directory)/'pyproject.toml'
+    if not path.is_file():
+        return [f'missing project: {path}']
+    data = tomllib.loads(path.read_text())
+    errors = []
+    actual = data.get('project', {}).get('name')
+    if actual != name:
+        errors.append(f'{path}: distribution must be {name}, not {actual}')
+    required = set()
+    for where, requirement in requirements(data):
+        if is_strata(requirement) and requirement not in allowed:
+            errors.append(f'{path}: {name} may not depend on {requirement} ({where})')
+        elif is_strata(requirement):
+            required.add(requirement)
+    located = set()
+    for key, entry in sources(data):
+        local = key in allowed and isinstance(entry, dict) and entry.get('path') == allowed[key] \
+            and set(entry) <= {'path', 'editable'}
+        if local:
+            located.add(key)
+        elif key in allowed or is_strata(key) or (isinstance(entry, dict) and 'path' in entry):
+            errors.append(f'{path}: {name} may not source {key} from {entry}')
+    for requirement in sorted(required - located):
+        errors.append(f'{path}: {requirement} must come from the local path {allowed[requirement]}')
     return errors

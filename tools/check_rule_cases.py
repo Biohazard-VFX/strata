@@ -32,6 +32,17 @@ def project(name, dependencies=(), sources=None):
     return text
 
 
+REVIEW_DATAGEN = '''[project]
+name = "strata-datagen"
+dependencies = ["numpy", "strata-dataset"]
+
+[tool.uv.sources]
+strata-dataset = { path = "../contract/dataset", editable = true }
+strata-contract = [{ path = "../contract", editable = true }]
+
+[dependency-groups]
+dev = ["ruff", "strata-contract"]
+'''
 OWN_DIRECTORY_SCRIPT = '''import importlib
 import sys
 from importlib import import_module
@@ -79,7 +90,7 @@ CASES = [
     ('dataset contract imports datagen', {'contract/dataset/strata_dataset/unit.py':'from strata_datagen import rng\n'}, 'dataset contract imports no'),
     ('model contract imports dataset', {'contract/strata_contract/unit.py':'import strata_dataset\n'}, 'cross-side imports'),
     ('datagen requires training', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset','strata-train'],{'strata-dataset':'../contract/dataset'})}, 'may not depend on strata-train'),
-    ('datagen sources model contract', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset'],{'strata-dataset':'../contract'})}, 'local sources must be exactly'),
+    ('datagen sources model contract', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset'],{'strata-dataset':'../contract'})}, 'may not source strata-dataset'),
     ('training requires datagen', {'training/pyproject.toml':project('strata-train',['strata-contract','strata-datagen'],{'strata-contract':'../contract'})}, 'may not depend on strata-datagen'),
     ('dataset distribution collides', {'contract/dataset/pyproject.toml':project('strata-contract')}, 'distribution must be strata-dataset'),
     ('datagen conftest keyword import_module', {'datagen/conftest.py':'"""Fixtures."""\nimport importlib\nimportlib.import_module(name="strata_contract")\n'}, 'datagen may depend only'),
@@ -106,6 +117,16 @@ CASES = [
     ('own directory and rooted dynamic imports', {'datagen/blender/unit.py':OWN_DIRECTORY_SCRIPT,
                                                   'datagen/strata_datagen/unit.py':'from . import other\nfrom .other import x\n'}, None),
     ('other directory on sys.path', {'datagen/blender/unit.py':OWN_DIRECTORY_SCRIPT.replace('.parent))','.parents[2]))')}, 'sys.path changes'),
+    ('review: dev group and list source', {'datagen/pyproject.toml':REVIEW_DATAGEN}, 'may not depend on strata-contract (dependency-groups.dev)'),
+    ('list-valued forbidden source', {'datagen/pyproject.toml':REVIEW_DATAGEN.replace(', "strata-contract"]',']')}, 'may not source strata-contract'),
+    ('optional extra requires training', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset'],{'strata-dataset':'../contract/dataset'}) + '[project.optional-dependencies]\nfit = ["strata-train>=0"]\n'}, 'may not depend on strata-train (optional-dependencies.fit)'),
+    ('uv dev-dependencies require contract', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset'],{'strata-dataset':'../contract/dataset'}) + '[tool.uv]\ndev-dependencies = ["Strata_Contract"]\n'}, 'may not depend on strata-contract (tool.uv.dev-dependencies)'),
+    ('local path under another name', {'datagen/pyproject.toml':project('strata-datagen',['numpy','strata-dataset'],{'strata-dataset':'../contract/dataset','numpy':'../contract'})}, 'may not source numpy'),
+    ('list-valued local path under another name', {'datagen/pyproject.toml':project('strata-datagen',['numpy','strata-dataset'],{'strata-dataset':'../contract/dataset'}).replace('[tool.uv.sources]\n','[tool.uv.sources]\nnumpy = [{ path = "../contract", marker = "sys_platform == \'linux\'" }]\n')}, 'may not source numpy'),
+    ('list-valued allowed source', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset']) + '[tool.uv.sources]\nstrata-dataset = [{ path = "../contract/dataset", editable = true }]\n'}, None),
+    ('Strata package from a registry', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset'])}, 'strata-dataset must come from the local path'),
+    ('Strata package from git', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset']) + '[tool.uv.sources]\nstrata-dataset = { git = "https://example.com/strata" }\n'}, 'may not source strata-dataset'),
+    ('training may use both contracts', {'training/pyproject.toml':project('strata-train',['strata-contract'],{'strata-contract':'../contract','strata-dataset':'../contract/dataset'}) + '[dependency-groups]\ndev = ["strata-dataset"]\n'}, None),
     ('tracked EXR', {'models/forbidden.exr':''}, 'generated artifact is tracked'),
     ('long K&R function', {'runtime/src/core/unit.c':'int f(void) {\n' + 'f();\n' * 100 + '}\n'}, 'function f exceeds 100 lines'),
     ('long function, braces in literals', {'runtime/tests/unit.c':'int g(void)\n{\n\tconst char *s = "}";\n' + '\tg(); /* } */\n' * 99 + '}\n'}, 'function g exceeds 100 lines'),
