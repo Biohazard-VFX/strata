@@ -74,6 +74,7 @@ clean = {k: v for k, v in {}.items() if k != "PYTHONPATH"}
 
 
 BASE.update({
+    '.gitignore': (ROOT/'.gitignore').read_text(),
     'training/uv.lock': lock(TRAINING_LOCK),
     'datagen/uv.lock': lock(DATAGEN_LOCK),
     'contract/pyproject.toml': project('strata-contract'),
@@ -149,6 +150,7 @@ CASES = [
     ('datagen lock dev group holds model contract', {'datagen/uv.lock':lock({**DATAGEN_LOCK,'strata-datagen':{'dependencies':['strata-dataset'],'dev-dependencies':{'dev':['strata-contract']}},'strata-contract':{}})}, 'strata-datagen environment may not contain strata-contract'),
     ('dataset contract extra reaches training', {'training/uv.lock':lock({**TRAINING_LOCK,'strata-train':{'dependencies':['strata-contract','strata-dataset']},'strata-dataset':{'optional-dependencies':{'fit':['strata-train']}}})}, 'strata-dataset environment may not contain strata-train'),
     ('lock without its project', {'datagen/uv.lock':lock({'numpy':{}})}, 'lock does not contain its project strata-datagen'),
+    ('gitignore misses symlinks', {'.gitignore':'build/\n.venv/\n'}, '.gitignore must ignore build as a directory or a symlink'),
     ('tracked EXR', {'models/forbidden.exr':''}, 'generated artifact is tracked'),
     ('long K&R function', {'runtime/src/core/unit.c':'int f(void) {\n' + 'f();\n' * 100 + '}\n'}, 'function f exceeds 100 lines'),
     ('long function, braces in literals', {'runtime/tests/unit.c':'int g(void)\n{\n\tconst char *s = "}";\n' + '\tg(); /* } */\n' * 99 + '}\n'}, 'function g exceeds 100 lines'),

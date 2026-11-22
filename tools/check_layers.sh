@@ -68,6 +68,9 @@ for directory,forbidden,message in LAYERS:
 for directory in PROJECTS:
     errors += project_violations(directory)
 errors += lock_violations()
+for name in ('build','training/.venv','datagen/.venv'):
+    if subprocess.run(['git','check-ignore','--no-index','-q','--',name]).returncode != 0:
+        errors.append(f'.gitignore must ignore {name} as a directory or a symlink')
 for path in Path('hosts').rglob('*'):
     if not path.is_file() or path.suffix.lower() not in ('.c','.h','.cc','.cpp','.cxx','.hpp','.hh','.hxx','.m','.mm','.py','.cmake','.txt'):
         continue
