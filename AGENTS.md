@@ -37,6 +37,7 @@ Rules for anyone, human or agent, changing Strata. They are not suggestions. Whe
 ## Repository
 
 - No plans, research notes, scratch files, binaries or model weights in the repo.
+- Symlinks in the repo are relative and stay inside it; links to machine storage live only at ignored paths.
 - No client or project identifiers anywhere, and no client assets. Generators stay generic; specific assets live in external libraries referenced by id. Canary and preset recipes may name library asset ids.
 - Conventional Commits, enforced by `tools/check_commits.sh` and the commit-msg hook. Commit small and often; one logical change per commit.
 - No Fox Renderfarm tooling (SDK wrappers, submit, pricing or download scripts): it is proprietary and stays private. Datagen emits generic job lists. RunPod tooling is allowed. Never commit credentials.

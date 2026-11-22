@@ -14,6 +14,10 @@ def absolute(*parts):
     return '/' + '/'.join(parts)
 
 
+class Link(str):
+    """A symlink to create in a rule case, pointing at this target."""
+
+
 BASE = {
     'runtime/src/core/unit.c': '#include <stdint.h>\n',
     'runtime/src/backend/unit.c': '#include "strata.h"\n',
@@ -187,6 +191,10 @@ PATH_CASES = [
     ('mnt path', {'runtime/README.md':f'cmake -S {absolute("mnt","work","strata")}\n'}, 'machine-specific absolute path'),
     ('portable paths', {'tools/unit.sh':'#!/usr/bin/env bash\n"$PWD/training/.venv/bin/python" -V\n',
                         'runtime/tests/unit.py':'import sys\nURL = "https://example.com/home/page"\nrun([sys.executable])\n'}, None),
+    ('absolute symlink', {'docs/notes.md':Link(absolute('etc','hostname'))}, 'docs/notes.md: symlink target is absolute'),
+    ('escaping symlink', {'training/data':Link('../../outside/data')}, 'training/data: symlink target leaves the repository'),
+    ('symlinks inside the repository', {'AGENTS.md':'rules\n','CLAUDE.md':Link('AGENTS.md'),
+                                        'datagen/tests/data/rules.md':Link('../../../AGENTS.md')}, None),
 ]
 (ROOT/'build').mkdir(exist_ok=True)
 
@@ -198,7 +206,10 @@ def run(name, files, error, script):
         for relative,text in {**BASE,**files}.items():
             path = directory/relative
             path.parent.mkdir(parents=True,exist_ok=True)
-            path.write_text(text)
+            if isinstance(text,Link):
+                path.symlink_to(text)
+            else:
+                path.write_text(text)
         (directory/'tools').mkdir(exist_ok=True)
         for tool in (script,'source_scan.py','boundaries.py'):
             shutil.copy2(ROOT/'tools'/tool,directory/'tools'/tool)

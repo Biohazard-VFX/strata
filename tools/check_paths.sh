@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 - <<'PY'
 from pathlib import Path
+import os
 import re
 import subprocess
 import sys
@@ -17,6 +18,13 @@ checked = 0
 for name in sorted(set(subprocess.check_output(['git', 'ls-files', '--cached', '--others',
                                                 '--exclude-standard'], text=True).split())):
     path = Path(name)
+    if path.is_symlink():
+        target = os.readlink(path)
+        if os.path.isabs(target):
+            errors.append(f'{path}: symlink target is absolute: {target}')
+        elif os.path.normpath(os.path.join(path.parent, target)).split(os.sep)[0] == '..':
+            errors.append(f'{path}: symlink target leaves the repository: {target}')
+        continue
     if not path.is_file():
         continue
     try:
@@ -33,5 +41,5 @@ if not checked:
     sys.exit('no text files found')
 if errors:
     sys.exit('\n'.join(errors))
-print(f'no machine-specific paths in {checked} files')
+print(f'no machine-specific paths in {checked} files and no symlink leaves the repository')
 PY
