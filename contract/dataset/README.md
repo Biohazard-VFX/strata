@@ -3,7 +3,8 @@
 The training side reads exactly this. Version string: `strata-dataset-0.4.0` (in every
 `manifest.json` and `camera.json`, `strata_dataset.records.VERSION`). `schema.json` is the JSON
 Schema for both files; `validate.py` checks a shot directory against it, against
-`strata_dataset.records.errors` and against the image files.
+`strata_dataset.records.errors` and against the image files. Datagen packing and raw QA refuse
+records of any other version.
 
 0.4.0 adds the deep and beauty `instance_check` channel: a per-id hash that rejects samples Karma
 merged from several surfaces, whose averaged id can round to a declared id of a surface that is not

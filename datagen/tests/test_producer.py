@@ -146,6 +146,32 @@ class RawEvidenceTest(unittest.TestCase):
                     self.assertEqual(float(layers[f"roles.{role}"][0, 0]), 0.0)
                 self.assertEqual(float(layers["roles.foreground"][0, 1]), 0.5)
 
+    def test_records_of_another_contract_version_or_id_domain_are_refused(self) -> None:
+        wide = [
+            {"name": "sky", "first_id": 0, "count": 1},
+            {"name": "grass", "first_id": 1000, "count": 40000},
+        ]
+        changes: tuple[tuple[str, dict[str, object]], ...] = (
+            ("manifest.json", {"contract": "strata-dataset-0.3.0"}),
+            ("camera.json", {"contract": "strata-dataset-0.3.0"}),
+            ("manifest.json", {"instance_ids": wide}),
+        )
+        for name, change in changes:
+            with self.subTest(name=name, change=change), tempfile.TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "s"
+                write_shot(shot, [CLEAN, CLEAN], stride=24)
+                record = json.loads((shot / name).read_text())
+                (shot / name).write_text(json.dumps(record | change))
+                for step in (pack.pack, checks.accept, checks.prune):
+                    with self.assertRaisesRegex(
+                        ValueError, r"not 'strata-dataset-0.4.0'|leaves \[0, 32768\)"
+                    ):
+                        step(shot, range(1, 3))
+                self.assertFalse((shot / "layers").exists())
+                self.assertFalse((shot / "qa").exists())
+                self.assertFalse(checks.check_shot(shot)["passed"])
+                self.assertTrue((shot / "deep" / "0002.exr").exists())
+
 
 def _drop_hero_ids(shot: Path) -> None:
     manifest = json.loads((shot / "manifest.json").read_text())

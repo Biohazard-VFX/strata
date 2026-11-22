@@ -21,7 +21,7 @@ from strata_datagen import shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators.lighting import SKY_ID
 from strata_datagen.qa.deep import instance_ids
-from strata_dataset import roles
+from strata_dataset import records, roles
 from strata_dataset import samples as contract_samples
 from strata_dataset.layers import Layers, reduce_samples
 
@@ -66,7 +66,12 @@ class ShotFrames:
 
     @staticmethod
     def load(shot: Path) -> "ShotFrames":
+        """The plan of a shot whose records are this contract version; raises ValueError otherwise."""
         manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
+        camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
+        errors = records.errors(manifest, camera)
+        if errors:
+            raise ValueError(f"{shot}: {'; '.join(errors)}")
         render = cast("dict[str, object]", manifest["render"])
         frames = cast("list[int]", render["frames"])
         declared = roles.ranges(cast("list[dict[str, object]]", manifest["instance_ids"]))
