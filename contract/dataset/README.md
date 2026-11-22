@@ -30,7 +30,7 @@ rendered range: most shots are 8-frame clips, a minority are 24-96-frame sequenc
 - Pixel coordinates: origin at the top-left corner of the top-left pixel, u right, v down. A
   camera-space point projects to `u = cx + fx * x / -z`, `v = cy - fy * y / -z`.
 - Z (flat and deep) is camera-plane depth: the distance along the optical axis, `-z_cam`,
-  positive in front of the camera. Pixels that see only the sky have flat `Z = 0` and no deep samples.
+  positive in front of the camera. Sky pixels hit the 3000 m backdrop (instance id 0).
 - Colour: scene-linear ACEScg, not display-referred. Display and log transforms are applied
   at training time.
 - Lens distortion: none in v0 (`distortion.model = "none"`).
@@ -88,8 +88,16 @@ the half `A`, which is off by up to id x 2^-11. Karma merges samples of the same
 within 1 mm in depth (deep compression 5), so a sample can stand for several pixel samples, and a
 merge across two surfaces gives a non-integer id. ZBack - Z stays at most about 1 mm for surfaces.
 Fully occluded surfaces are not stored. Beauty and deep share a one-pixel box filter: compositing
-the samples front to back reproduces the beauty `C` part where the deep covers the pixel (mean
-absolute difference about 2e-5); where the sky shows, the beauty adds it behind the deep.
+the samples front to back reproduces the beauty `C` part.
 
-Instance ids: 0 is sky (no deep sample), 1 terrain, 2 hero skin, 3 hero groom (hair or fur),
+Every pixel ends in a sky sample: a camera-only backdrop sphere (radius 3000 m, the HDRI mapped as
+Karma maps its dome, same exposure) with instance id 0, so compositing all samples front to back
+reproduces the beauty `C` everywhere, partly covered pixels over sky included. Layer targets leave
+id-0 samples out; whatever the layers do not cover is sky. The background sample is opaque,
+finite (camera-plane Z up to 3000 m, below the 5000 m far clip; never inf) with Z == ZBack, and
+`manifest.background` records its reserved id (0) and radius: compositors drop it with one
+DeepExpression on instance_id; training masks depth losses on it (sky depth is undefined) and
+supervises its colour and coverage.
+
+Instance ids: 0 is the sky backdrop, 1 terrain, 2 hero skin, 3 hero groom (hair or fur),
 1000 and up are scattered instances; `manifest.instance_ids` maps every id to its layer.

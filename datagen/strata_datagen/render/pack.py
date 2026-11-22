@@ -7,6 +7,8 @@ import OpenEXR
 
 from strata_contract.layers import reduce_samples
 from strata_datagen.exr import read_deep
+from strata_datagen.generators.lighting import SKY_ID
+from strata_datagen.qa.deep import instance_ids
 
 DEEP_STRIDE = 24
 
@@ -16,14 +18,19 @@ def keeps_deep(frame: int, first: int, stride: int) -> bool:
 
 
 def write_layers(deep_path: Path, out_path: Path) -> None:
-    """layers/NNNN.exr: per layer k, `L<k>.invdepth` (float, 1/m) and `L<k>.A/R/G/B` (half)."""
+    """layers/NNNN.exr: per layer k, `L<k>.invdepth` (float, 1/m) and `L<k>.A/R/G/B` (half).
+
+    Layers describe the scene in front of the sky: backdrop samples (id 0) are left out.
+    """
     deep = read_deep(deep_path)
-    rgb = np.stack([deep.channels[c] for c in "RGB"], axis=-1).astype(np.float64)
+    scene = instance_ids(deep) != SKY_ID
+    counts = np.bincount(deep.pixel_index()[scene], minlength=deep.counts.size)
+    rgb = np.stack([deep.channels[c][scene] for c in "RGB"], axis=-1).astype(np.float64)
     layers = reduce_samples(
-        deep.channels["Z"].astype(np.float64),
-        deep.channels["A"].astype(np.float64),
+        deep.channels["Z"][scene].astype(np.float64),
+        deep.channels["A"][scene].astype(np.float64),
         rgb,
-        deep.counts,
+        counts,
         (deep.height, deep.width),
     )
     channels: dict[str, OpenEXR.Channel] = {}

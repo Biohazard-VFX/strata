@@ -64,3 +64,6 @@
 - A shot's subject size is the hero's largest bounding extent, so tall heroes are framed by height.
 - Long takes vary a human gradually instead of cutting: corner humans with one outfit are blended per sample (points, rig, skin texture) with seeded smooth weights.
 - Chained CMU clips crossfade by sign-continuous quaternion interpolation of bone world rotations; slerp of large pose differences flips direction mid-blend.
+- The sky is a camera-only 3000 m backdrop sphere (id 0, HDRI mapped like the dome), so every pixel has a deep sample and the deep flattens to the beauty everywhere.
+- Camera distance and height scale with the hero's horizontal size (2.5-11 m for a 1.6 m subject), so any creature fills a similar share of the frame.
+- Background is part of the deep: one opaque, finite-Z sample per pixel with reserved id 0 (manifest.background); depth losses ignore it, colour and coverage use it.

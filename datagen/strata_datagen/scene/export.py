@@ -96,6 +96,7 @@ def _assets(shot: Shot, library: Library) -> list[dict[str, str]]:
 
 def _ids(shot: Shot) -> list[dict[str, object]]:
     fixed: list[dict[str, object]] = [
+        {"name": "sky", "first_id": lighting.SKY_ID, "count": 1},
         {"name": "terrain", "first_id": TERRAIN_ID, "count": 1},
         {"name": "hero_skin", "first_id": hero.SKIN_ID, "count": 1},
         {"name": "hero_groom", "first_id": hero.GROOM_ID, "count": 1},
@@ -142,6 +143,11 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
             "thin": [s.record() for s in shot.thin],
         },
         "instance_ids": _ids(shot),
+        "background": {
+            "instance_id": lighting.SKY_ID,
+            "radius_m": lighting.BACKDROP_M,
+            "far_clip_m": camera.CLIPPING_M[1],
+        },
         "first_scatter_id": FIRST_SCATTER_ID,
         "assets": _assets(shot, library),
         "render": {

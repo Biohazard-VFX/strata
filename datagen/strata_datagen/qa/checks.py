@@ -9,6 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from strata_datagen.exr import header, read_deep, read_flat
+from strata_datagen.generators.lighting import BACKDROP_M, SKY_ID
 from strata_datagen.qa.deep import flatten, instance_ids
 
 LUMA = (0.2126, 0.7152, 0.0722)
@@ -20,11 +21,14 @@ LIMITS = {
     "partial_share": (0.005, 1.0),
     "flatten_error": (0.0, 0.005),
     "flatten_excess": (0.0, 0.005),
-    "valid_id_fraction": (0.999, 1.0),
+    "uncovered": (0.0, 0.0),
+    "valid_id_fraction": (0.99995, 1.0),
     "coverage_channel": (1.0, 1.0),
+    "sky_id_in_front": (0.0, 1e-5),
     "camera_error": (0.0, 1e-3),
 }
 COVERED = 0.999
+SKY_MIN_Z_M = 0.25 * BACKDROP_M
 STEP_LIMITS = {"position_m": 0.25, "rotation_deg": 2.0, "focal_ratio": 0.02, "fstop": 0.5, "focus_m": 0.5}
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
 
@@ -58,21 +62,24 @@ def deep_metrics(
     flat = flatten(deep)
     z, zback = deep.channels["Z"], deep.channels["ZBack"]
     valid = np.zeros(int(deep.counts.sum()), bool)
+    near_sky = 0.0
     if "coverage" in deep.channels:
         ids = instance_ids(deep)
         for low, high in ranges:
             valid |= (ids >= low) & (ids < high)
-    covered = flat.alpha >= COVERED
+        near_sky = float(((ids == SKY_ID) & (z < SKY_MIN_Z_M)).mean())
     residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
     return {
         "mean_samples": float(deep.counts.mean()),
         "max_samples": float(deep.counts.max()),
-        "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z - 1e-4)).sum()),
+        "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z * (1.0 - 1e-6) - 1e-4)).sum()),
         "partial_share": float(flat.partial.mean()),
-        "flatten_error": float(np.abs(residual[covered]).mean()) if covered.any() else 0.0,
+        "flatten_error": float(np.abs(residual).mean()),
+        "uncovered": float((flat.alpha < COVERED).mean()),
         "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
         "valid_id_fraction": float(valid.mean()) if valid.size else 1.0,
         "coverage_channel": float("coverage" in deep.channels),
+        "sky_id_in_front": near_sky,
     }
 
 
