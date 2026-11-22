@@ -5,7 +5,7 @@
 - DP2 H+ runs at native resolution with bottom/right replicate padding to 32; DP2 does not use Depth Pro 1's resize pipeline.
 - Metric depth is `f_px / (original_width * inverse_depth)`; zero inverse remains positive infinity.
 - Export opset 23 Attention and tensor-valued RoPE dimensions to preserve memory-efficient attention and arbitrary portrait/landscape inputs.
-- Learned operations run in FP16 with a float32 final projection and float32 public tensors to bound activation memory at native resolution.
+- Learned operations run FP16 to bound memory and public tensors are float32; final projection, encoder taps and the 1/32 decoder branch run float32: the last tap exceeds FP16 range.
 - Compare export parity at matching PyTorch precision; report stock bfloat16 differences separately because changing precision is not export error.
 - Parity gates every image alike vs FP16 PyTorch: p99.9 1%, max 5% beyond 2 px of a log step >0.3, median and signed bias 0.25%, focal 0.1%; no per-image exemptions.
 - Against an FP32 oracle, native median and |signed bias| may exceed PyTorch FP16's own by 0.2 pp, the most PyTorch moves under 1-fp16-ulp input perturbations.
