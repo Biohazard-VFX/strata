@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -11,8 +12,8 @@ from strata_training.augment.deep import Shot
 from strata_training.augment.pipeline import AugmentConfig, Roles, draw_camera, draw_grain
 from strata_training.augment.torch_camera import degrade
 from strata_training.augment.torch_compose import TensorShot, recompose
-from strata_training.augment.torch_deep import TensorSamples
 from strata_training.augment.torch_grain import apply_grain
+from strata_training.data.raw_tensor import MappedSamples, mapped_samples
 from strata_training.torch_api import api
 from strata_training.types import Array
 
@@ -32,10 +33,14 @@ class TorchJob:
     config: AugmentConfig
     seed: int
 
-    def map(self, function: Callable[[torch.Tensor], torch.Tensor]) -> "TorchJob":
+    def map(
+        self, function: Callable[[torch.Tensor], torch.Tensor], pin: bool = False
+    ) -> "TorchJob":
         def shot(value: TensorShot) -> TensorShot:
             deep = value.deep
-            if deep is not None:
+            if isinstance(deep, MappedSamples):
+                deep = deep if pin else deep.transfer(function)
+            elif deep is not None:
                 deep = replace(
                     deep,
                     **{
@@ -52,25 +57,8 @@ def _owned(value: Array) -> torch.Tensor:
     return api.from_numpy(np.array(value, copy=True))
 
 
-def _read_shot(shot: Shot, top: int, left: int, size: int, raw: bool) -> TensorShot:
-    deep: TensorSamples | None = None
-    if raw:
-        source = shot.deep
-        if left == 0 and size == source.shape[1]:
-            first, last = (int(source.offsets[y * size]) for y in (top, top + size))
-            counts = np.diff(source.offsets[top * size : (top + size) * size + 1])
-            deep = TensorSamples(
-                (size, size),
-                api.from_numpy(counts),
-                *(_owned(getattr(source, key)[first:last]) for key in ("z", "alpha", "rgb", "ids")),
-            )
-        else:
-            values = source.crop(top, left, size, size)
-            deep = TensorSamples(
-                values.shape,
-                api.from_numpy(values.counts),
-                *(api.from_numpy(getattr(values, key)) for key in ("z", "alpha", "rgb", "ids")),
-            )
+def _read_shot(shot: Shot, top: int, left: int, size: int, raw: bool, root: Path) -> TensorShot:
+    deep = mapped_samples(root, top, left, size, size) if raw else None
     window = (slice(None), slice(top, top + size), slice(left, left + size))
     return TensorShot(deep, _owned(shot.noisy[window]), _owned(shot.denoised[window]))
 
@@ -121,13 +109,22 @@ def prepare_raw(
             config = replace(loader.augmentation, **flags)
             seed = int(rng.integers(0, 2**63))
             raw = bool(config.instance_grade or config.recompose or config.occluders)
-            shot = _read_shot(loader.shot(i), top, left, size, raw)
+            shot = _read_shot(
+                loader.shot(i), top, left, size, raw, loader.samples / frame.entry["id"] / "deep"
+            )
             donor: TensorShot | None = None
             donor_roles: Roles | None = None
             if config.recompose:
                 donor_i = int(rng.integers(len(loader.frames)))
                 y, x = loader.frames[donor_i].crop(rng, size)
-                donor = _read_shot(loader.shot(donor_i), y, x, size, True)
+                donor = _read_shot(
+                    loader.shot(donor_i),
+                    y,
+                    x,
+                    size,
+                    True,
+                    loader.samples / loader.frames[donor_i].entry["id"] / "deep",
+                )
                 donor_roles = loader.roles[donor_i]
             jobs.append(TorchJob(position, shot, loader.roles[i], donor, donor_roles, config, seed))
             scale = frame.scale * size / frame.base.shape[1]

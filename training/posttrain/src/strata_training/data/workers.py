@@ -23,14 +23,16 @@ class LoadedBatch:
     pyramid: list[torch.Tensor]
     prepared: PreparedBatch | None
 
-    def map(self, function: Callable[[torch.Tensor], torch.Tensor]) -> "LoadedBatch":
+    def map(
+        self, function: Callable[[torch.Tensor], torch.Tensor], pin: bool = False
+    ) -> "LoadedBatch":
         target = {k: function(v) for k, v in self.target.items()}
         prepared = self.prepared
         if prepared is not None:
             prepared = replace(
                 prepared,
                 images=function(prepared.images),
-                jobs=[job.map(function) for job in prepared.jobs],
+                jobs=[job.map(function, pin) for job in prepared.jobs],
                 target=target,
                 scales=function(prepared.scales),
                 normalized=function(prepared.normalized)
@@ -48,7 +50,7 @@ class LoadedBatch:
         )
 
     def pin_memory(self) -> "LoadedBatch":
-        return self.map(lambda value: value.pin_memory())
+        return self.map(lambda value: value.pin_memory(), pin=True)
 
     def to(self, device: str) -> "LoadedBatch":
         result = self.map(lambda value: value.to(device, non_blocking=True))
