@@ -286,8 +286,7 @@ static int create_context(const struct strata_options *options,
 	ctx->model_path = malloc(strlen(options->model_path) + 1);
 	if (ctx->model_path)
 		strcpy(ctx->model_path, options->model_path);
-	ctx->fov_path =
-		strata_sibling_path(options->model_path, STRATA_FOV_SUFFIX);
+	ctx->fov_path = strata_fov_path(options->model_path);
 	if (!ctx->model_path || !ctx->fov_path)
 		return strata_fail(err, "out of memory");
 	return 0;

@@ -39,7 +39,7 @@ int strata_dimensions(int w, int h, struct strata_error *err)
 	return 0;
 }
 
-char *strata_sibling_path(const char *model, const char *suffix)
+static char *sibling_path(const char *model, const char *suffix)
 {
 	size_t length = strlen(model), extra = strlen(suffix);
 	size_t stem = length >= 5 && !strcmp(model + length - 5, ".onnx") ?
@@ -52,6 +52,16 @@ char *strata_sibling_path(const char *model, const char *suffix)
 	memcpy(path, model, stem);
 	memcpy(path + stem, suffix, extra + 1);
 	return path;
+}
+
+char *strata_manifest_path(const char *model)
+{
+	return sibling_path(model, ".json");
+}
+
+char *strata_fov_path(const char *model)
+{
+	return sibling_path(model, STRATA_FOV_SUFFIX);
 }
 
 int strata_atomic_target(const char *path, char **temporary,

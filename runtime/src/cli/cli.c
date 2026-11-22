@@ -59,26 +59,50 @@ static int numeric_option(struct cli_options *options, const char *key,
 	return 0;
 }
 
-static int valid_paths(const struct cli_options *options)
+static int clashes(const char *output, const char *const *paths, size_t count)
 {
-	const char *paths[] = { options->depth,
-				options->deep,
-				options->position,
-				options->input,
-				options->session.model_path,
-				options->camera };
 	struct strata_error err;
 	int same = 0;
 
+	for (size_t i = 0; i < count; ++i) {
+		if (paths[i] &&
+		    (strata_same_file(output, paths[i], &same, &err) || same))
+			return 1;
+	}
+	return 0;
+}
+
+static int valid_paths(const struct cli_options *options,
+		       const struct strata_model_files *model)
+{
+	const char *const paths[] = { options->depth, options->deep,
+				      options->position, options->input,
+				      options->camera };
+	const char *const *dependencies = (const char *const *)model->paths;
+
 	for (size_t i = 0; i < 3; ++i) {
-		for (size_t j = i + 1; paths[i] && j < 6; ++j) {
-			if (paths[j] && (strata_same_file(paths[i], paths[j],
-							  &same, &err) ||
-					 same))
-				return 0;
-		}
+		if (paths[i] && (clashes(paths[i], paths + i + 1, 4 - i) ||
+				 clashes(paths[i], dependencies, model->count)))
+			return 0;
 	}
 	return 1;
+}
+
+static int check_paths(const struct cli_options *options)
+{
+	struct strata_model_files model = { 0 };
+	struct strata_error err = { { 0 } };
+	int ret = 0;
+
+	if (strata_model_files(options->session.model_path, &model, &err)) {
+		fprintf(stderr, "strata: %s\n", err.message);
+		ret = 1;
+	} else if (!valid_paths(options, &model)) {
+		usage(stderr);
+		ret = 2;
+	}
+	strata_model_files_free(&model);
+	return ret;
 }
 
 static int parse(int argc, char **argv, struct cli_options *options)
@@ -110,7 +134,7 @@ static int parse(int argc, char **argv, struct cli_options *options)
 	if (!options->session.model_path || !options->input ||
 	    !options->depth || !options->deep)
 		return -1;
-	if (!valid_paths(options) || (options->camera && options->focal > 0))
+	if (options->camera && options->focal > 0)
 		return -1;
 	return 0;
 }
@@ -238,6 +262,7 @@ out:
 int main(int argc, char **argv)
 {
 	struct cli_options options = { .session.provider = "auto" };
+	int ret;
 
 	if ((argc == 2 &&
 	     (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h"))) ||
@@ -251,5 +276,6 @@ int main(int argc, char **argv)
 		usage(stderr);
 		return 2;
 	}
-	return execute(&options);
+	ret = check_paths(&options);
+	return ret ? ret : execute(&options);
 }

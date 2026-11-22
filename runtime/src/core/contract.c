@@ -5,7 +5,7 @@
 int strata_check_manifest(const char *model, struct strata_error *err)
 {
 	char buffer[16384];
-	char *path = strata_sibling_path(model, ".json");
+	char *path = strata_manifest_path(model);
 	FILE *file = NULL;
 	struct json_tokener *parser = NULL;
 	struct json_object *actual = NULL, *expected = NULL;

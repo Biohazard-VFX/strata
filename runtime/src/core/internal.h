@@ -18,7 +18,8 @@ struct strata_tensor {
 int strata_fail(struct strata_error *err, const char *fmt, ...);
 int strata_dimensions(int w, int h, struct strata_error *err);
 double strata_milliseconds(void);
-char *strata_sibling_path(const char *model, const char *suffix);
+char *strata_manifest_path(const char *model);
+char *strata_fov_path(const char *model);
 int strata_camera_validate(const struct strata_camera *camera, int resolved,
 			   struct strata_error *err);
 int strata_pose_validate(const struct strata_pose *pose,
