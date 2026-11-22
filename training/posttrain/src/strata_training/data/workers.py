@@ -1,6 +1,8 @@
 """Step-keyed native CPU batches with bounded, persistent-worker prefetch."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -103,6 +105,59 @@ class NativeBatches(Dataset[LoadedBatch]):
                 self.frames, [selections[i] for i in prepared.clean], crop, halo, "cpu", decoder
             )
         return LoadedBatch(selections, {}, prepared.target, [], prepared)
+
+
+@contextmanager
+def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[LoadedBatch]]:
+    """Own one lookahead batch; join preparation on exit, including early stop or errors.
+
+    A single consumer thread owns iteration. CUDA preparation uses a private stream
+    and worker thread; returned tensors are ordered and retained on the consumer stream.
+    """
+    source = iter(batches(dataset))
+    if torch.device(device).type != "cuda":
+        yield (row.to(device) for row in source)
+        return
+    stream = torch.cuda.Stream(device=device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+
+    def prepare() -> tuple[LoadedBatch, torch.cuda.Event] | None:
+        raw = next(source, None)
+        if raw is None:
+            return None
+        with torch.cuda.device(device), torch.cuda.stream(stream), torch.no_grad():
+            loaded = raw.to(device)
+            ready = torch.cuda.Event()
+            ready.record(stream)
+        return loaded, ready
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="strata-prepare") as executor:
+        future = executor.submit(prepare)
+
+        def consume() -> Iterator[LoadedBatch]:
+            nonlocal future
+            while (pending := future.result()) is not None:
+                loaded, ready = pending
+                current = torch.cuda.current_stream(device)
+                current.wait_event(ready)
+
+                def retain(
+                    value: torch.Tensor, consumer: torch.cuda.Stream = current
+                ) -> torch.Tensor:
+                    value.record_stream(consumer)
+                    return value
+
+                loaded.map(retain)
+                future = executor.submit(prepare)
+                yield loaded
+
+        try:
+            yield consume()
+        finally:
+            try:
+                future.result()
+            finally:
+                stream.synchronize()
 
 
 def batches(dataset: NativeBatches) -> DataLoader[LoadedBatch]:

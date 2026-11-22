@@ -181,11 +181,22 @@ runs default to `"numpy"`. The explicit NumPy path remains the reference. Spawne
 workers read compact targets, denoised crops and clean cached inputs; changed views
 carry raw CSR sample mappings plus value-only augmentation plans. Private COW NPY
 mappings own their lifetimes and reopen by descriptor across queues, avoiding a raw
-array copy into shared memory followed by another into pinned memory. Sources must
-remain immutable until the batch is consumed. Only image/compact/cache tensors are
-pinned. Device transfer stages the requested native row span, then gathers the crop's
-columns on the device. Wide frames therefore transfer extra samples outside the
-crop's horizontal extent, but never samples outside its row span.
+array copy into shared memory. Sources must remain immutable until the batch is
+consumed. The parent pinning stage copies requested raw row spans as well as
+image/compact/cache tensors into pinned host memory. Nonblocking device transfer
+stages the requested native row span, then gathers the crop's columns on the device.
+Wide frames therefore transfer extra samples outside the crop's horizontal extent,
+but never samples outside its row span.
+
+Training consumes `device_batches`, a context-managed, one-batch lookahead. A single
+preparation thread runs nonblocking transfers and finalization on a private CUDA
+stream while the consumer runs the encoder/decoder/backward/optimizer step. A ready
+event orders consumption without synchronizing the whole device; `record_stream`
+protects every returned tensor through consumer use. Exit joins outstanding work,
+including early stopping and errors. CPU training remains synchronous. Lookahead
+uses absolute-step seeds and does not advance checkpoint RNG state. GPU memory now
+includes one prepared lookahead plus the current train step; host pinning includes
+raw row-span copies. `loader_seconds` measures consumer wait, not background work.
 
 `LoadedBatch.to` runs deep selection, stable depth merge, transmission, per-object
 and scene grading, all six procedural occluder families, photometric camera math

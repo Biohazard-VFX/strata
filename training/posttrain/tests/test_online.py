@@ -188,6 +188,35 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
         for key, value in (a.cached_inputs or {}).items():
             assert b.cached_inputs is not None
             torch.testing.assert_close(value, b.cached_inputs[key], rtol=0, atol=0)
+    if math_device == "cuda":
+        from strata_training.data.workers import device_batches
+
+        cuda_config = {**config, "device": "cuda"}
+        serial = [
+            row.to("cuda") for row in batches(NativeBatches([frame], online, [[0]], cuda_config))
+        ]
+        for start_step in (0, 3):
+            with device_batches(
+                NativeBatches([frame], online, [[0]], cuda_config, start_step), "cuda"
+            ) as overlap:
+                for expected, actual in zip(serial[start_step:], overlap, strict=True):
+                    a, b = expected.prepared, actual.prepared
+                    assert a is not None
+                    assert b is not None
+                    assert (a.clean, a.live, a.selections) == (b.clean, b.live, b.selections)
+                    torch.testing.assert_close(a.images, b.images, atol=0, rtol=0)
+                    assert a.normalized is None or b.normalized is not None
+                    if a.normalized is not None:
+                        torch.testing.assert_close(a.normalized, b.normalized, atol=0, rtol=0)
+                    for key, value in a.target.items():
+                        torch.testing.assert_close(value, b.target[key], atol=0, rtol=0)
+                    if a.cached_inputs is not None:
+                        assert b.cached_inputs is not None
+                        for key, value in a.cached_inputs.items():
+                            torch.testing.assert_close(value, b.cached_inputs[key], atol=0, rtol=0)
+                    scratch = torch.empty(1024 * 1024, device="cuda")
+                    scratch.fill_(3)
+
     if loader_math == "torch":
         from strata_training.augment.pipeline import photometric, recompose
         from strata_training.data.targets import composite

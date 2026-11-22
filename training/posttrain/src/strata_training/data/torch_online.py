@@ -41,8 +41,8 @@ class TorchJob:
     ) -> "TorchJob":
         def shot(value: TensorShot) -> TensorShot:
             deep = value.deep
-            if isinstance(deep, MappedSamples):
-                deep = deep if pin else deep.transfer(function)
+            if isinstance(deep, MappedSamples) and not pin:
+                deep = deep.transfer(function)
             elif deep is not None:
                 deep = replace(
                     deep,

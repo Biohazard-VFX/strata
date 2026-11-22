@@ -1,5 +1,7 @@
 # Architecture decisions
 
+- CUDA training pins raw row spans and prepares one lookahead batch on a private thread/stream; events order consumption and record_stream protects consumer lifetimes.
+
 - Torch transmission uses bounded row-local log-prefix scans, never a floating global CUDA scan, to make dense replay bitwise stable.
 
 - CUDA hybrid batches default to Torch math; raw target rebuilds and Alexa fields batch across views, while final-image codecs alone use bounded CPU threads.
