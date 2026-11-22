@@ -39,4 +39,5 @@ Rules for anyone, human or agent, changing Strata. They are not suggestions. Whe
 - No plans, research notes, scratch files, binaries or model weights in the repo.
 - No client or project identifiers anywhere, and no client assets. Generators stay generic; specific assets live in external libraries referenced by id. Canary and preset recipes may name library asset ids.
 - Conventional Commits, enforced by `tools/check_commits.sh` and the commit-msg hook. Commit small and often; one logical change per commit.
+- No render-farm or cloud-vendor SDKs, credentials or submit tooling. Datagen emits generic job lists and training ships a generic container; vendor adapters live in private tooling outside the repo.
 - Work on a feature branch. `main` changes only by review.
