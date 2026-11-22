@@ -29,4 +29,4 @@
 - Renders are Karma XPU GPU-only and abort without a GPU; the driver retries once with the CPU device and records which ran.
 - Job lists (`jobs.json`, `jobs.sh`) hold one husk command per shot with paths relative to the build root.
 - Files are written atomically (temporary file, then rename).
-- Bulk shots are 8-frame clips for diversity; a configurable share (default 10%) are 24-96-frame sequences for temporal training. Camera moves scale with duration.
+- Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.

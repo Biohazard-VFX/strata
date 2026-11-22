@@ -2,14 +2,10 @@
 
 from dataclasses import dataclass, field
 
-import numpy as np
-
 from strata_datagen.generators.camera import CameraChoices
 
-RECIPE_VERSION = "strata-datagen-recipe-0.2.0"
-SHORT_FRAMES = 8
-LONG_FRAMES = (24, 96)
-LONG_SHARE = 0.1
+RECIPE_VERSION = "strata-datagen-recipe-0.3.0"
+DEFAULT_FRAMES = 720
 
 
 @dataclass(frozen=True)
@@ -32,8 +28,6 @@ class ShotSpec:
         return f"{self.name}_{self.seed:06d}"
 
 
-def frames(spec: ShotSpec, long_share: float, rng: np.random.Generator) -> tuple[int, ...]:
-    """Short clips by default; a long_share of shots are long sequences for temporal training."""
-    long = bool(rng.random() < long_share)
-    count = int(rng.integers(LONG_FRAMES[0], LONG_FRAMES[1] + 1)) if long else SHORT_FRAMES
-    return tuple(range(1, (count if spec.frame_count is None else spec.frame_count) + 1))
+def frames(spec: ShotSpec, default: int = DEFAULT_FRAMES) -> tuple[int, ...]:
+    """Frame numbers of a shot: long continuous shots by default, presets may fix a length."""
+    return tuple(range(1, (default if spec.frame_count is None else spec.frame_count) + 1))

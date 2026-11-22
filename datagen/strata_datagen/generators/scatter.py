@@ -7,10 +7,13 @@ import numpy as np
 from numpy.typing import NDArray
 from pxr import Sdf, Usd, UsdGeom, UsdShade
 
+from strata_datagen import timeline
 from strata_datagen.fields import Ground
 from strata_datagen.usdutil import FloatArray, ints, quath, vec3f
 
-VERSION = "scatter-0.2.0"
+VERSION = "scatter-0.3.0"
+GROWTH_KEY_FRAMES = 24
+GROWTH_FADE = 0.15
 NATIVE_SCALE = (0.5, 2.0)
 
 
@@ -146,10 +149,33 @@ def place(ground: Ground, layer: Layer, exclusions: Sequence[Disk], rng: np.rand
     )
 
 
+def growth(rng: np.random.Generator, count: int, samples: int) -> FloatArray:
+    """Scale multipliers (keys every GROWTH_KEY_FRAMES samples, instances) for a slowly drifting density.
+
+    Each instance has a threshold; as the visible share of the layer rises and falls between 0.55
+    and 1, instances grow from or shrink to nothing over a GROWTH_FADE band, never popping.
+    """
+    keys = np.arange(0, samples + GROWTH_KEY_FRAMES - 1, GROWTH_KEY_FRAMES)
+    t = keys / timeline.FPS
+    share = timeline.curve(rng, float(t[-1]) + 1.0, 8.0, 0.55, 1.0)(t)
+    threshold = rng.random(count) * (1.0 - GROWTH_FADE)
+    x = np.clip((share[:, None] - threshold[None]) / GROWTH_FADE, 0.0, 1.0)
+    return np.maximum(x * x * (3.0 - 2.0 * x), 1e-3)
+
+
 def author(
-    stage: Usd.Stage, path: str, layer: Layer, instances: Instances, first_id: int
+    stage: Usd.Stage,
+    path: str,
+    layer: Layer,
+    instances: Instances,
+    first_id: int,
+    *,
+    grow: tuple[FloatArray, int] | None = None,
 ) -> UsdGeom.PointInstancer:
-    """A PointInstancer whose instances carry a unique integer `instance_id` primvar."""
+    """A PointInstancer whose instances carry a unique integer `instance_id` primvar.
+
+    grow is (growth(...) multipliers, first frame): scales are keyed every GROWTH_KEY_FRAMES.
+    """
     instancer = UsdGeom.PointInstancer.Define(stage, path)
     protos = instancer.GetPrim().GetPath().AppendChild("prototypes")
     UsdGeom.Scope.Define(stage, protos)
@@ -165,7 +191,14 @@ def author(
     instancer.CreatePrototypesRel().SetTargets(targets)
     instancer.CreatePositionsAttr(vec3f(instances.positions))
     instancer.CreateOrientationsAttr(quath(instances.orientations))
-    instancer.CreateScalesAttr(vec3f(instances.scales))
+    scales = instancer.CreateScalesAttr()
+    if grow is None:
+        scales.Set(vec3f(instances.scales))
+    else:
+        multipliers, first_frame = grow
+        for key, row in enumerate(multipliers):
+            time = Usd.TimeCode(first_frame - 1 + key * GROWTH_KEY_FRAMES)
+            scales.Set(vec3f(instances.scales * row[:, None]), time)
     instancer.CreateProtoIndicesAttr(ints(instances.prototype_indices))
     ids = UsdGeom.PrimvarsAPI(instancer).CreatePrimvar(
         "instance_id", Sdf.ValueTypeNames.IntArray, UsdGeom.Tokens.vertex

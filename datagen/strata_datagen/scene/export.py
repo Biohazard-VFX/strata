@@ -26,26 +26,31 @@ def _rows(matrix: np.ndarray) -> list[list[float]]:
 
 def camera_record(shot: Shot, render: RenderParams) -> dict[str, object]:
     track = shot.track
-    fx, fy, cx, cy = track.intrinsics(render.width, render.height)
     frames = [
         {
             "frame": frame,
             "width": render.width,
             "height": render.height,
-            "fx": fx,
-            "fy": fy,
-            "cx": cx,
-            "cy": cy,
+            "fx": float(k[0]),
+            "fy": float(k[1]),
+            "cx": float(k[2]),
+            "cy": float(k[3]),
             "world_to_camera": _rows(w2c),
             "distortion": {"model": "none"},
             "shutter_open": track.shutter[0],
             "shutter_close": track.shutter[1],
-            "fstop": track.lens.fstop,
-            "focus_distance_m": track.lens.focus_m,
-            "focal_length_mm": track.lens.focal_mm,
+            "fstop": float(lens[1]),
+            "focus_distance_m": float(lens[2]),
+            "focal_length_mm": float(lens[0]),
             "sensor_width_mm": camera.SENSOR_MM[0],
         }
-        for frame, w2c in zip(track.frames, track.world_to_camera(), strict=True)
+        for frame, w2c, k, lens in zip(
+            track.frames,
+            track.world_to_camera(),
+            track.intrinsics(render.width, render.height),
+            track.frame_lenses(),
+            strict=True,
+        )
     ]
     return {
         "contract": CONTRACT_VERSION,

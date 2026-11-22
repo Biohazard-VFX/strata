@@ -26,7 +26,9 @@ class CameraTest(unittest.TestCase):
         )
         stage = Usd.Stage.CreateInMemory()
         cam = camera.author(stage, "/cam", track)
-        self.assertAlmostEqual(cam.GetFocalLengthAttr().Get(), track.lens.focal_mm / 100.0, places=4)
+        self.assertAlmostEqual(
+            cam.GetFocalLengthAttr().Get(Usd.TimeCode(1)), track.frame_lenses()[0, 0] / 100.0, places=4
+        )
         self.assertAlmostEqual(cam.GetHorizontalApertureAttr().Get(), camera.SENSOR_MM[0] / 100.0, places=5)
 
     def test_fixed_choices_are_kept(self) -> None:
@@ -51,7 +53,7 @@ class CameraTest(unittest.TestCase):
         self.assertAlmostEqual(angle(tuple(range(1, 9))), angle(FRAMES), delta=0.02)
 
     def test_every_move_projects_the_subject_into_frame(self) -> None:
-        for move in camera.MOVES:
+        for move in (*camera.MOVES, camera.PATH):
             track = camera.sample(
                 stream(4, move),
                 self.ground,
@@ -60,8 +62,9 @@ class CameraTest(unittest.TestCase):
                 frames=FRAMES,
                 choices=camera.CameraChoices(move=move),
             )
-            fx, fy, cx, cy = track.intrinsics(1280, 720)
-            for world_to_camera in track.world_to_camera():
+            for world_to_camera, (fx, fy, cx, cy) in zip(
+                track.world_to_camera(), track.intrinsics(1280, 720), strict=True
+            ):
                 rotation = world_to_camera[:3, :3]
                 np.testing.assert_allclose(rotation @ rotation.T, np.eye(3), atol=1e-9)
                 x, y, z, _ = world_to_camera @ np.append(self.target, 1.0)
@@ -75,12 +78,26 @@ class SunTest(unittest.TestCase):
         stage = Usd.Stage.CreateInMemory()
         hdri = lighting.Hdri("h", "h.exr", (0.48, 0.6, -0.64), 5.0, (1.0, 1.0, 1.0), 1.0)
         light = lighting.Lighting(hdri, rotation_deg=70.0, exposure_scale=1.0)
-        lighting.author(stage, "/lights", light)
+        lighting.author(stage, "/lights", light, 1)
         xform = UsdGeom.Xformable(stage.GetPrimAtPath("/lights/sun")).ComputeLocalToWorldTransform(0)
         axis = np.asarray(xform, dtype=np.float64)[2, :3]
         np.testing.assert_allclose(axis / np.linalg.norm(axis), light.sun_direction_world(), atol=1e-6)
         dome = stage.GetPrimAtPath("/lights/dome")
         self.assertTrue(dome.GetAttribute("inputs:karma:light:renderlightgeo").Get())
+
+    def test_lighting_drifts_smoothly_over_the_shot(self) -> None:
+        hdri = lighting.Hdri("h", "h.exr", (0.48, 0.6, -0.64), 5.0, (1.0, 1.0, 1.0), 1.0)
+        light = lighting.sample((hdri,), stream(5, "l"), 3.0, None, None, samples=722)
+        stage = Usd.Stage.CreateInMemory()
+        lighting.author(stage, "/lights", light, 1)
+        dome = stage.GetPrimAtPath("/lights/dome").GetAttribute("inputs:intensity")
+        values = np.array([dome.Get(Usd.TimeCode(f)) for f in range(722)])
+        self.assertGreater(values.max() / values.min(), 1.2)
+        self.assertLess(np.abs(np.diff(np.log2(values))).max(), 0.01)
+        turn = stage.GetPrimAtPath("/lights").GetAttribute("xformOp:rotateY")
+        angles = np.array([turn.Get(Usd.TimeCode(f)) for f in range(722)])
+        self.assertGreater(np.ptp(angles), 5.0)
+        self.assertLess(np.abs(np.diff(angles)).max(), 0.5)
 
 
 if __name__ == "__main__":

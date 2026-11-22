@@ -1,15 +1,18 @@
-"""Camera rigs and moves: locked, nodal pan/tilt, handheld, dolly and orbit, with lens and shutter."""
+"""Camera rigs: a continuous spline path for long shots, fixed moves for short ones, per-frame lens."""
 
 from dataclasses import dataclass
 
 import numpy as np
 from pxr import Gf, Usd, UsdGeom
 
+from strata_datagen import timeline
 from strata_datagen.fields import Ground
 from strata_datagen.usdutil import FloatArray, matrix
 
-VERSION = "camera-0.1.0"
+VERSION = "camera-0.2.0"
 MOVES = ("locked", "pan_tilt", "handheld", "dolly", "orbit")
+PATH = "path"
+PATH_MIN_FRAMES = 97
 SENSOR_MM = (36.0, 20.25)
 CLIPPING_M = (0.03, 5000.0)
 MM_PER_LENS_UNIT = 100.0  # UsdGeomCamera lens values are tenths of a scene unit; Karma honours it.
@@ -26,13 +29,14 @@ class Lens:
 class CameraTrack:
     """Camera_to_world matrices (column-vector convention; camera looks down -Z, +Y up).
 
-    samples holds one pose per frame plus a handle frame before and after, for motion blur.
+    samples holds one pose per frame plus a handle frame before and after, for motion blur;
+    lenses holds (focal_mm, fstop, focus_m) for the same samples. fstop 0 means no depth of field.
     """
 
     move: str
     frames: tuple[int, ...]
     samples: FloatArray
-    lens: Lens
+    lenses: FloatArray
     shutter: tuple[float, float]
 
     @property
@@ -45,15 +49,32 @@ class CameraTrack:
 
     @property
     def depth_of_field(self) -> bool:
-        return self.lens.fstop > 0.0
+        return bool((self.lenses[:, 1] > 0.0).any())
+
+    @property
+    def lens(self) -> Lens:
+        """The lens at the middle frame, for summaries."""
+        focal, fstop, focus = self.lenses[len(self.lenses) // 2]
+        return Lens(float(focal), float(fstop), float(focus))
+
+    def frame_lenses(self) -> FloatArray:
+        return self.lenses[1:-1]
 
     def world_to_camera(self) -> FloatArray:
         return np.linalg.inv(self.camera_to_world)
 
-    def intrinsics(self, width: int, height: int) -> tuple[float, float, float, float]:
-        fx = self.lens.focal_mm / SENSOR_MM[0] * width
-        fy = self.lens.focal_mm / SENSOR_MM[1] * height
-        return fx, fy, 0.5 * width, 0.5 * height
+    def intrinsics(self, width: int, height: int) -> FloatArray:
+        """Per frame (fx, fy, cx, cy) in pixels."""
+        focal = self.frame_lenses()[:, 0]
+        return np.stack(
+            [
+                focal / SENSOR_MM[0] * width,
+                focal / SENSOR_MM[1] * height,
+                np.full_like(focal, 0.5 * width),
+                np.full_like(focal, 0.5 * height),
+            ],
+            axis=-1,
+        )
 
 
 def look_at(eye: FloatArray, target: FloatArray) -> FloatArray:
@@ -159,6 +180,34 @@ def _pick[T](fixed: T | None, drawn: T) -> T:
     return drawn if fixed is None else fixed
 
 
+def _path(
+    rng: np.random.Generator,
+    ground: Ground,
+    targets: FloatArray,
+    subject_m: float,
+    *,
+    azimuth: float,
+    dof: bool,
+) -> tuple[FloatArray, FloatArray]:
+    """A camera that never stops: azimuth, distance, height, framing and aperture drift on smooth curves."""
+    t = timeline.sample_times(len(targets))
+    duration = float(t[-1]) + 1.0
+    swing = timeline.curve(rng, duration, 6.0, -60.0, 60.0)(t) + azimuth
+    distance = np.exp(timeline.curve(rng, duration, 8.0, np.log(2.5), np.log(11.0))(t))
+    height = timeline.curve(rng, duration, 7.0, 0.25, 2.2)(t)
+    fill = timeline.curve(rng, duration, 9.0, 0.3, 0.9)(t)
+    fstop = timeline.curve(rng, duration, 10.0, 1.4, 16.0)(t) if dof else np.zeros_like(t)
+    poses = np.stack(
+        [
+            look_at(_eye(ground, target, float(a), float(d), float(h)), target)
+            for target, a, d, h in zip(targets, swing, distance, height, strict=True)
+        ]
+    )
+    focal = np.clip(SENSOR_MM[0] * distance * fill / subject_m, 18.0, 135.0)
+    focus = np.linalg.norm(poses[:, :3, 3] - targets, axis=1)
+    return poses, np.stack([focal, fstop, focus], axis=-1)
+
+
 def sample(
     rng: np.random.Generator,
     ground: Ground,
@@ -168,8 +217,15 @@ def sample(
     frames: tuple[int, ...],
     choices: CameraChoices,
 ) -> CameraTrack:
-    """Every value is drawn even when fixed, so fixing one choice never shifts the others."""
-    move = _pick(choices.move, str(rng.choice(MOVES)))
+    """Every value is drawn even when fixed, so fixing one choice never shifts the others.
+
+    target is one point or one point per sample (frames plus two handles); long shots follow it on
+    a spline path, short ones frame its middle sample with a fixed lens.
+    """
+    count = len(frames) + 2
+    targets = np.broadcast_to(np.asarray(target, np.float64), (count, 3)).copy()
+    drawn_move = str(rng.choice(MOVES))
+    move = _pick(choices.move, PATH if len(frames) >= PATH_MIN_FRAMES else drawn_move)
     distance = _pick(choices.distance_m, float(np.exp(rng.uniform(np.log(2.5), np.log(11.0)))))
     height = _pick(choices.height_m, float(rng.uniform(0.25, 2.2)))
     azimuth = _pick(choices.azimuth_deg, float(rng.uniform(0.0, 360.0)))
@@ -177,14 +233,20 @@ def sample(
     dof = _pick(choices.depth_of_field, bool(rng.random() < 0.4))
     blur = _pick(choices.motion_blur, bool(rng.random() < 0.4))
     fstop = float(rng.uniform(1.4, 5.6))
+    shutter = (-0.25, 0.25) if blur else (0.0, 0.0)
+    if move == PATH:
+        poses, lenses = _path(rng, ground, targets, subject_m, azimuth=azimuth, dof=dof)
+        return CameraTrack(move, frames, poses, lenses, shutter)
+    middle_target = targets[count // 2]
     focal = float(np.clip(SENSOR_MM[0] * distance * fill / subject_m, 18.0, 135.0))
-    aim = target + rng.normal(0.0, 0.08 * subject_m, 3)
-    t = np.linspace(0.0, 1.0, len(frames) + 2)
+    aim = middle_target + rng.normal(0.0, 0.08 * subject_m, 3)
+    t = np.linspace(0.0, 1.0, count)
     span = (len(frames) + 1) / 25.0
     poses = _poses(move, rng, ground, aim, t=t, span=span, azimuth=azimuth, distance=distance, height=height)
-    middle: FloatArray = poses[len(poses) // 2][:3, 3] - target
-    lens = Lens(focal, fstop if dof else 0.0, float(np.linalg.norm(middle)))
-    return CameraTrack(move, frames, poses, lens, (-0.25, 0.25) if blur else (0.0, 0.0))
+    offset: FloatArray = poses[len(poses) // 2][:3, 3] - middle_target
+    middle = float(np.linalg.norm(offset))
+    lenses = np.tile([focal, fstop if dof else 0.0, middle], (count, 1))
+    return CameraTrack(move, frames, poses, lenses, shutter)
 
 
 def author(stage: Usd.Stage, path: str, track: CameraTrack) -> UsdGeom.Camera:
@@ -194,11 +256,18 @@ def author(stage: Usd.Stage, path: str, track: CameraTrack) -> UsdGeom.Camera:
     first = track.frames[0] - 1
     for index, pose in enumerate(track.samples):
         op.Set(matrix(pose.T), Usd.TimeCode(first + index))
-    camera.CreateFocalLengthAttr(track.lens.focal_mm / MM_PER_LENS_UNIT)
+    focal, fstop, focus = (
+        camera.CreateFocalLengthAttr(),
+        camera.CreateFStopAttr(),
+        camera.CreateFocusDistanceAttr(),
+    )
+    for index, lens in enumerate(track.lenses):
+        time = Usd.TimeCode(first + index)
+        focal.Set(float(lens[0]) / MM_PER_LENS_UNIT, time)
+        fstop.Set(float(lens[1]), time)
+        focus.Set(float(lens[2]), time)
     camera.CreateHorizontalApertureAttr(SENSOR_MM[0] / MM_PER_LENS_UNIT)
     camera.CreateVerticalApertureAttr(SENSOR_MM[1] / MM_PER_LENS_UNIT)
-    camera.CreateFStopAttr(track.lens.fstop)
-    camera.CreateFocusDistanceAttr(track.lens.focus_m)
     camera.CreateClippingRangeAttr(Gf.Vec2f(*CLIPPING_M))
     camera.CreateShutterOpenAttr(track.shutter[0])
     camera.CreateShutterCloseAttr(track.shutter[1])

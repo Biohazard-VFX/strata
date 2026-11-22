@@ -13,12 +13,13 @@ from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
 from strata_datagen.rng import stream
 from strata_datagen.scene import layers, looks
-from strata_datagen.scene.spec import LONG_SHARE, ShotSpec, frames
+from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec, frames
 from strata_datagen.usdutil import new_stage, relative_asset
 
 TERRAIN_ID = 1
 FIRST_SCATTER_ID = 1000
 TARGET_IRRADIANCE = 3.0
+GROWING = ("grass_near", "grass_far", "groundcover", "shrubs")
 
 
 @dataclass(frozen=True)
@@ -76,9 +77,9 @@ def _hdris(library: Library, root: Path, scene_dir: Path) -> tuple[lighting.Hdri
     )
 
 
-def plan(spec: ShotSpec, library: Library, root: Path, long_share: float = LONG_SHARE) -> Shot:
+def plan(spec: ShotSpec, library: Library, root: Path, frame_count: int = DEFAULT_FRAMES) -> Shot:
     directory = root / "shots" / spec.shot_id
-    clip = frames(spec, long_share, stream(spec.seed, "frames"))
+    clip = frames(spec, frame_count)
     params = terrain.sample_params(stream(spec.seed, "terrain"))
     ground = terrain.build(params, stream(spec.seed, "terrain", "noise"))
     surface = _choice(stream(spec.seed, "ground"), sorted(s.asset_id for s in library.surfaces), spec.ground)
@@ -87,10 +88,9 @@ def plan(spec: ShotSpec, library: Library, root: Path, long_share: float = LONG_
     motion = hero.sample_motion(
         stream(spec.seed, "hero", "motion"), ground, samples, -pose.bounds_min[1], spec.hero_speed_mps
     )
-    middle = motion.positions[samples // 2]
     height = pose.bounds_max[1] - pose.bounds_min[1]
     subject = max(pose.bounds_max[0] - pose.bounds_min[0], pose.bounds_max[2] - pose.bounds_min[2])
-    target = middle + np.array([0.0, 0.5 * height, 0.0])
+    target = motion.positions + np.array([0.0, 0.5 * height, 0.0])
     track = camera.sample(
         stream(spec.seed, "camera"), ground, target, subject, frames=clip, choices=spec.camera
     )
@@ -100,6 +100,7 @@ def plan(spec: ShotSpec, library: Library, root: Path, long_share: float = LONG_
         TARGET_IRRADIANCE,
         spec.hdri,
         spec.hdri_rotation_deg,
+        samples=samples,
     )
     return Shot(spec, directory, ground, params, surface, entry.key, pose, motion, track, clip, light)
 
@@ -153,7 +154,10 @@ def _author_scatter(shot: Shot, library: Library, stage: Usd.Stage, root: Path) 
         instances = scatter.place(shot.ground, built, exclusions, rng)
         if len(instances) == 0:
             continue
-        scatter.author(stage, f"/World/scatter/{built.name}", built, instances, next_id)
+        grows = built.name in GROWING
+        multipliers = scatter.growth(rng, len(instances), len(shot.frames) + 2) if grows else None
+        grow = None if multipliers is None else (multipliers, shot.frames[0])
+        scatter.author(stage, f"/World/scatter/{built.name}", built, instances, next_id, grow=grow)
         shot.layers.append(
             {
                 "name": built.name,
@@ -193,6 +197,9 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/World").GetPrim())
     _author_ground(shot, library, stage, root)
     skin, groom = looks.hero(stage, root, shot.scene_dir, library.hero(shot.hero_key))
+    coat = hero.sample_coat(stream(shot.spec.seed, "hero", "coat"), len(shot.frames) + 2)
+    for material in (skin, groom):
+        materials.animate_tint(material, coat, shot.frames[0])
     hero.author(
         stage,
         "/World/hero",
@@ -204,7 +211,7 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
     )
     _author_scatter(shot, library, stage, root)
     camera.author(stage, "/World/camera", shot.track)
-    lighting.author(stage, "/World/lights", shot.light)
+    lighting.author(stage, "/World/lights", shot.light, shot.frames[0])
     settings.author(
         stage,
         "/World/camera",

@@ -11,6 +11,8 @@ from functools import cache
 import MaterialX
 from pxr import Gf, Sdf, Usd, UsdShade
 
+from strata_datagen.usdutil import FloatArray
+
 VERSION = "materials-0.1.0"
 AOVS = ("roughness", "metallic")
 
@@ -171,3 +173,10 @@ def author(stage: Usd.Stage, path: str, look: Look) -> UsdShade.Material:
 
 def bind(prim: Usd.Prim, material: UsdShade.Material) -> None:
     UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
+
+
+def animate_tint(material: UsdShade.Material, tints: FloatArray, first_frame: int) -> None:
+    """Time-sample a look's albedo tint: row i is authored at first_frame - 1 + i."""
+    tint = UsdShade.Shader(material.GetPrim().GetChild("tint")).GetInput("in2")
+    for index, rgb in enumerate(tints):
+        tint.Set(Gf.Vec3f(*(float(v) for v in rgb)), Usd.TimeCode(first_frame - 1 + index))

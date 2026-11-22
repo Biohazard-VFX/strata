@@ -59,6 +59,17 @@ class ScatterScaleTest(unittest.TestCase):
             scatter.place(_flat_ground(), _layer(1.0, 18.0), [], stream(1, "s"))
 
 
+class GrowthTest(unittest.TestCase):
+    def test_density_drifts_by_growing_and_shrinking_instances_without_popping(self) -> None:
+        grow = scatter.growth(stream(2, "g"), 5000, 722)
+        self.assertEqual(grow.shape[1], 5000)
+        self.assertGreaterEqual((grow.shape[0] - 1) * scatter.GROWTH_KEY_FRAMES, 721)
+        self.assertTrue(((grow >= 1e-3) & (grow <= 1.0)).all())
+        per_frame = np.abs(np.diff(grow, axis=0)).max() / scatter.GROWTH_KEY_FRAMES
+        self.assertLess(per_frame, 0.05)
+        self.assertGreater(float(np.ptp(grow.mean(axis=1))), 0.05)
+
+
 class LayerChoiceTest(unittest.TestCase):
     def test_rocks_too_big_too_small_or_too_tall_are_never_chosen(self) -> None:
         sizes = {"cliff": (18.0, 10.6, 4.9), "pebble": (0.1, 0.04, 0.05), "post": (0.4, 1.9, 0.4)}

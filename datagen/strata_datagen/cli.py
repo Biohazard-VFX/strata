@@ -14,7 +14,7 @@ from strata_datagen.presets import PRESETS
 from strata_datagen.qa import checks, contact
 from strata_datagen.render import husk
 from strata_datagen.scene import compose, export
-from strata_datagen.scene.spec import LONG_SHARE, ShotSpec
+from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec
 
 DEFAULT_HUSK = "husk"
 
@@ -49,7 +49,7 @@ def cmd_build(args: argparse.Namespace) -> None:
     render = compose.RenderParams(args.width, args.height, args.samples)
     jobs: list[husk.Job] = []
     for spec in _specs(args):
-        shot = compose.plan(spec, library, args.root, args.long_share)
+        shot = compose.plan(spec, library, args.root, args.frames)
         compose.write(shot, library, args.root, render)
         export.write(shot, library, render)
         jobs.append(husk.job(args.root, shot.directory, shot.frames))
@@ -114,7 +114,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--width", type=int, default=1280)
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--samples", type=int, default=64)
-    p.add_argument("--long-share", type=float, default=LONG_SHARE, help="share of long sequences")
+    p.add_argument(
+        "--frames", type=int, default=DEFAULT_FRAMES, help="frames per shot (presets fix their own)"
+    )
     p.set_defaults(run=cmd_build)
     p = sub.add_parser("render", help="render the job list locally")
     p.add_argument("--root", type=Path, required=True)

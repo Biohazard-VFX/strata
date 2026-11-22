@@ -5,10 +5,11 @@ from dataclasses import dataclass
 import numpy as np
 from pxr import Sdf, Usd, UsdGeom, UsdShade
 
+from strata_datagen import timeline
 from strata_datagen.fields import Ground
 from strata_datagen.usdutil import FloatArray
 
-VERSION = "hero-0.1.0"
+VERSION = "hero-0.2.0"
 SKIN_ID = 2
 GROOM_ID = 3
 
@@ -35,6 +36,15 @@ def sample_motion(
     x, z = speed * t * np.sin(angle), speed * t * np.cos(angle)
     y = ground.height(x, z) + foot_offset_m
     return HeroMotion(np.stack([x, y, z], axis=-1), yaw, speed)
+
+
+def sample_coat(rng: np.random.Generator, samples: int) -> FloatArray:
+    """Per-sample RGB albedo multipliers: brightness and warmth of the coat drift over the shot."""
+    t = timeline.sample_times(samples)
+    duration = float(t[-1]) + 1.0
+    brightness = timeline.curve(rng, duration, 9.0, 0.65, 1.25)(t)
+    warmth = timeline.curve(rng, duration, 11.0, -0.12, 0.12)(t)
+    return brightness[:, None] * np.stack([1.0 + warmth, np.ones_like(warmth), 1.0 - warmth], axis=-1)
 
 
 def _bind(stage: Usd.Stage, path: Sdf.Path, material: UsdShade.Material, instance_id: int) -> None:

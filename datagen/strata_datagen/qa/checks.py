@@ -24,6 +24,7 @@ LIMITS = {
     "camera_error": (0.0, 1e-3),
 }
 COVERED = 0.999
+STEP_LIMITS = {"position_m": 0.25, "rotation_deg": 2.0, "focal_ratio": 0.02, "fstop": 0.5, "focus_m": 0.5}
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
 
 
@@ -98,6 +99,23 @@ def check_frame(
     return FrameResult(frame, metrics, failures)
 
 
+def camera_steps(frames: list[dict[str, object]]) -> dict[str, float]:
+    """Largest change between consecutive frames of each camera quantity; shots must have no jumps."""
+    c2w = np.linalg.inv(np.array([np.asarray(f["world_to_camera"], np.float64) for f in frames]))
+    rotation = np.einsum("nij,nkj->nik", c2w[1:, :3, :3], c2w[:-1, :3, :3])
+    angle = np.degrees(np.arccos(np.clip((np.trace(rotation, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)))
+    lens = np.array(
+        [[cast("float", f[k]) for k in ("focal_length_mm", "fstop", "focus_distance_m")] for f in frames]
+    )
+    return {
+        "position_m": float(np.linalg.norm(np.diff(c2w[:, :3, 3], axis=0), axis=1).max(initial=0.0)),
+        "rotation_deg": float(angle.max(initial=0.0)),
+        "focal_ratio": float(np.abs(np.diff(np.log(lens[:, 0]))).max(initial=0.0)),
+        "fstop": float(np.abs(np.diff(lens[:, 1])).max(initial=0.0)),
+        "focus_m": float(np.abs(np.diff(lens[:, 2])).max(initial=0.0)),
+    }
+
+
 def _camera_consistency(camera: dict[str, object]) -> list[str]:
     frames = cast("list[dict[str, object]]", camera["frames"])
     failures: list[str] = []
@@ -111,6 +129,10 @@ def _camera_consistency(camera: dict[str, object]) -> list[str]:
             failures.append(f"frame {record['frame']}: world_to_camera is not a rigid transform")
         if abs(fx - expected) > 1e-3 * expected:
             failures.append(f"frame {record['frame']}: fx disagrees with focal length")
+    steps = camera_steps(frames)
+    failures += [
+        f"camera {k} step {v:.4g} > {STEP_LIMITS[k]}" for k, v in steps.items() if v > STEP_LIMITS[k]
+    ]
     return failures
 
 
