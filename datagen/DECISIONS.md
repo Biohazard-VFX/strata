@@ -35,7 +35,8 @@
 - Randomness comes from named streams `sha256(seed:labels)`; fixed choices still consume their draws, so a seed gives byte-identical USD.
 - Terrain is a 300 m, 0.5 m-cell heightfield with a flattened centre; beyond the scattered 60 m it flattens and sinks, so bare ground never rises into the HDRI horizon.
 - Renders are Karma XPU GPU-only and abort without a GPU; the driver retries once with the CPU device and records which ran.
-- Job lists (`jobs.json`, `jobs.sh`) hold one husk command per shot with paths relative to the build root.
+- Job lists (`jobs.json`, `jobs.sh`) hold one `strata-datagen render-task` per task, never bare husk, with paths relative to the build root.
+- render-task holds the shot lock across husk, pack, accept and prune; husk inherits the lock descriptor, so the shot stays locked while it runs.
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
 - Every frame gets float32 sky-inclusive K=4 targets (strata_contract.layers, sky masked); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.

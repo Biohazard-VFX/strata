@@ -54,10 +54,9 @@ def _frame_seconds(_shot: Path) -> list[float]:
 
 class HuskTest(unittest.TestCase):
     def test_gpu_failure_retries_with_the_cpu_device_and_says_so(self) -> None:
-        job = husk.Job("s", "shots/s", ["husk", "scene/shot.usda"], ["beauty", "deep"], [])
         calls: list[dict[str, str]] = []
 
-        def launch(_root: Path, _job: husk.Job, _husk: str, env: dict[str, str], _log: Path) -> int:
+        def launch(_shot: Path, _frames: range, _husk: str, env: dict[str, str], _lock: int) -> int:
             calls.append(env)
             return 1 if env else 0
 
@@ -67,7 +66,7 @@ class HuskTest(unittest.TestCase):
             mock.patch.object(husk, "_frame_seconds", _frame_seconds),
             mock.patch.object(husk.time, "sleep"),
         ):
-            record = husk.run(Path("/nonexistent"), job, "husk")
+            record = husk.run(Path("/nonexistent"), range(1, 3), "husk", -1)
         self.assertEqual(calls, [husk.GPU_ONLY, {}])
         self.assertEqual(
             (record["device"], record["exit_code"], record["mean_frame_seconds"]), ("gpu+cpu", 0, 3.0)

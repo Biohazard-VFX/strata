@@ -16,7 +16,7 @@ from strata_datagen import cli
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators import lighting
 from strata_datagen.qa import checks
-from strata_datagen.render import husk, pack
+from strata_datagen.render import pack
 from tests.concurrency import free
 from tests.fixtures import SKY, Sample, frame_record, write_beauty, write_deep, write_shot
 
@@ -24,23 +24,8 @@ CLEAN: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 2), SKY], [Sample(0.2, 0
 SKY_IN_FRONT: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 0), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
 
 
-def run_post(root: Path, job: husk.Job) -> bool:
-    """Run a farm task's post commands the way jobs.sh chains them; False when one fails."""
-    for command in job.post:
-        try:
-            cli.main([str(root / job.workdir) if a == "." else a for a in command[1:]])
-        except SystemExit:
-            return False
-    return True
-
-
 def shot_failures(shot: Path) -> list[str]:
     return cast("list[str]", checks.check_shot(shot)["failures"])
-
-
-def farm_job(root: Path, shot: Path, frames: int) -> husk.Job:
-    (job,) = husk.jobs(shot, root, tuple(range(1, frames + 1)), husk.CHUNK_FRAMES)
-    return job
 
 
 class RawEvidenceTest(unittest.TestCase):
@@ -49,7 +34,7 @@ class RawEvidenceTest(unittest.TestCase):
             root = Path(tmp)
             shot = root / "shots" / "s"
             write_shot(shot, [CLEAN, SKY_IN_FRONT], stride=24)
-            self.assertFalse(run_post(root, farm_job(root, shot, 2)))
+            self.assertFalse(cli.finish_task(shot, range(1, 3)))
             self.assertTrue((shot / "deep" / "0002.exr").exists())
             self.assertFalse(checks.check_shot(shot)["passed"])
             self.assertTrue(any("frame 2: sky_id_in_front" in f for f in shot_failures(shot)))
@@ -62,7 +47,7 @@ class RawEvidenceTest(unittest.TestCase):
             root = Path(tmp)
             shot = root / "shots" / "s"
             write_shot(shot, [CLEAN, CLEAN, CLEAN], stride=2)
-            self.assertTrue(run_post(root, farm_job(root, shot, 3)))
+            self.assertTrue(cli.finish_task(shot, range(1, 4)))
             self.assertEqual(sorted(p.name for p in (shot / "deep").iterdir()), ["0001.exr", "0003.exr"])
             self.assertEqual(shot_failures(shot), [])
             self.assertEqual([r.failures for r in checks.accept(shot, range(1, 4))], [[], [], []])

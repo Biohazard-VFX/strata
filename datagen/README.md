@@ -14,7 +14,9 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
 - `strata_datagen/presets/`: fixed recipes (canaries) that name external-library assets.
 - `strata_datagen/library/`: prepares a build root's `assets/` from external sources: Megascans
   (local sync, or fetched with nxc), HDRIs and an external hero library (`hero.json` + USD poses).
-- `strata_datagen/render/`: render settings in USD and the husk driver (farm-ready job lists).
+- `strata_datagen/render/`: render settings in USD and the husk driver. Farm job lists run
+  `strata-datagen render-task`, which holds the shot lock, renders with a husk that inherits it,
+  then packs, accepts and prunes under the same hold.
 - `strata_datagen/qa/`: per-shot acceptance checks and the contact sheet.
 - `strata_datagen/timeline.py`: smooth seeded curves (`timeline.Curve`, a cubic B-spline) for every
   time-varying parameter. A generator's `sample_*` returns one value per frame sample (frames plus
@@ -24,8 +26,8 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   frame (`strata_contract.layers`, in `../contract/dataset`) and raw-sample sidecars on the deep
   stride. It never deletes: `accept` runs raw QA per frame and records it, then `prune` drops
   off-stride raw deep of accepted, unchanged frames only. Sidecars are write-once; to repack a
-  changed frame, stop every reader and run `remove-samples` first. Every command that changes a shot (build, render, pack,
-  accept, prune, remove-samples, qa) holds an exclusive `flock` on `<shot>/.lock`; a locked shot is
+  changed frame, stop every reader and run `remove-samples` first. Every command that changes a shot (build, render,
+  render-task, pack, accept, prune, remove-samples, qa) holds an exclusive `flock` on `<shot>/.lock`; a locked shot is
   refused, not waited for. The kernel releases the lock when the last process holding it exits.
 - `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).
 - `blender/`: FBX to USD conversion, MPFB human export and creature export, run inside Blender.
@@ -37,7 +39,7 @@ uv sync
 strata-datagen creatures --recipes creatures.json --library HEROES --infinigen-python PY  # creature heroes
 strata-datagen prepare --root BUILD --sources sources.json      # assets/library.json
 strata-datagen build --root BUILD --presets hero_in_terrain --first-seed 1 --count 10  # 720-frame shots
-strata-datagen render --root BUILD --husk /path/to/husk          # or BUILD/jobs.sh: 60-frame tasks: husk, pack, accept, prune
+strata-datagen render --root BUILD --husk /path/to/husk          # or BUILD/jobs.sh: 60-frame render-task jobs
 strata-datagen qa --root BUILD                                   # qa_report.json, contact_sheet.jpg
 python ../contract/dataset/validate.py BUILD/shots/*
 ./check.sh                                                       # ruff, pyright, layer and identifier checks, tests

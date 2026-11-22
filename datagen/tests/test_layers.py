@@ -28,11 +28,13 @@ class ChunkTest(unittest.TestCase):
         root = Path("/build")
         tasks = husk.jobs(root / "shots" / "s", root, tuple(range(1, 721)), 60)
         self.assertEqual(len(tasks), 12)
-        covered = [f for t in tasks for f in range(int(t.command[4]), int(t.command[4]) + int(t.command[6]))]
+        covered = [f for t in tasks for f in range(t.first, t.first + t.count)]
         self.assertEqual(covered, list(range(1, 721)))
-        self.assertEqual([c[1] for c in tasks[-1].post], ["pack", "accept", "prune"])
-        self.assertEqual(tasks[-1].post[0][-4:], ["--first", "661", "--count", "60"])
-        self.assertIn("samples", tasks[-1].outputs)
+        self.assertEqual(
+            tasks[-1].command,
+            ["strata-datagen", "render-task", "--shot", ".", "--first", "661", "--count", "60"],
+        )
+        self.assertEqual({t.command[:2] == ["strata-datagen", "render-task"] for t in tasks}, {True})
 
 
 if __name__ == "__main__":

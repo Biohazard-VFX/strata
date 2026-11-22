@@ -81,15 +81,33 @@ def cmd_build(args: argparse.Namespace) -> None:
     husk.write_job_list(args.root, jobs)
 
 
-def _post(root: Path, job: husk.Job) -> bool:
-    """Run the job's post commands in order; a failing step (raw QA) stops the chain."""
-    shot = str(root / job.workdir)
-    for command in job.post:
-        try:
-            main([shot if a == "." else a for a in command[1:]])
-        except SystemExit:
-            return False
+def finish_task(shot: Path, frames: range) -> bool:
+    """Pack, raw-QA and prune rendered `frames`; False, with raw deep kept, when raw QA fails."""
+    pack.pack(shot, frames)
+    if not _accepted(shot, frames):
+        return False
+    print("pruned raw deep", checks.prune(shot, frames), flush=True)
     return True
+
+
+def render_task(shot: Path, frames: range, husk_path: str) -> dict[str, object]:
+    """Render, pack, accept and prune `frames` under one hold of the shot lock; husk inherits it."""
+    with shotlock.held(shot) as hold:
+        timings = husk.run(shot, frames, husk_path, hold.descriptor)
+        if timings["exit_code"] == 0:
+            timings["post_passed"] = finish_task(shot, frames)
+        manifest_path = shot / "manifest.json"
+        manifest = export.load_json(manifest_path)
+        manifest["timings"] = timings
+        files.write_text(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+    return timings
+
+
+def cmd_render_task(args: argparse.Namespace) -> None:
+    timings = render_task(args.shot, _frames(args), args.husk)
+    print("rendered", timings["device"], timings["mean_frame_seconds"], flush=True)
+    if timings["exit_code"] != 0 or not timings["post_passed"]:
+        raise SystemExit(1)
 
 
 def cmd_render(args: argparse.Namespace) -> None:
@@ -97,16 +115,8 @@ def cmd_render(args: argparse.Namespace) -> None:
     for job in jobs:
         if args.shots and job.shot_id not in args.shots:
             continue
-        directory = args.root / job.workdir
-        with shotlock.held(directory):
-            timings = husk.run(args.root, job, args.husk)
-        if timings["exit_code"] == 0:
-            timings["post_passed"] = _post(args.root, job)
-        with shotlock.held(directory):
-            manifest_path = directory / "manifest.json"
-            manifest = export.load_json(manifest_path)
-            manifest["timings"] = timings
-            files.write_text(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+        frames = range(job.first, job.first + job.count)
+        timings = render_task(args.root / job.workdir, frames, args.husk)
         print("rendered", job.shot_id, timings["device"], timings["mean_frame_seconds"], flush=True)
 
 
@@ -119,12 +129,15 @@ def cmd_pack(args: argparse.Namespace) -> None:
     print("packed", args.first, args.count, flush=True)
 
 
-def cmd_accept(args: argparse.Namespace) -> None:
-    results = checks.accept(args.shot, _frames(args))
-    failed = [r for r in results if r.failures]
+def _accepted(shot: Path, frames: range) -> bool:
+    failed = [r for r in checks.accept(shot, frames) if r.failures]
     for result in failed:
         print("frame", result.frame, "FAIL", result.failures[:3], flush=True)
-    if failed:
+    return not failed
+
+
+def cmd_accept(args: argparse.Namespace) -> None:
+    if not _accepted(args.shot, _frames(args)):
         raise SystemExit(1)
     print("accepted", args.first, args.count, flush=True)
 
@@ -220,11 +233,19 @@ def parser() -> argparse.ArgumentParser:
         help="keep raw deep and sample sidecars every N frames",
     )
     p.set_defaults(run=cmd_build)
-    p = sub.add_parser("render", help="render the job list locally")
+    p = sub.add_parser("render", help="run the job list's render tasks locally")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--shots", nargs="*", default=[])
     p.add_argument("--husk", default=DEFAULT_HUSK)
     p.set_defaults(run=cmd_render)
+    p = sub.add_parser(
+        "render-task", help="one job: render with husk, pack, accept, prune, all under the lock"
+    )
+    p.add_argument("--shot", type=Path, required=True)
+    p.add_argument("--first", type=int, required=True)
+    p.add_argument("--count", type=int, required=True)
+    p.add_argument("--husk", default=DEFAULT_HUSK)
+    p.set_defaults(run=cmd_render_task)
     for name, run, text in (
         ("pack", cmd_pack, "write layer targets for rendered frames and sidecars on the deep stride"),
         ("accept", cmd_accept, "raw QA of packed frames; records each frame's acceptance"),
