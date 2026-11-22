@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(cli, directory, expected):
-    result = subprocess.run([str(cli),'depth','--model',str(directory/'model.onnx'),
+    result = subprocess.run([str(cli),'depth','--model',str(directory/'model'/'model.onnx'),
                              '--in',str(directory/'input.png'),
                              '--out-depth',str(directory/'depth.exr'),
                              '--out-deep',str(directory/'deep.exr'),
@@ -33,12 +33,12 @@ def main():
     from PIL import Image
 
     cli,directory = Path(sys.argv[1]),Path(sys.argv[2])
-    directory.mkdir(parents=True,exist_ok=True)
+    (directory/'model').mkdir(parents=True,exist_ok=True)
     Image.fromarray(np.zeros((2,2,3),dtype=np.uint8)).save(directory/'input.png')
-    manifest = directory/'model.json'
+    manifest = directory/'model'/'model.json'
     manifest.unlink(missing_ok=True)
     run(cli,directory,'model contract missing')
-    model = directory/'model.onnx'
+    model = directory/'model'/'model.onnx'
     model.unlink(missing_ok=True)
     write_manifest(model)
     validate_manifest(manifest)
@@ -136,7 +136,7 @@ def main():
             initializer=[angles,zero,one])
         fov = onnx.helper.make_model(fov_graph,opset_imports=[onnx.helper.make_opsetid('',23)])
         fov.ir_version = 10
-        onnx.save(fov,str(directory/'model.fov.onnx'))
+        onnx.save(fov,str(directory/'model'/'model.fov.onnx'))
     for values in ([50,float('nan')],[50,float('inf')],[50,float('-inf')],[float('nan'),30],
                    [50,0],[50,-10],[50,180],[50,200],[0,30],[180,30]):
         save_fov(values)
@@ -150,12 +150,12 @@ def main():
     assert estimated.returncode == 0, estimated.stderr
     report = json.loads(estimated.stdout)
     assert report['focal_source'] == 'estimated' and abs(report['focal_px']-1/np.tan(np.radians(15))) < 1e-4, report
-    bad = directory/'bad.onnx'
+    bad = directory/'model'/'bad.onnx'
     onnx.save(onnx.helper.make_model(onnx.helper.make_graph([onnx.helper.make_node('Identity',['image'],[name])],'bad',[image],
         [onnx.helper.make_tensor_value_info(name,onnx.TensorProto.FLOAT,[1,3,'h','w'])]),opset_imports=[onnx.helper.make_opsetid('',23)],ir_version=10),str(bad))
     write_manifest(bad)
     if len(sys.argv) > 3:
-        subprocess.run([sys.argv[3],str(model),str(bad),str(directory/'missing.onnx')],check=True)
+        subprocess.run([sys.argv[3],str(model),str(bad),str(directory/'model'/'missing.onnx')],check=True)
     if len(sys.argv) > 4:
         bits = lambda value: struct.unpack('<I',struct.pack('<f',value))[0]
         vectors = ''.join(f'{bits(value):08x} {bits(srgb_encode(value)):08x}\n' for value in srgb_samples())

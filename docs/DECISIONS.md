@@ -25,4 +25,4 @@
 - Explicit providers fail when unavailable; `auto` falls back to CPU and reports why through `strata_fallback_reason`; the library never prints.
 - CUDA and the PyTorch oracles disable TF32 so float32 operations keep IEEE precision; allocator, arena and threads stay at ONNX Runtime defaults.
 - TensorRT, CoreML and DirectML are out of scope until each lands with a test and a measurement.
-- `strata_model_files` derives the files a model load reads from the same path helpers and the ONNX external-data locations, so hosts can refuse outputs that overwrite them.
+- The CLI refuses outputs inside the model's directory instead of parsing ONNX for external data, which ONNX Runtime confines to that directory.

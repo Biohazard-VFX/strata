@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #include "strata.h"
 #include <errno.h>
 #include <math.h>
@@ -72,17 +72,48 @@ static int clashes(const char *output, const char *const *paths, size_t count)
 	return 0;
 }
 
+static char *resolved_parent(const char *path)
+{
+	char *copy = strdup(path), *slash, *parent;
+
+	if (!copy)
+		return NULL;
+	slash = strrchr(copy, '/');
+	if (slash)
+		slash[slash == copy] = '\0';
+	parent = realpath(slash ? copy : ".", NULL);
+	free(copy);
+	return parent;
+}
+
+static int inside(const char *directory, const char *path)
+{
+	size_t length = strlen(directory);
+
+	return !strncmp(directory, path, length) &&
+	       (path[length] == '/' || !path[length] || length == 1);
+}
+
 static int valid_paths(const struct cli_options *options,
-		       const struct strata_model_files *model)
+		       const char *const *model, const char *const *directories)
 {
 	const char *const paths[] = { options->depth, options->deep,
 				      options->position, options->input,
 				      options->camera };
-	const char *const *dependencies = (const char *const *)model->paths;
 
 	for (size_t i = 0; i < 3; ++i) {
-		if (paths[i] && (clashes(paths[i], paths + i + 1, 4 - i) ||
-				 clashes(paths[i], dependencies, model->count)))
+		char *parent;
+		int refused;
+
+		if (!paths[i])
+			continue;
+		parent = resolved_parent(paths[i]);
+		refused = !parent || inside(directories[0], parent) ||
+			  (directories[1] && inside(directories[1], parent)) ||
+			  clashes(paths[i], paths + i + 1, 4 - i) ||
+			  clashes(paths[i], model, 3);
+		free(parent);
+		if (refused)
 			return 0;
 	}
 	return 1;
@@ -90,18 +121,29 @@ static int valid_paths(const struct cli_options *options,
 
 static int check_paths(const struct cli_options *options)
 {
-	struct strata_model_files model = { 0 };
-	struct strata_error err = { { 0 } };
+	const char *path = options->session.model_path;
+	char *manifest = strata_manifest_path(path);
+	char *fov = strata_fov_path(path);
+	char *real = realpath(path, NULL);
+	char *directory = resolved_parent(path);
+	char *real_directory = real ? resolved_parent(real) : NULL;
+	const char *const model[] = { path, manifest, fov };
+	const char *const directories[] = { directory, real_directory };
 	int ret = 0;
 
-	if (strata_model_files(options->session.model_path, &model, &err)) {
-		fprintf(stderr, "strata: %s\n", err.message);
+	if (!manifest || !fov || !directory) {
+		fprintf(stderr, "strata: cannot resolve model path: %s\n",
+			path);
 		ret = 1;
-	} else if (!valid_paths(options, &model)) {
+	} else if (!valid_paths(options, model, directories)) {
 		usage(stderr);
 		ret = 2;
 	}
-	strata_model_files_free(&model);
+	free(manifest);
+	free(fov);
+	free(real);
+	free(directory);
+	free(real_directory);
 	return ret;
 }
 
