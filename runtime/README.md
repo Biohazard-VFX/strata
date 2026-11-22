@@ -44,7 +44,7 @@ gpu_run build/normal/strata depth \
   --out-depth depth.exr --out-deep deep.exr --out-position P.exr
 ```
 
-Both depth and deep output paths are required. Without `--f-px` or camera intrinsics, focal is estimated by the sibling `.fov.onnx`. `--exposure stops` affects scene-linear input's inference conversion, not the preserved deep RGB. `--device N` selects the CUDA device. The CLI prints one JSON object: `provider`, `fallback_reason`, the resolved `focal_px`/`focal_source`, `nonfinite_input_pixels`, `session_ms`, `frame_ms`, `write_ms` and per-stage `stages` (prepare, focal, upload, run, download, postprocess). File reads and writes are outside `frame_ms`.
+Both depth and deep output paths are required. An output that resolves to an input or to another output (through `.`, `..`, symlinks or hard links) is a usage error. Without `--f-px` or camera intrinsics, focal is estimated by the sibling `.fov.onnx`. `--exposure stops` affects scene-linear input's inference conversion, not the preserved deep RGB. `--device N` selects the CUDA device. The CLI prints one JSON object: `provider`, `fallback_reason`, the resolved `focal_px`/`focal_source`, `nonfinite_input_pixels`, `session_ms`, `frame_ms`, `write_ms` and per-stage `stages` (prepare, focal, upload, run, download, postprocess). File reads and writes are outside `frame_ms`.
 
 Inputs are already-oriented 8-bit PNG/JPEG or scanline RGB EXR; tiled, deep and subsampled EXRs are rejected. EXR is scene-linear: expose, replace non-finite samples (+inf to 1, NaN and -inf to 0), clamp to [0,1], encode sRGB, then normalize. Inference runs at native resolution with bottom/right replicate padding to 32 and crops back. The contract allows padded height <=4352 and width <=7680, subject to device memory.
 

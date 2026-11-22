@@ -194,6 +194,9 @@ int strata_deep_to_layers(const struct strata_deep_result *deep, int count,
 			  struct strata_layers *layers,
 			  struct strata_error *err);
 void strata_layers_free(struct strata_layers *layers);
+/* Sets *same if a and b resolve to one file, existing or not; reentrant. */
+int strata_same_file(const char *a, const char *b, int *same,
+		     struct strata_error *err);
 /* Writers replace path atomically and leave it untouched on failure. */
 int strata_write_depth(const char *path, const struct strata_result *result,
 		       struct strata_error *err);

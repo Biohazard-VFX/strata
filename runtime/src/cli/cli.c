@@ -61,20 +61,20 @@ static int numeric_option(struct cli_options *options, const char *key,
 
 static int valid_paths(const struct cli_options *options)
 {
-	const char *inputs[] = { options->input, options->session.model_path,
-				 options->camera };
-	const char *outputs[] = { options->depth, options->deep,
-				  options->position };
+	const char *paths[] = { options->depth,
+				options->deep,
+				options->position,
+				options->input,
+				options->session.model_path,
+				options->camera };
+	struct strata_error err;
+	int same = 0;
 
 	for (size_t i = 0; i < 3; ++i) {
-		if (!outputs[i])
-			continue;
-		for (size_t j = 0; j < 3; ++j) {
-			if (inputs[j] && !strcmp(outputs[i], inputs[j]))
-				return 0;
-		}
-		for (size_t j = 0; j < i; ++j) {
-			if (outputs[j] && !strcmp(outputs[i], outputs[j]))
+		for (size_t j = i + 1; paths[i] && j < 6; ++j) {
+			if (paths[j] && (strata_same_file(paths[i], paths[j],
+							  &same, &err) ||
+					 same))
 				return 0;
 		}
 	}
