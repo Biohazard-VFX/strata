@@ -78,3 +78,15 @@ fixed topology, so they move with the morph.
 
 A groom generator binds strands to skin faces in a region using `rest`, then moves each root with its
 face's animated points at every time sample of the clip.
+
+## Simulated garments (off)
+
+GarmentCode patterns sewn and draped with Houdini Vellum (`garments/`, `houdini/vellum_drape.py`,
+`library/garments.py`) are parked on this branch and not merged into the generators: the shipped
+humans wear skinned MPFB clothing only. State when parked: the pipeline runs end to end
+(measurements, patterns, panels, Vellum, USD) but the drape collapses into crumpled bands at the
+waist and chest instead of hanging as a dress or shirt, and the male `shirt_pants` design fails
+inside GarmentCode (`cut_into_edge_single` offset outside the edge) for the measured body. Humans
+24-27 built with it are excluded from the hero library (`hero.json.failed_drape`). Suspects to try
+first: zero-rest-length seam constraints, panel placement against the A-pose body, and body
+measurements outside GarmentCode's own bounds.
