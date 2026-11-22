@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 from strata_datagen import files
-from strata_datagen.library import catalogue, hdri, heroes, megascans, models, textures
+from strata_datagen.library import catalogue, clip_heroes, hdri, heroes, megascans, models, textures
 
 BLENDER_SCRIPT = Path(__file__).resolve().parents[2] / "blender" / "fbx_to_usd.py"
 EXCLUDED_PLANTS = ("houseplant", "succulent", "aloe", "palm", "paddle", "eelgrass", "basil", "ivy", "climber")
@@ -183,8 +183,11 @@ def prepare_hdris(sources: Sources, root: Path) -> list[catalogue.Hdri]:
 def prepare_heroes(sources: Sources, root: Path) -> list[catalogue.Hero]:
     out: list[catalogue.Hero] = []
     for key in sources.heroes:
-        manifest = heroes.load(sources.hero_library / key)
         folder = root / "assets" / "heroes" / key
+        if clip_heroes.is_animated(sources.hero_library / key):
+            out.append(clip_heroes.prepare(sources.hero_library / key, folder, root))
+            continue
+        manifest = heroes.load(sources.hero_library / key)
         poses = tuple(
             catalogue.HeroPose(pose, _rel(p.file, root), p.bounds_min, p.bounds_max, p.hairs)
             for pose in sorted(manifest.poses)
