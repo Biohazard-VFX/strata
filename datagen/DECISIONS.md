@@ -1,4 +1,4 @@
-# Datagen decisions
+# Decisions
 
 - USD is authored with usd-core in a uv project, not Houdini's pxr, so datagen is typed, testable without a license and runs unchanged on render nodes.
 - Materials are MaterialX standard_surface UsdShade networks on `outputs:mtlx:surface`; node ids and inputs are validated against the MaterialX library.

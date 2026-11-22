@@ -1,14 +1,16 @@
-"""Fail unless DECISIONS.md is one decision per line, each a bullet of at most 200 characters."""
+"""Fail unless DECISIONS.md is titled `# Decisions` and is one bullet per line of at most 200 characters."""
 
 import sys
 from pathlib import Path
 
 LIMIT = 200
+TITLE = "# Decisions"
 
 
 def violations(path: Path) -> list[str]:
-    found: list[str] = []
-    for number, line in enumerate(path.read_text().splitlines(), 1):
+    lines = path.read_text().splitlines()
+    found = [] if lines[:1] == [TITLE] else [f"{path}:1: must start with {TITLE!r}"]
+    for number, line in enumerate(lines, 1):
         if not line or line.startswith("# "):
             continue
         if not line.startswith("- "):

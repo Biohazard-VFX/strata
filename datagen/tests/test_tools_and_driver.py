@@ -33,8 +33,10 @@ class ToolTest(unittest.TestCase):
     def test_decisions_are_short_single_line_bullets(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "DECISIONS.md"
-            path.write_text("# D\n\n- fine\n- " + "x" * 199 + "\nwrapped text\n")
+            path.write_text("# Decisions\n\n- fine\n- " + "x" * 199 + "\nwrapped text\n")
             self.assertEqual(len(check_decisions.violations(path)), 2)
+            path.write_text("# Datagen decisions\n\n- fine\n")
+            self.assertEqual(len(check_decisions.violations(path)), 1)
 
 
 class _Monitor:
