@@ -155,7 +155,10 @@ def recompose(
         if element is not None:
             layers.append(element)
     if rng.random() < config.occluders:
-        layers.append(Layer(_occluders(shot, rng, config, record), None))
+        if shot.deep.z.size:
+            layers.append(Layer(_occluders(shot, rng, config, record), None))
+        else:
+            record["occluders_skipped"] = "no_geometry"
     if len(layers) == 1:
         rgb = np.einsum("ij,kjhw->kihw", scene, targets.rgb).astype(np.float32)
         image = np.tensordot(scene, shot.denoised, axes=1).astype(np.float32)

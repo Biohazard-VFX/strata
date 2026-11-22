@@ -48,6 +48,26 @@ def layered_shot(seed: int, size: tuple[int, int] = (24, 32)) -> Shot:
     return Shot(deep, image.astype(np.float32), image.astype(np.float32))
 
 
+def test_empty_native_sky_keeps_image_without_inventing_occluder_depth() -> None:
+    empty = np.empty(0, dtype=np.float32)
+    deep = from_unsorted(
+        (8, 8),
+        empty.astype(np.int64),
+        empty,
+        empty,
+        np.empty((0, 3), dtype=np.float32),
+        empty.astype(np.int64),
+    )
+    image = np.full((3, 8, 8), 0.25, dtype=np.float32)
+    shot = Shot(deep, image, image)
+    sample = augment_sample(
+        shot, ROLES, deep.targets(), None, np.random.default_rng(71), replace(OFF, occluders=1.0)
+    )
+    assert_array_equal(sample.image, image)
+    assert not sample.layers.alpha.any()
+    assert sample.record["occluders_skipped"] == "no_geometry"
+
+
 def test_config_rejects_unknown_and_invalid_settings() -> None:
     assert AugmentConfig.from_dict({"grain_isos": [800, 1600]}).grain_isos == (800, 1600)
     with pytest.raises(ValueError, match="Unknown augmentation"):
