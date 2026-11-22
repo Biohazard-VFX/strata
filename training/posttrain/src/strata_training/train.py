@@ -29,7 +29,7 @@ from strata_training.validation import evaluate_validation, validation_frames
 def train(config_path: Path) -> dict[str, Any]:
     config = training_defaults(json.loads(config_path.read_text()))
     config["objective"] = "coverage-bce-logits-v1"
-    config["sampling"] = "step-seed-v1"
+    config["sampling"] = "step-seed-gpu-v1" if config["loader_math"] == "torch" else "step-seed-v1"
     validate_config(config)
     device = config.get("device", "cuda")
     api.manual_seed(config["seed"])

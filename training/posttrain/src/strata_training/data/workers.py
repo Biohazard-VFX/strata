@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from strata_training.data.dataset import Frame, batch
 from strata_training.data.online import OnlineLoader, PreparedBatch
+from strata_training.data.torch_online import finalize, prepare_raw
 
 
 @dataclass
@@ -29,6 +30,7 @@ class LoadedBatch:
             prepared = replace(
                 prepared,
                 images=function(prepared.images),
+                jobs=[job.map(function) for job in prepared.jobs],
                 target=target,
                 scales=function(prepared.scales),
                 normalized=function(prepared.normalized)
@@ -49,7 +51,11 @@ class LoadedBatch:
         return self.map(lambda value: value.pin_memory())
 
     def to(self, device: str) -> "LoadedBatch":
-        return self.map(lambda value: value.to(device, non_blocking=True))
+        result = self.map(lambda value: value.to(device, non_blocking=True))
+        if result.prepared is not None and result.prepared.device_math:
+            result.prepared = finalize(result.prepared, result.prepared.crop, result.prepared.halo)
+            result.target = result.prepared.target
+        return result
 
 
 class NativeBatches(Dataset[LoadedBatch]):
@@ -86,7 +92,10 @@ class NativeBatches(Dataset[LoadedBatch]):
         if self.online is None:
             inputs, target, pyramid = batch(self.frames, selections, crop, halo, "cpu", decoder)
             return LoadedBatch(selections, inputs, target, pyramid, None)
-        prepared = self.online.prepare(selections, rng, crop, halo, "cpu")
+        if config.get("loader_math", "numpy") == "torch":
+            prepared = prepare_raw(self.online, selections, rng, crop, halo)
+        else:
+            prepared = self.online.prepare(selections, rng, crop, halo, "cpu")
         if prepared.clean:
             prepared.cached_inputs, _, prepared.cached_pyramid = batch(
                 self.frames, [selections[i] for i in prepared.clean], crop, halo, "cpu", decoder

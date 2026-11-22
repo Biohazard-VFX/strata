@@ -58,8 +58,10 @@ def test_frozen_encoder_has_independent_batches_and_trainable_consumers() -> Non
     assert all(parameter.grad is None for parameter in base.parameters())
 
 
+@pytest.mark.parametrize("loader_math", ["numpy", "torch"])
 def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features(
     tmp_path: Path,
+    loader_math: str,
 ) -> None:
     height, width = 32, 64
     image = np.full((3, height, width), 0.5, dtype=np.float32)
@@ -139,6 +141,7 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
 
     config: dict[str, Any] = {
         "seed": 311,
+        "loader_math": loader_math,
         "crop": 32,
         "halo": 0,
         "batch_size": 2,
@@ -161,7 +164,9 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
             "camera": 0,
         },
     )
-    sequential: list[LoadedBatch] = list(batches(NativeBatches([frame], online, [[0]], config)))
+    sequential: list[LoadedBatch] = [
+        row.to("cpu") for row in batches(NativeBatches([frame], online, [[0]], config))
+    ]
     parallel: list[LoadedBatch] = list(
         batches(NativeBatches([frame], online, [[0]], {**config, "loader_workers": 2}))
     )

@@ -11,6 +11,7 @@ def training_defaults(config: dict[str, Any]) -> dict[str, Any]:
         "compile_encoder": False,
         "loader_workers": 0,
         "loader_prefetch": 2,
+        "loader_math": "numpy",
         "early_stopping": True,
         "validation_every": 250,
         "validation_patience": 4,
@@ -20,6 +21,8 @@ def training_defaults(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    if config.get("loader_math", "numpy") not in {"numpy", "torch"}:
+        raise ValueError("loader_math must be numpy or torch")
     for key, minimum, default in (("loader_workers", 0, 0), ("loader_prefetch", 1, 2)):
         value = config.get(key, default)
         if type(value) is not int or value < minimum:

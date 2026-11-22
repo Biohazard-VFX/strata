@@ -118,17 +118,16 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
     return entries
 
 
+DISPLAY_MATRIX = np.array(
+    [[1.70505, -0.62179, -0.08326], [-0.13026, 1.1408, -0.01055], [-0.024, -0.12897, 1.15297]]
+)
+DISPLAY_EXPOSURE = 0.71619818
+
+
 def display_rgb(image: Array, color_space: str) -> Array:
     if color_space == "ACEScg":
-        matrix = np.array(
-            [
-                [1.70505, -0.62179, -0.08326],
-                [-0.13026, 1.1408, -0.01055],
-                [-0.024, -0.12897, 1.15297],
-            ]
-        )
-        image = np.einsum("ij,jhw->ihw", matrix, image)
-    image = np.clip(image * 0.71619818, 0, 1)
+        image = np.einsum("ij,jhw->ihw", DISPLAY_MATRIX, image)
+    image = np.clip(image * DISPLAY_EXPOSURE, 0, 1)
     display = np.where(image <= 0.0031308, image * 12.92, 1.055 * image ** (1 / 2.4) - 0.055)
     return (display * 255 + 0.5).astype(np.uint8)
 

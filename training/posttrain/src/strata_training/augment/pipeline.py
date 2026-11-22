@@ -173,7 +173,7 @@ def recompose(
     return composition.image, composition.samples.targets(targets.alpha.shape[0])
 
 
-def _grade(rng: np.random.Generator, config: AugmentConfig) -> Array:
+def grade_matrix(rng: np.random.Generator, config: AugmentConfig) -> Array:
     gains = 2.0 ** rng.normal(0, config.grade_stops, 3)
     saturation = rng.uniform(*config.grade_saturation)
     luminance = np.outer(np.ones(3), AP1_LUMINANCE)
@@ -205,7 +205,7 @@ def _graded_background(
             mask = np.isin(deep.ids, list(shot_roles.hero))
         mask &= remaining
         remaining &= ~mask
-        layers.append(Layer(deep.select(mask), shot, _grade(rng, config)))
+        layers.append(Layer(deep.select(mask), shot, grade_matrix(rng, config)))
     layers.append(Layer(deep.select(remaining), shot))
     record["graded_instances"] = [int(i) for i in chosen]
     return layers
@@ -246,7 +246,7 @@ def _element(
 def _maybe_grade(rng: np.random.Generator, config: AugmentConfig, record: dict[str, Any]) -> Array:
     if rng.random() < config.instance_grade:
         record["element_graded"] = True
-        return _grade(rng, config)
+        return grade_matrix(rng, config)
     return np.eye(3)
 
 
@@ -307,16 +307,30 @@ def photometric(
     image: Array, rng: np.random.Generator, config: AugmentConfig, record: dict[str, Any]
 ) -> Array:
     result = image
+    grain_params = draw_grain(rng, config)
+    if grain_params is not None:
+        result = apply_grain(result, grain_params)
+        record["grain"] = grain_params.__dict__
+    camera_params = draw_camera(rng, config)
+    if camera_params is not None:
+        result = degrade(result, camera_params)
+        record["camera"] = camera_params.__dict__
+    return result.astype(np.float32)
+
+
+def draw_grain(rng: np.random.Generator, config: AugmentConfig) -> GrainParams | None:
     if rng.random() < config.grain:
-        params = GrainParams(
+        return GrainParams(
             str(rng.choice(config.grain_profiles)),
             int(rng.choice(config.grain_isos)),
             float(rng.uniform(*config.grain_exposure)),
             int(rng.integers(0, 2048)),
             float(rng.uniform(*config.grain_amount)),
         )
-        result = apply_grain(result, params)
-        record["grain"] = params.__dict__
+    return None
+
+
+def draw_camera(rng: np.random.Generator, config: AugmentConfig) -> CameraParams | None:
     if rng.random() < config.camera:
         weights = np.array(config.codec_weights) / sum(config.codec_weights)
         codec = str(rng.choice(CODECS, p=weights))
@@ -326,7 +340,7 @@ def photometric(
             quality = int(rng.integers(config.crf[0], config.crf[1] + 1))
         bits = 10 if codec in ("none", "h265") and rng.random() < config.ten_bit else 8
         sharpen = rng.random() < config.sharpen
-        params = CameraParams(
+        return CameraParams(
             float(rng.uniform(*config.contrast)),
             float(rng.uniform(*config.saturation)),
             "logc3" if rng.random() < config.logc3 else "rec709",
@@ -337,6 +351,4 @@ def photometric(
             quality,
             bits,
         )
-        result = degrade(result, params)
-        record["camera"] = params.__dict__
-    return result.astype(np.float32)
+    return None

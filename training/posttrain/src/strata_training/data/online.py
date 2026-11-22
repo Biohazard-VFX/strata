@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
@@ -17,6 +17,7 @@ from strata_training.data.dataset import Frame, batch
 from strata_training.data.exr import read_rgb
 from strata_training.data.policy import require_supervision
 from strata_training.data.targets import composite
+from strata_training.data.torch_online import TorchJob
 from strata_training.io import save_array
 from strata_training.model.dp2 import DeepDepthPro
 from strata_training.model.live import FrozenEncoder
@@ -60,6 +61,10 @@ class PreparedBatch:
     normalized: torch.Tensor | None
     cached_inputs: dict[str, torch.Tensor] | None = None
     cached_pyramid: list[torch.Tensor] | None = None
+    jobs: list[TorchJob] = field(default_factory=list[TorchJob])
+    device_math: bool = False
+    crop: int = 0
+    halo: int = 0
 
 
 def _tensor(values: list[Array], device: str) -> torch.Tensor:
