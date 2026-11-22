@@ -4,6 +4,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import numpy as np
 from pxr import Sdf, Usd, UsdGeom
@@ -165,6 +166,22 @@ def drifting(seed: int, **changes: object) -> hairstyle.Style:
     rng = stream(seed, "drift")
     curves = tuple(timeline.curve(rng, 30.0, 10.0, -1.6 * m, 1.6 * m) for m in hairstyle.DRIFT_MAX)
     return replace(style(seed, **changes), drift=hairstyle.Drift(curves, 0.0, 0.0))
+
+
+class CostTest(unittest.TestCase):
+    def test_point_cap_trades_strands_for_width_and_keeps_summed_width(self) -> None:
+        drawn = replace(style(17, updo="down", cut="long", texture="straight"), drift=hairstyle.STILL)
+        full = next(s for s in hairstyle.build(head(), drawn, stream(0, "c")).sets if s.name == "scalp")
+        with mock.patch.object(hairstyle, "SHOT_POINTS", 3 * full.curves[0, ..., 0].size // 2):
+            capped = next(
+                s
+                for s in hairstyle.build(head(), drawn, stream(0, "c"), (0.0, 6.0, 12.0)).sets
+                if s.name == "scalp"
+            )
+        self.assertLess(capped.curves.shape[1], 0.55 * full.curves.shape[1])
+        summed_full = float(full.widths[0, :, 0].sum())
+        summed_capped = float(capped.widths[0, :, 0].sum())
+        self.assertAlmostEqual(summed_capped / summed_full, 1.0, delta=0.1)
 
 
 class MorphTest(unittest.TestCase):

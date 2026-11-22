@@ -8,7 +8,8 @@ lay every strand along the scalp to a tie and on into a tail, plait or bun.
 Within a shot the cut and updo stay fixed while length, curl, frizz, clumping, density and melanin drift
 as smooth seeded functions of time. Strand count and samples per strand never change: strands are
 shaped once at their longest, then trimmed and textured per key time, and density thins by fading
-widths to zero, so time-sampled points interpolate and motion blur and deep stay valid.
+widths to zero, so time-sampled points interpolate and motion blur and deep stay valid. The scalp's
+points over all keys are capped; capped styles grow fewer, wider strands with the same summed width.
 """
 
 from dataclasses import asdict, dataclass, replace
@@ -49,10 +50,12 @@ CURL = {
 }
 DRIFTED = ("length", "curl", "frizz", "clump", "density", "melanin", "facial_length")
 DRIFT_MAX = (0.35, 0.5, 0.8, 0.4, 0.35, 0.15, 0.4)
-KEY_SECONDS = 3.0
+KEY_SECONDS = 6.0
 FADE = 0.05
 SKIN_OFFSET_M = 0.002
 MAX_POINTS = 6_000_000
+SHOT_POINTS = 9_000_000
+MAX_WIDTH_SCALE = 4.0
 
 
 @dataclass(frozen=True)
@@ -508,9 +511,15 @@ def _widths(curves: FloatArray, root_m: float, rng: np.random.Generator, taper: 
     return root_m * scale * (0.15 + 0.85 * profile)
 
 
-def _strand_count(style: Style, head: Head, samples: int) -> int:
-    wanted = int(style.density_per_cm2 * region_area_cm2(head, head.regions["scalp"]))
-    return max(64, min(wanted, MAX_POINTS // samples))
+def _strand_count(style: Style, head: Head, samples: int, keys: int) -> tuple[int, float]:
+    """Strands to grow and the width factor that keeps their summed width when the point cap binds.
+
+    Scalp points are capped per key and per shot (SHOT_POINTS over all keys), so long morphing
+    shots trade strand count, made up in width, for keys.
+    """
+    wanted = max(64, int(style.density_per_cm2 * region_area_cm2(head, head.regions["scalp"])))
+    count = min(wanted, min(MAX_POINTS, SHOT_POINTS // keys) // samples)
+    return count, min(wanted / count, MAX_WIDTH_SCALE)
 
 
 @dataclass(frozen=True)
@@ -524,6 +533,7 @@ class _Base:
     split: int
     taper: float
     seed: int
+    width_scale: float
 
 
 def _base(
@@ -534,10 +544,12 @@ def _base(
     rng: np.random.Generator,
     *,
     ragged: bool,
+    width_scale: float,
 ) -> _Base:
     """Ragged ends vary strand lengths by up to 10%; tied strands keep equal lengths."""
     keep = rng.uniform(0.9, 1.0, len(curves)) if ragged else np.ones(len(curves))
-    return _Base(curves, roots, keep, rng.random(len(curves)), split, taper, int(rng.integers(2**31)))
+    rank = rng.random(len(curves))
+    return _Base(curves, roots, keep, rank, split, taper, int(rng.integers(2**31)), width_scale)
 
 
 def _visible(rank: FloatArray, share: float) -> FloatArray:
@@ -564,14 +576,18 @@ def _finish(
     if down:
         curves = skin.push(curves, SKIN_OFFSET_M * 0.5)
     curves[:, 0] = base.roots
-    widths = _widths(curves, style.width_m, np.random.default_rng(base.seed + 1), taper=base.taper)
+    widths = _widths(
+        curves, style.width_m * base.width_scale, np.random.default_rng(base.seed + 1), taper=base.taper
+    )
     return curves, widths * _visible(base.rank, style.density_per_cm2 / envelope.density_per_cm2)[:, None]
 
 
-def _down(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator) -> _Base:
+def _down(
+    head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator, *, keys: int
+) -> _Base:
     weight = head.regions["scalp"]
     samples = _samples(style, style.length_m, 6 if style.cut == "buzz" else 32)
-    count = _strand_count(style, head, samples)
+    count, width_scale = _strand_count(style, head, samples, keys)
     guide_roots, guide_normals = _sample_region(head, skin, weight, min(600, max(64, count // 60)), rng)
     lengths = _lengths(style, frame, guide_roots, rng)
     height = np.clip((_local(frame, guide_roots)[:, 1] + 0.3), 0.0, 1.3)
@@ -599,7 +615,7 @@ def _down(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.G
         else np.zeros(len(guide_roots), int)
     )
     curves = _interpolate(roots, guide_roots, guides, side, guide_side)
-    return _base(curves, roots, 0, 0.25, rng, ragged=True)
+    return _base(curves, roots, 0, 0.25, rng, ragged=True, width_scale=width_scale)
 
 
 def _ties(style: Style, frame: _Frame) -> FloatArray:
@@ -688,10 +704,12 @@ def _tail(
     return tail, tail[:, 0]
 
 
-def _updo(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator) -> _Base:
+def _updo(
+    head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator, *, keys: int
+) -> _Base:
     weight = head.regions["scalp"]
     scalp_samples, tail_samples = 16, _samples(style, style.length_m, 32)
-    count = _strand_count(style, head, scalp_samples + tail_samples)
+    count, width_scale = _strand_count(style, head, scalp_samples + tail_samples, keys)
     roots, _ = _sample_region(head, skin, weight, count, rng)
     ties = _ties(style, frame)
     which = np.argmin(np.linalg.norm(roots[:, None] - ties[None], axis=-1), axis=1)
@@ -703,7 +721,7 @@ def _updo(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.G
         tail, start = _tail(axis, len(mine), style, rng)
         path = _scalp_paths(skin, frame, roots[mine], start, scalp_samples)
         out[mine] = np.concatenate([path, tail[:, 1:]], axis=1)
-    return _base(out, roots, scalp_samples - 1, 0.15, rng, ragged=False)
+    return _base(out, roots, scalp_samples - 1, 0.15, rng, ragged=False, width_scale=width_scale)
 
 
 def _facial(
@@ -803,7 +821,7 @@ def build(
     keys = [at(style, t) for t in seconds]
     envelope = _envelope(style, keys)
     down = style.updo == "down"
-    base = (_down if down else _updo)(head, skin, frame, envelope, rng)
+    base = (_down if down else _updo)(head, skin, frame, envelope, rng, keys=len(seconds))
     shaped = [_finish(skin, base, key, envelope, down=down) for key in keys]
     sets = [StrandSet("scalp", np.stack([c for c, _ in shaped]), np.stack([w for _, w in shaped]))]
     if style.facial != "none":

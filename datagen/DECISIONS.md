@@ -51,7 +51,8 @@
 - Every hero marks skin regions only as float vertex primvars `region_<name>` (0..1, soft at borders), never GeomSubsets or int labels; a scalp region turns on hair.
 - Hairstyles are grown per shot into `scene/hair.usdc` so each seed gets its own style; skins and fur grooms stay baked per pose at prepare time.
 - Hair on animated heroes is grown on the rest skin and carried by a per-sample similarity fit to the upper scalp plus per-key root offsets, not per-sample points.
-- Hairstyles morph over a shot on timeline curves with one topology: length trims, density fades widths, cut and updo stay fixed; points keyed every 3 s, USD interpolates.
+- Hairstyles morph over a shot on timeline curves with one topology: length trims, density fades widths, cut and updo stay fixed; points keyed every 6 s, USD interpolates.
+- A shot's scalp hair is capped at 9M points over all keys; capped styles grow fewer strands widened to keep their summed width, so 30 s shots stay near 150 MB.
 - Human heroes are MPFB bodies (cmu_mb rig, CC0 skins, eyes and clothes) animated with original CMU ASF/AMC clips, built offline into the external hero library.
 - Animated heroes are point caches with samples at each frame and ±0.25, not UsdSkel, so skinned bodies, clothes and grooms share one representation.
 - Animated hero prims set `primvars:karma:object:geosamples` to 3; Karma renders no deformation blur without it.
