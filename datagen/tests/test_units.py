@@ -15,6 +15,7 @@ from strata_datagen.qa import checks
 from strata_datagen.qa.deep import blended_ids, flatten, instance_ids
 from strata_datagen.render import settings
 from strata_datagen.rng import stream
+from strata_datagen.usdutil import relative_asset
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -153,6 +154,23 @@ class HdriTest(unittest.TestCase):
         np.testing.assert_allclose(cut.direction, dirs[60, 300], atol=1e-6)
         self.assertAlmostEqual(cut.irradiance, (4000.0 - 0.5) * float(solid[60, 0]), delta=1e-3)
         self.assertLess(float(clamped.max()), 1.0)
+
+
+class RelativeAssetTest(unittest.TestCase):
+    def test_paths_through_a_symlinked_assets_dir_stay_inside_the_build_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            outside, root = Path(tmp) / "store" / "hdri", Path(tmp) / "root"
+            outside.mkdir(parents=True)
+            (outside / "sky.exr").write_bytes(b"")
+            (root / "assets").mkdir(parents=True)
+            (root / "assets" / "hdri").symlink_to(outside, target_is_directory=True)
+            scene = root / "shots" / "s" / "scene"
+            scene.mkdir(parents=True)
+            path = relative_asset(root / "assets" / "hdri" / "sky.exr", scene)
+            self.assertEqual(path, "../../../assets/hdri/sky.exr")
+            moved = Path(tmp) / "moved"
+            root.rename(moved)
+            self.assertTrue((moved / "shots" / "s" / "scene" / path).is_file())
 
 
 class SettingsTest(unittest.TestCase):

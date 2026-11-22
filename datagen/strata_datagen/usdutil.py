@@ -1,5 +1,6 @@
 """Typed bridges between numpy arrays and USD value arrays, plus stage conventions."""
 
+import os
 from pathlib import Path
 from typing import cast
 
@@ -54,8 +55,11 @@ def new_stage(path: Path) -> Usd.Stage:
 
 
 def relative_asset(target: Path, layer_dir: Path) -> str:
-    """An asset path relative to the authoring layer, so a build root can move as a whole."""
-    return target.resolve().relative_to(layer_dir.resolve(), walk_up=True).as_posix()
+    """An asset path relative to the authoring layer, so a build root can move as a whole.
+
+    The path is lexical: symlinks inside the build root are kept, never followed out of it.
+    """
+    return Path(os.path.relpath(target, layer_dir)).as_posix()
 
 
 def tag_instances(prim: Usd.Prim, ids: IntArray) -> None:
