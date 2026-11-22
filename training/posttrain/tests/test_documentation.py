@@ -14,7 +14,9 @@ def test_documented_preparation_platform_requirements() -> None:
     assert "TMPDIR" in parallel
     assert "Unix sockets" in parallel
     assert "exFAT/FAT" in parallel
-    assert "60 seconds" in parallel
+    assert "no wall-clock timeout" in parallel
+    assert "parent and each worker" in parallel
+    assert "60 seconds" not in parallel
     cache = " ".join(readme.split("## Target cache maintenance", 1)[1].split())
     assert "a memo record with a missing or different boot ID is rehashed" in cache
     assert "preparation requires Linux `/proc`" in cache

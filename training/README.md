@@ -166,11 +166,12 @@ linearly with the number of index records.
 
 With `loader_workers > 0`, set `TMPDIR` before starting Python to a local filesystem
 supporting Unix sockets, such as ext4 or tmpfs; exFAT/FAT cannot host worker IPC
-sockets. Dataset and cache files may remain on exFAT/FAT. Startup test-binds a socket
-in multiprocessing's actual temp directory and reports a `TMPDIR` error before
-starting workers if binding fails. Worker batch waits time out after 60 seconds
-instead of hanging indefinitely on a later IPC failure. Set `loader_workers: 0`
-to avoid multiprocessing IPC.
+sockets. Dataset and cache files may remain on exFAT/FAT. The parent and each worker
+probe a multiprocessing `Listener` in their actual temp directory before preparing
+batches. Failures report the directory and underlying cause, including socket path
+length limits or filesystem permission errors; use a shorter, writable `TMPDIR`
+with Unix socket support. Worker batch waits have no wall-clock timeout, so healthy
+slow preparation is not aborted. Set `loader_workers: 0` to avoid multiprocessing IPC.
 
 NumPy sampling is intentionally versioned as `step-seed-v2`: each absolute training step
 uses `SeedSequence([seed, step])`. Crop selection and augmentation draws within a
