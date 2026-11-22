@@ -22,9 +22,8 @@ Part = tuple[str, str, bpy.types.Object, str]
 
 def _services() -> tuple[type, type]:
     package = next(a.module for a in bpy.context.preferences.addons if a.module.endswith("mpfb"))
-    humans = __import__(package + ".services.humanservice", fromlist=["HumanService"])
-    targets = __import__(package + ".services.targetservice", fromlist=["TargetService"])
-    return humans.HumanService, targets.TargetService
+    services = sys.modules[f"{package}.services"]
+    return services.humanservice.HumanService, services.targetservice.TargetService
 
 
 def _build(recipe: dict[str, object]) -> tuple[bpy.types.Object, list[Part]]:

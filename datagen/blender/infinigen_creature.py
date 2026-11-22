@@ -59,7 +59,7 @@ def main() -> None:
     _pin_templates(job.get("nurbs", {}))
     bpy.ops.wm.read_factory_settings(use_empty=True)
     module, _, name = job["factory"].rpartition(".")
-    package = importlib.import_module(f"{creatures.__name__}.{module}") if module else creatures
+    package = importlib.import_module(f"infinigen.assets.objects.creatures.{module}") if module else creatures
     factory_class = getattr(package, name)
     with FixedSeed(job["factory_seed"]):
         factory = factory_class(factory_seed=job["factory_seed"], **job.get("factory_kwargs", {}))
