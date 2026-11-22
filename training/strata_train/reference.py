@@ -47,6 +47,7 @@ def infer(
     root: Path,
     repeat: int,
     half_head: bool,
+    precision: str,
     out: Path,
 ) -> dict[str, object]:
     path = root / case["input"]
@@ -92,6 +93,7 @@ def infer(
         focal_px=focal,
         input_sha256=digest,
         half_head=half_head,
+        precision=precision,
         exposure=case.get("exposure", 0),
         auto_focal=auto_focal,
         focal_input=case.get("focal_px", 0.0),
@@ -121,6 +123,8 @@ def main() -> None:
         parser.error("cases must have nonempty, unique image IDs")
     start = time.perf_counter()
     torch.cuda.init()
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
     dtype = {"fp16": torch.float16, "fp32": torch.float32, "bf16": torch.bfloat16}[args.precision]
     model, _ = create_model_and_transforms("depthpro2-h", precision=dtype)
     half_head = args.precision == "fp16" and not args.stock_head
@@ -131,7 +135,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     report: list[dict[str, object]] = []
     for case in cases:
-        row = infer(model, case, args.data_root, args.repeat, half_head, out)
+        row = infer(model, case, args.data_root, args.repeat, half_head, args.precision, out)
         row.update({"precision": args.precision, "session_ms": session_ms})
         report.append(row)
         (out / "timings.json").write_text(json.dumps(report, indent=2) + "\n")
