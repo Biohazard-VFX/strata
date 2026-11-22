@@ -10,7 +10,6 @@ import time
 import unittest
 from pathlib import Path
 
-import strata_datagen
 from strata_datagen import cli, shotlock
 from strata_datagen.qa import checks
 from strata_datagen.render import husk, pack
@@ -77,7 +76,6 @@ class RenderLockTest(unittest.TestCase):
         return {
             **os.environ,
             "PATH": self.path,
-            "PYTHONPATH": str(Path(strata_datagen.__file__).parents[1]),
             "FAKE_HUSK_BARRIER": str(self.barrier),
         }
 
