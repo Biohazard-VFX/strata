@@ -22,7 +22,7 @@ jobs:
       - name: System C dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config libopenexr-dev libjson-c-dev python3-openimageio
+          sudo apt-get install -y cmake ninja-build pkg-config libopenexr-dev libjson-c-dev
       - name: CPU Python environment and formatter
         run: |
           uv sync --project training --extra cpu --locked --python 3.12

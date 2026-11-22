@@ -28,7 +28,7 @@ def verify_deep(path, rgb, z):
             np.testing.assert_array_equal(values, target)
     np.savez(path.with_suffix(".expected.npz"), counts=np.ones(z.shape,dtype=np.uint32),
              **{name:values.reshape(-1) for name,values in expected.items()})
-    subprocess.run(["/usr/bin/python3",str(Path(__file__).with_name("oiio_check.py")),str(path)],
+    subprocess.run([sys.executable,str(Path(__file__).with_name("oiio_check.py")),str(path)],
                    check=True,env={**os.environ,"PYTHONPATH":""})
 
 
@@ -59,7 +59,7 @@ def verify_variable(path, empty=False):
                 offset += int(count)
             assert offset == len(values)
     np.savez(path.with_suffix('.expected.npz'),counts=counts,**expected)
-    subprocess.run(['/usr/bin/python3',str(Path(__file__).with_name('oiio_check.py')),str(path)],
+    subprocess.run([sys.executable,str(Path(__file__).with_name('oiio_check.py')),str(path)],
                    check=True,env={**os.environ,'PYTHONPATH':''})
 
 
