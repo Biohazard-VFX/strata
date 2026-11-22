@@ -29,7 +29,8 @@ K-layer rebuild scale with the sample count. Decode each deep EXR once with `rea
 `save_samples`; `load_samples` memory-maps the arrays and `Shot.crop` slices windows without
 copying the rest of the frame.
 
-Inputs change per sample, so encoder features cannot come from a cache built on clean beauties.
+Changed inputs cannot use features cached from clean beauties. The training loader reuses
+that cache only for its clean share and runs the frozen encoder live for augmented crops.
 
 ## Parts
 

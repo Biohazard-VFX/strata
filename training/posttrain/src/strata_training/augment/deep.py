@@ -1,16 +1,14 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from importlib import import_module
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
+from strata_training.data.exr import decode_instance_ids
+from strata_training.data.exr import read_samples as read_channels
 from strata_training.data.targets import reduce_samples
 from strata_training.io import save_array
 from strata_training.types import Array, Layers
-
-exr: Any = import_module("OpenEXR")
 
 FIELDS = ("offsets", "z", "alpha", "rgb", "ids")
 SPLIT_EPSILON = 1e-6
@@ -101,21 +99,12 @@ def from_unsorted(
 
 
 def read_samples(path: Path) -> DeepSamples:
-    with exr.File(str(path), separate_channels=True) as file:
-        channels = file.parts[0].channels
-        depth: Array = channels["Z"].pixels
-        counts = np.fromiter((0 if v is None else len(v) for v in depth.flat), np.int64)
-        values: dict[str, Array] = {}
-        for name in ("Z", "A", "R", "G", "B", "instance_id"):
-            chunks: list[Array] = [v for v in channels[name].pixels.flat if v is not None]
-            values[name] = np.concatenate(chunks) if chunks else np.empty(0, dtype=np.float32)
+    values, counts, shape = read_channels(path)
     alpha = values["A"].astype(np.float32)
-    ids = np.rint(
-        np.divide(values["instance_id"], alpha, out=np.zeros_like(alpha), where=alpha > 0)
-    ).astype(np.int64)
+    ids = decode_instance_ids(values["instance_id"], values["A"]).astype(np.int64)
     rgb = np.stack([values[c] for c in "RGB"], axis=1).astype(np.float32)
     pixel = np.repeat(np.arange(counts.size), counts)
-    return from_unsorted(depth.shape, pixel, values["Z"].astype(np.float32), alpha, rgb, ids)
+    return from_unsorted(shape, pixel, values["Z"].astype(np.float32), alpha, rgb, ids)
 
 
 def save_samples(directory: Path, samples: DeepSamples) -> None:
