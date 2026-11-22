@@ -35,8 +35,8 @@ def reduce_samples(
     if not np.isfinite(rgb).all() or not np.isfinite(alpha).all():
         raise ValueError("deep colors and alpha must be finite")
     result = contract_reduce(
-        depth.astype(np.float64, copy=False),
-        alpha.astype(np.float64, copy=False),
+        depth,
+        alpha,
         rgb,
         counts.astype(np.int64, copy=False),
         shape,

@@ -15,6 +15,7 @@ from strata_training.augment.occluders import (
     samples,
     tilted_depth,
 )
+from strata_training.augment.segmented import geometry_bounds, in_front
 from strata_training.types import Array, Layers
 
 Range = tuple[float, float]
@@ -250,24 +251,21 @@ def _maybe_grade(rng: np.random.Generator, config: AugmentConfig, record: dict[s
 
 
 def _in_front_of(deep: DeepSamples, chosen: Array) -> Array:
-    pixels = deep.shape[0] * deep.shape[1]
-    deepest = np.full(pixels, -np.inf)
-    np.maximum.at(deepest, deep.pixel[chosen], deep.z[chosen])
-    return deep.z < deepest[deep.pixel]
+    return in_front(deep.offsets, deep.z, chosen)
 
 
 def _placement(
     background: DeepSamples, element: DeepSamples, front: bool, rng: np.random.Generator
 ) -> float | None:
-    background = background.select(background.ids != 0)
-    element = element.select(element.ids != 0)
-    both = (background.counts > 0) & (element.counts > 0)
+    background_near, background_far, background_valid = geometry_bounds(
+        background.offsets, background.z, background.ids
+    )
+    donor_near, donor_far, donor_valid = geometry_bounds(element.offsets, element.z, element.ids)
+    both = background_valid & donor_valid
     if not both.any():
         return None
-    near = background.z[background.offsets[:-1][both]]
-    far = background.z[background.offsets[1:][both] - 1]
-    element_near = element.z[element.offsets[:-1][both]]
-    element_far = element.z[element.offsets[1:][both] - 1]
+    near, far = background_near[both], background_far[both]
+    element_near, element_far = donor_near[both], donor_far[both]
     in_front = float(np.min(near / element_far))
     if front:
         return in_front * float(rng.uniform(0.6, 0.95))
@@ -278,11 +276,10 @@ def _placement(
 def _occluders(
     shot: Shot, rng: np.random.Generator, config: AugmentConfig, record: dict[str, Any]
 ) -> DeepSamples:
-    deep = shot.deep.select(shot.deep.ids != 0)
+    deep = shot.deep
     size = deep.shape
-    filled = deep.counts > 0
-    nearest = deep.z[deep.offsets[:-1][filled]]
-    farthest = deep.z[deep.offsets[1:][filled] - 1]
+    nearest, farthest, filled = geometry_bounds(deep.offsets, deep.z, deep.ids)
+    nearest, farthest = nearest[filled], farthest[filled]
     near, far = (float(np.quantile(nearest, 0.01)), float(np.quantile(farthest, 0.95)))
     luminance = float(np.tensordot(AP1_LUMINANCE, shot.denoised, axes=1).mean())
     made: list[Occluder] = []

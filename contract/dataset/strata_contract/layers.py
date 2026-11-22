@@ -52,18 +52,12 @@ def reduce_samples(
         raise ValueError("sample alpha and sky shapes must match depth")
     output = np.zeros((pixels * layers, 5), dtype=np.float64)
     if depth.size:
-        order = segmented.depth_order(depth, counts)
-        a = np.clip(alpha[order], 0, 1)
-        trans = segmented.transmittance(a, counts)
         segmented.fill(
             output,
             depth,
-            a,
+            alpha,
             rgb,
             counts,
-            order,
-            trans,
-            np.log(depth),
             np.zeros(depth.size, dtype=np.bool_) if sky is None else sky,
             layers,
             float(np.log(gap_ratio)),

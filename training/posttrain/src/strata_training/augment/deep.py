@@ -5,7 +5,12 @@ from pathlib import Path
 import numpy as np
 from strata_contract.segmented import transmittance as sample_transmittance
 
-from strata_training.augment.segmented import contributions_arrays, merge_arrays
+from strata_training.augment.segmented import (
+    contributions_arrays,
+    inserted_through,
+    merge_arrays,
+    select_arrays,
+)
 from strata_training.data.exr import decode_instance_ids
 from strata_training.data.exr import read_samples as read_channels
 from strata_training.data.targets import reduce_identified_samples
@@ -34,14 +39,8 @@ class DeepSamples:
         return np.repeat(np.arange(self.shape[0] * self.shape[1]), self.counts)
 
     def select(self, keep: Array) -> "DeepSamples":
-        counts = np.bincount(self.pixel[keep], minlength=self.shape[0] * self.shape[1])
         return DeepSamples(
-            self.shape,
-            np.concatenate(([0], np.cumsum(counts))),
-            np.asarray(self.z[keep]),
-            np.asarray(self.alpha[keep]),
-            np.asarray(self.rgb[keep]),
-            np.asarray(self.ids[keep]),
+            self.shape, *select_arrays(self.offsets, self.z, self.alpha, self.rgb, self.ids, keep)
         )
 
     def crop(self, top: int, left: int, height: int, width: int) -> "DeepSamples":
@@ -207,10 +206,8 @@ def compose(layers: Sequence[Layer], environment: Shot, environment_matrix: Arra
         shot = layer.shot
         part = rgb[g] if shot is None else _explained(shot, rgb[g], coverage[g])
         image += np.tensordot(layer.matrix, part, axes=1)
-    inserted = np.array([layer.shot is not environment for layer in layers])[labels]
-    log_t = np.log1p(-np.minimum(merged.alpha[inserted].astype(np.float64), 1 - 1e-15))
-    pixels = merged.shape[0] * merged.shape[1]
-    through = np.exp(np.bincount(merged.pixel[inserted], log_t, pixels)).reshape(merged.shape)
+    inserted = np.array([layer.shot is not environment for layer in layers])
+    through = inserted_through(merged.offsets, merged.alpha, labels, inserted).reshape(merged.shape)
     own_rgb, own_coverage = flatten(environment.deep)
     residual = _explained(
         environment, (environment.noisy - own_rgb) * through, (1 - own_coverage) * through
