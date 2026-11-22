@@ -15,7 +15,9 @@ class Part:
     def name(self) -> str: ...
 
 ZIP_COMPRESSION: object
+ZIPS_COMPRESSION: object
 scanlineimage: object
+deepscanline: object
 
 class File:
     parts: list[Part]
@@ -25,7 +27,7 @@ class File:
     ) -> None: ...
     @overload
     def __init__(
-        self, header: Mapping[str, object], channels: Mapping[str, NDArray[np.generic]]
+        self, header: Mapping[str, object], channels: Mapping[str, NDArray[np.generic] | Channel]
     ) -> None: ...
     def write(self, filename: str) -> None: ...
     def __enter__(self) -> Self: ...

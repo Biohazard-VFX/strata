@@ -1,14 +1,22 @@
+import tempfile
 import unittest
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+import OpenEXR
 from pxr import Usd
 
 from strata_datagen.exr import Deep
 from strata_datagen.generators import groom
 from strata_datagen.library import hdri
+from strata_datagen.qa import checks
 from strata_datagen.qa.deep import flatten, instance_ids
 from strata_datagen.render import settings
 from strata_datagen.rng import stream
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 def _deep(samples: list[list[tuple[float, float, float, float, float, int]]]) -> Deep:
@@ -40,6 +48,41 @@ class DeepTest(unittest.TestCase):
         np.testing.assert_allclose(flat.rgba[0, 2], [0.0, 0.3, 0.0, 0.3], atol=1e-6)
         self.assertEqual(flat.partial[0].tolist(), [True, False, True])
         self.assertEqual(instance_ids(deep).tolist(), [1000, 7, 2, 3])
+
+
+def _write_deep(path: Path, samples: list[list[tuple[float, float, float]]]) -> None:
+    """Pixels of (premultiplied grey, alpha, id) samples at depth 2 m in a 2x1 deep image."""
+    chans: dict[str, NDArray[np.object_]] = {}
+    for name, index in (("R", 0), ("G", 0), ("B", 0), ("A", 1), ("instance_id", 2)):
+        cells = np.empty((1, len(samples)), dtype=object)
+        for i, pixel in enumerate(samples):
+            value = np.array([s[index] * (s[1] if name == "instance_id" else 1.0) for s in pixel], np.float32)
+            cells[0, i] = value
+        chans[name] = cells
+    for name in ("Z", "ZBack"):
+        cells = np.empty((1, len(samples)), dtype=object)
+        for i, pixel in enumerate(samples):
+            cells[0, i] = np.full(len(pixel), 2.0, np.float32)
+        chans[name] = cells
+    header: dict[str, object] = {"compression": OpenEXR.ZIPS_COMPRESSION, "type": OpenEXR.deepscanline}
+    OpenEXR.File(header, {k: OpenEXR.Channel(v) for k, v in chans.items()}).write(str(path))
+
+
+class QaTest(unittest.TestCase):
+    def test_sky_behind_partial_pixels_is_allowed_but_deep_may_not_exceed_beauty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "d.exr"
+            _write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
+            sky = np.array([[0.5, 0.2 + 0.5 * 0.6]], np.float32)
+            beauty = dict.fromkeys("RGB", sky)
+            metrics = checks.deep_metrics(path, beauty, [(1, 4), (1000, 1001)])
+            self.assertLess(metrics["flatten_error"], 1e-6)
+            self.assertLess(metrics["flatten_excess"], 1e-6)
+            self.assertEqual(metrics["valid_id_fraction"], 1.0)
+            dark = {c: np.array([[0.5, 0.1]], np.float32) for c in "RGB"}
+            self.assertGreater(
+                checks.deep_metrics(path, dark, [(1, 4), (1000, 1001)])["flatten_excess"], 0.04
+            )
 
 
 class GroomTest(unittest.TestCase):

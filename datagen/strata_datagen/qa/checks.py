@@ -19,9 +19,11 @@ LIMITS = {
     "max_samples": (1.0, 1024.0),
     "partial_share": (0.005, 1.0),
     "flatten_error": (0.0, 0.005),
+    "flatten_excess": (0.0, 0.005),
     "valid_id_fraction": (0.999, 1.0),
     "camera_error": (0.0, 1e-3),
 }
+COVERED = 0.999
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
 
 
@@ -47,7 +49,7 @@ def _id_ranges(manifest: dict[str, object]) -> list[tuple[int, int]]:
     return [(r["first_id"], r["first_id"] + r["count"]) for r in ranges]
 
 
-def _deep_metrics(
+def deep_metrics(
     path: Path, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
 ) -> dict[str, float]:
     deep = read_deep(path)
@@ -57,13 +59,15 @@ def _deep_metrics(
     valid = np.zeros(ids.size, bool)
     for low, high in ranges:
         valid |= (ids >= low) & (ids < high)
-    error = np.mean([np.abs(flat.rgba[..., i] - beauty[c]).mean() for i, c in enumerate("RGB")])
+    covered = flat.alpha >= COVERED
+    residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
     return {
         "mean_samples": float(deep.counts.mean()),
         "max_samples": float(deep.counts.max()),
         "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z - 1e-4)).sum()),
         "partial_share": float(flat.partial.mean()),
-        "flatten_error": float(error),
+        "flatten_error": float(np.abs(residual[covered]).mean()) if covered.any() else 0.0,
+        "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
         "valid_id_fraction": float(valid.mean()) if valid.size else 1.0,
     }
 
@@ -83,7 +87,7 @@ def check_frame(
         return FrameResult(frame, {}, ["missing beauty or deep"])
     beauty = read_flat(beauty_path)
     metrics = _beauty_metrics(beauty)
-    metrics.update(_deep_metrics(deep_path, beauty, ranges))
+    metrics.update(deep_metrics(deep_path, beauty, ranges))
     metrics["camera_error"] = _camera_error(beauty_path, record)
     failures = [f"{k}={metrics[k]:.4g}" for k in ("nonfinite", "bad_depth") if metrics[k] > 0]
     failures += [
