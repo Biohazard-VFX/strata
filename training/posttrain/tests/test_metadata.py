@@ -8,6 +8,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 from strata_training.data.cache import prepare
 from strata_training.data.exr import exr, read_roles, write_deep
 from strata_training.data.metadata import CONTRACT, camera_frames, category, intrinsics
+from strata_training.io import save_arrays
 from strata_training.types import Layers
 
 
@@ -87,6 +88,10 @@ def test_native_parts_and_role_masks_are_preserved_in_target_cache(tmp_path: Pat
         assert_allclose(data["inverse_depth"][0], 0.5)
         assert_array_equal(data["fur"], [[True, False], [False, False]])
         assert_array_equal(data["foreground"], [[True, False], [True, False]])
+        obsolete = {k: data[k] for k in data.files if k != "role_mask_version"}
+    save_arrays(Path(entries[0]["cache"]), **obsolete)
+    with pytest.raises(ValueError, match="role masks changed"):
+        prepare(tmp_path / "dataset", tmp_path / "targets")
 
 
 def test_deep_roles_decode_premultiplied_ids_and_ignore_hidden_samples(tmp_path: Path) -> None:
