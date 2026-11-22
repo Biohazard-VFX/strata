@@ -8,7 +8,7 @@ import sys
 import subprocess
 
 sys.path.insert(0, 'tools')
-from boundaries import LAYERS, PROJECTS, import_violations, project_violations, python_files
+from boundaries import LAYERS, PROJECTS, import_violations, lock_violations, project_violations, python_files
 from source_scan import c_functions
 
 errors = []
@@ -67,6 +67,7 @@ for directory,forbidden,message in LAYERS:
         errors += import_violations(path,forbidden,message)
 for directory in PROJECTS:
     errors += project_violations(directory)
+errors += lock_violations()
 for path in Path('hosts').rglob('*'):
     if not path.is_file() or path.suffix.lower() not in ('.c','.h','.cc','.cpp','.cxx','.hpp','.hh','.hxx','.m','.mm','.py','.cmake','.txt'):
         continue

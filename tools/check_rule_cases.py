@@ -32,6 +32,20 @@ def project(name, dependencies=(), sources=None):
     return text
 
 
+def lock(packages):
+    text = 'version = 1\nrequires-python = ">=3.12"\n'
+    for name,tables in packages.items():
+        text += f'\n[[package]]\nname = "{name}"\nversion = "0"\n'
+        text += 'dependencies = [' + ', '.join(f'{{ name = "{d}" }}' for d in tables.get('dependencies',())) + ']\n'
+        for table in ('optional-dependencies','dev-dependencies'):
+            if table in tables:
+                text += f'[package.{table}]\n' + ''.join(f'{group} = [' + ', '.join(f'{{ name = "{d}" }}' for d in deps) + ']\n'
+                                                       for group,deps in tables[table].items())
+    return text
+
+
+TRAINING_LOCK = {'strata-train':{'dependencies':['numpy','strata-contract']},'strata-contract':{},'numpy':{}}
+DATAGEN_LOCK = {'strata-datagen':{'dependencies':['numpy','strata-dataset']},'strata-dataset':{'dependencies':['numpy']},'numpy':{}}
 REVIEW_DATAGEN = '''[project]
 name = "strata-datagen"
 dependencies = ["numpy", "strata-dataset"]
@@ -58,6 +72,8 @@ clean = {k: v for k, v in {}.items() if k != "PYTHONPATH"}
 
 
 BASE.update({
+    'training/uv.lock': lock(TRAINING_LOCK),
+    'datagen/uv.lock': lock(DATAGEN_LOCK),
     'contract/pyproject.toml': project('strata-contract'),
     'contract/dataset/pyproject.toml': project('strata-dataset',['numpy>=2.0']),
     'training/pyproject.toml': project('strata-train',['numpy','strata-contract'],{'strata-contract':'../contract'}),
@@ -126,7 +142,11 @@ CASES = [
     ('list-valued allowed source', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset']) + '[tool.uv.sources]\nstrata-dataset = [{ path = "../contract/dataset", editable = true }]\n'}, None),
     ('Strata package from a registry', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset'])}, 'strata-dataset must come from the local path'),
     ('Strata package from git', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset']) + '[tool.uv.sources]\nstrata-dataset = { git = "https://example.com/strata" }\n'}, 'may not source strata-dataset'),
-    ('training may use both contracts', {'training/pyproject.toml':project('strata-train',['strata-contract'],{'strata-contract':'../contract','strata-dataset':'../contract/dataset'}) + '[dependency-groups]\ndev = ["strata-dataset"]\n'}, None),
+    ('training may use both contracts', {'training/pyproject.toml':project('strata-train',['strata-contract'],{'strata-contract':'../contract','strata-dataset':'../contract/dataset'}) + '[dependency-groups]\ndev = ["strata-dataset"]\n',
+                                         'training/uv.lock':lock({**TRAINING_LOCK,'strata-dataset':{}})}, None),
+    ('datagen lock dev group holds model contract', {'datagen/uv.lock':lock({**DATAGEN_LOCK,'strata-datagen':{'dependencies':['strata-dataset'],'dev-dependencies':{'dev':['strata-contract']}},'strata-contract':{}})}, 'strata-datagen environment may not contain strata-contract'),
+    ('dataset contract extra reaches training', {'training/uv.lock':lock({**TRAINING_LOCK,'strata-train':{'dependencies':['strata-contract','strata-dataset']},'strata-dataset':{'optional-dependencies':{'fit':['strata-train']}}})}, 'strata-dataset environment may not contain strata-train'),
+    ('lock without its project', {'datagen/uv.lock':lock({'numpy':{}})}, 'lock does not contain its project strata-datagen'),
     ('tracked EXR', {'models/forbidden.exr':''}, 'generated artifact is tracked'),
     ('long K&R function', {'runtime/src/core/unit.c':'int f(void) {\n' + 'f();\n' * 100 + '}\n'}, 'function f exceeds 100 lines'),
     ('long function, braces in literals', {'runtime/tests/unit.c':'int g(void)\n{\n\tconst char *s = "}";\n' + '\tg(); /* } */\n' * 99 + '}\n'}, 'function g exceeds 100 lines'),

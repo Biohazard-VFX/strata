@@ -1,4 +1,4 @@
-"""Python layer boundaries: which imports each layer may make and which Strata packages each project may name."""
+"""Python layer boundaries: which imports each layer may make and which Strata packages each project may hold."""
 import ast
 import importlib.util
 import os
@@ -256,4 +256,36 @@ def project_violations(directory):
             errors.append(f'{path}: {name} may not source {key} from {entry}')
     for requirement in sorted(required - located):
         errors.append(f'{path}: {requirement} must come from the local path {allowed[requirement]}')
+    return errors
+
+
+def lock_violations():
+    """Every Strata package a lock can install, across all groups and extras, must be allowed for its owner."""
+    owners = {name: {name, *allowed} for name, allowed in PROJECTS.values()}
+    errors, seen = [], set()
+    for directory, (name, _) in PROJECTS.items():
+        path = Path(directory)/'uv.lock'
+        if not path.is_file():
+            continue
+        packages = {}
+        for package in tomllib.loads(path.read_text()).get('package', []):
+            edges = [*package.get('dependencies', [])]
+            for table in ('optional-dependencies', 'dev-dependencies'):
+                edges += [e for group in package.get(table, {}).values() for e in group]
+            packages.setdefault(distribution(package['name']), set()).update(distribution(e['name']) for e in edges)
+        if name not in packages:
+            errors.append(f'{path}: lock does not contain its project {name}')
+        errors += [f'{path}: {name} environment may not contain {p}' for p in sorted(packages)
+                   if is_strata(p) and p not in owners[name]]
+        seen.update(set(packages) & set(owners))
+        for owner in sorted(set(packages) & set(owners) - {name}):
+            reached, pending = set(), [owner]
+            while pending:
+                current = pending.pop()
+                if current not in reached:
+                    reached.add(current)
+                    pending += sorted(packages.get(current, ()))
+            errors += [f'{path}: {owner} environment may not contain {p}' for p in sorted(reached)
+                       if is_strata(p) and p not in owners[owner]]
+    errors += [f'{name} appears in no uv.lock, so its environment is unchecked' for name in sorted(set(owners) - seen)]
     return errors
