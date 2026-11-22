@@ -18,7 +18,9 @@ jobs:
         with:
           version: "0.9.5"
           enable-cache: true
-          cache-dependency-glob: training/uv.lock
+          cache-dependency-glob: |
+            training/uv.lock
+            datagen/uv.lock
       - name: System C dependencies
         run: |
           sudo apt-get update
@@ -26,6 +28,7 @@ jobs:
       - name: CPU Python environment and formatter
         run: |
           uv sync --project training --extra cpu --locked --python 3.12
+          uv sync --project datagen --locked --python 3.12
           uv tool install clang-format==23.1.4
       - name: CPU ONNX Runtime SDK
         run: python3 runtime/cmake/fetch_ort.py --cpu --cache "$RUNNER_TEMP/strata-downloads"

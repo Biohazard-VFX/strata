@@ -24,6 +24,8 @@ if [[ $# -gt 0 ]]; then
   case "$1" in normal|sanitize) presets=("$1");; --cpu) presets=(cpu); cpu=1;; *) printf 'usage: %s [normal|sanitize|--cpu]\n' "$0" >&2; exit 2;; esac
 fi
 uv lock --project training --check
+uv lock --project datagen --check
+bash datagen/check.sh
 if [[ "$cpu" == 0 ]]; then
   UV_PROJECT_ENVIRONMENT=$("$python" -c 'import sys; print(sys.prefix)') \
     uv sync --project training --locked --extra cuda --check
