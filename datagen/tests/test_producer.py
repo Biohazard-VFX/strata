@@ -16,10 +16,10 @@ from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators import lighting
 from strata_datagen.qa import checks
 from strata_datagen.render import pack
-from strata_dataset import identity
+from strata_dataset import identity, roles
 from strata_dataset import samples as contract_samples
 from tests.concurrency import free
-from tests.fixtures import SKY, Sample, frame_record, merged, write_beauty, write_deep, write_shot
+from tests.fixtures import NAMES, SKY, Sample, frame_record, merged, write_beauty, write_deep, write_shot
 
 CLEAN: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 2), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
 SKY_IN_FRONT: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 0), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
@@ -38,7 +38,7 @@ class RawEvidenceTest(unittest.TestCase):
             self.assertFalse(cli.finish_task(shot, range(1, 3)))
             self.assertTrue((shot / "deep" / "0002.exr").exists())
             self.assertFalse(checks.check_shot(shot)["passed"])
-            self.assertTrue(any("frame 2: sky_id_in_front" in f for f in shot_failures(shot)))
+            self.assertTrue(any("frame 2: sky_in_front" in f for f in shot_failures(shot)))
             with self.assertRaises(ValueError):
                 checks.prune(shot, range(1, 3))
             self.assertTrue((shot / "deep" / "0002.exr").exists())
@@ -57,7 +57,7 @@ class RawEvidenceTest(unittest.TestCase):
             kept = target.read_bytes()
             target.unlink()
             self.assertIn("frame 2: missing layers", shot_failures(shot))
-            sky = pack.targets(pack.samples(_sky_everywhere(shot)), pack.ShotFrames.load(shot).roles)
+            sky = pack.targets(pack.samples(_sky_everywhere(shot)))
             pack.write_layers(sky, target)
             self.assertIn("frame 2: targets changed since raw acceptance", shot_failures(shot))
             target.write_bytes(kept)
@@ -70,7 +70,7 @@ class RawEvidenceTest(unittest.TestCase):
             write_shot(shot, [CLEAN, CLEAN], stride=24)
             pack.pack(shot, range(1, 3))
             self.assertEqual(shot_failures(shot), [])
-            sky = pack.targets(pack.samples(_sky_everywhere(shot)), pack.ShotFrames.load(shot).roles)
+            sky = pack.targets(pack.samples(_sky_everywhere(shot)))
             pack.write_layers(sky, shot / "layers" / "0002.exr")
             failures = shot_failures(shot)
             self.assertTrue(any(f.startswith("frame 2: target_mismatch") for f in failures), failures)
@@ -112,40 +112,6 @@ class RawEvidenceTest(unittest.TestCase):
                 self.assertIn("frame 2: validation changed since raw acceptance", shot_failures(shot))
             self.assertEqual(shot_failures(shot), [])
 
-    def test_merged_ids_rounding_to_declared_ids_are_rejected_and_label_no_role(self) -> None:
-        """Terrain 1 merged equally with groom 3 reads as hero skin 2; 30000.4 rounds into a declared id."""
-        cases = (
-            ({1: 0.5, 3: 0.5}, {"name": "hero_groom", "first_id": 3, "count": 1}),
-            ({30000: 0.6, 30001: 0.4}, {"name": "grass_near", "first_id": 29000, "count": 2002}),
-        )
-        for sources, declared in cases:
-            with self.subTest(sources=sources), tempfile.TemporaryDirectory() as tmp:
-                shot = Path(tmp) / "s"
-                pixels: list[Sample | list[Sample]] = [
-                    [merged(0.5, 1.0, sources), SKY],
-                    [Sample(0.2, 0.5, 1), SKY],
-                    SKY,
-                ]
-                write_shot(shot, [pixels, pixels], stride=24)
-                manifest = json.loads((shot / "manifest.json").read_text())
-                manifest["instance_ids"].append(declared)
-                (shot / "manifest.json").write_text(json.dumps(manifest))
-                self.assertFalse(cli.finish_task(shot, range(1, 3)))
-                self.assertTrue((shot / "deep" / "0002.exr").exists())
-                failures = shot_failures(shot)
-                self.assertTrue(
-                    any(f.startswith("frame 2: id_check_failure_fraction=0.2") for f in failures), failures
-                )
-                self.assertTrue(
-                    any(f.startswith("frame 2: unlabelled_coverage=0.3333") for f in failures), failures
-                )
-                ids = contract_samples.load(pack.ShotFrames.load(shot).sample_dir(shot, 1))["ids"]
-                self.assertEqual(ids.tolist(), [identity.UNLABELLED, 0, 1, 0, 0])
-                layers = read_flat(shot / "layers" / "0001.exr")
-                for role in ("foreground", "hero", "fur"):
-                    self.assertEqual(float(layers[f"roles.{role}"][0, 0]), 0.0)
-                self.assertEqual(float(layers["roles.foreground"][0, 1]), 0.5)
-
     def test_records_of_another_contract_version_or_id_domain_are_refused(self) -> None:
         wide = [
             {"name": "sky", "first_id": 0, "count": 1},
@@ -171,6 +137,54 @@ class RawEvidenceTest(unittest.TestCase):
                 self.assertFalse((shot / "qa").exists())
                 self.assertFalse(checks.check_shot(shot)["passed"])
                 self.assertTrue((shot / "deep" / "0002.exr").exists())
+
+
+MERGES: tuple[tuple[dict[int, float], dict[int, str]], ...] = (
+    ({1: 107 / 256, 3: 113 / 256, 4: 36 / 256}, {}),
+    ({1: 0.5, 3: 0.5}, {}),
+    ({1: 0.5, 2001: 0.5}, {2001: "rock"}),
+    ({30000: 0.6, 30001: 0.4}, {30000: "grass", 30001: "grass"}),
+    ({13456: 0.51, 13457: 0.49}, {13456: "hero_skin", 13457: "hero_groom"}),
+    ({99: 0.99, 100: 0.01}, {99: "hero_skin", 100: "hero_hair"}),
+    ({2: 0.99, 3: 0.01}, {}),
+    ({2: 1.0 - 2.0**-17, 3: 2.0**-17}, {}),
+)
+
+
+class MergedSampleTest(unittest.TestCase):
+    def test_merged_samples_keep_exact_roles_and_only_a_dominant_id(self) -> None:
+        """Reviewed merges: the 1/3/4 mix read as 2, 1+3 as 2, 30000.4, dominant 99/1 and 51/49 pairs."""
+        for sources, names in MERGES:
+            with self.subTest(sources=sources), tempfile.TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "s"
+                sample = merged(0.5, 1.0, sources, names=names)
+                pixels: list[Sample | list[Sample]] = [[sample, SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
+                write_shot(shot, [pixels, pixels], stride=24)
+                manifest = json.loads((shot / "manifest.json").read_text())
+                declared = {r["first_id"] for r in manifest["instance_ids"]}
+                manifest["instance_ids"] += [
+                    {"name": {**NAMES, **names}.get(i, f"layer_{i}"), "first_id": i, "count": 1}
+                    for i in sorted(set(sources) - declared)
+                ]
+                (shot / "manifest.json").write_text(json.dumps(manifest))
+                finished = cli.finish_task(shot, range(1, 3))
+                passed = bool(checks.check_shot(shot)["passed"])
+                self.assertEqual(finished, passed)
+                self.assertEqual((shot / "deep" / "0002.exr").exists(), not passed)
+                for frame in (1, 2):
+                    layers = read_flat(shot / "layers" / f"{frame:04d}.exr")
+                    for role, value in zip(roles.ROLES, sample.role_values(), strict=True):
+                        self.assertEqual(float(layers[f"roles.{role}"][0, 0]), float(np.float32(value)))
+                    self.assertEqual(float(layers["roles.foreground"][0, 1]), 0.5)
+                arrays = contract_samples.load(pack.ShotFrames.load(shot).sample_dir(shot, 1))
+                found = int(arrays["ids"][0])
+                np.testing.assert_array_equal(arrays["roles"][0], np.array(sample.role_values(), np.float32))
+                if found == identity.UNLABELLED:
+                    self.assertFalse(passed)
+                    continue
+                self.assertIn(found, sources)
+                self.assertLessEqual(1.0 - sources[found], 2.0 * identity.TOLERANCE)
+                self.assertTrue(passed)
 
 
 def _drop_hero_ids(shot: Path) -> None:
@@ -218,7 +232,7 @@ class SkyTargetTest(unittest.TestCase):
 
 
 HAIRSTYLE: list[Sample | list[Sample]] = [
-    [Sample(0.1, 0.5, 7, 1.9), Sample(0.5, 1.0, 2), SKY],
+    [Sample(0.1, 0.5, 4, 1.9), Sample(0.5, 1.0, 2), SKY],
     [Sample(0.2, 0.5, 1), SKY],
     SKY,
 ]
@@ -230,7 +244,7 @@ class RoleTest(unittest.TestCase):
             shot = Path(tmp) / "s"
             write_shot(shot, [CLEAN, HAIRSTYLE, CLEAN], stride=2)
             manifest = json.loads((shot / "manifest.json").read_text())
-            manifest["instance_ids"].append({"name": "hero_hair", "first_id": 7, "count": 1})
+            manifest["instance_ids"].append({"name": "hero_hair", "first_id": 4, "count": 1})
             (shot / "manifest.json").write_text(json.dumps(manifest))
             self.assertTrue(cli.finish_task(shot, range(1, 4)))
             self.assertFalse((shot / "deep" / "0002.exr").exists())
@@ -238,9 +252,9 @@ class RoleTest(unittest.TestCase):
                 1: {"foreground": [1.0, 0.5, 0.0], "hero": [1.0, 0.0, 0.0], "fur": [0.0, 0.0, 0.0]},
                 2: {"foreground": [1.0, 0.5, 0.0], "hero": [1.0, 0.0, 0.0], "fur": [0.5, 0.0, 0.0]},
             }
-            for frame, roles in ((1, expected[1]), (2, expected[2]), (3, expected[1])):
+            for frame, wanted in ((1, expected[1]), (2, expected[2]), (3, expected[1])):
                 targets = read_flat(shot / "layers" / f"{frame:04d}.exr")
-                for role, values in roles.items():
+                for role, values in wanted.items():
                     np.testing.assert_allclose(targets[f"roles.{role}"][0], values, atol=1e-6)
             self.assertEqual(shot_failures(shot), [])
 
@@ -273,6 +287,9 @@ class SidecarTest(unittest.TestCase):
             self.assertEqual(arrays["ids"].tolist(), [2, 0, 1, 0, 0])
             np.testing.assert_allclose(floats["z"], [2.0, 3000.0, 2.0, 3000.0, 3000.0])
             np.testing.assert_allclose(floats["alpha"], [1.0, 1.0, 0.5, 1.0, 1.0])
+            np.testing.assert_array_equal(
+                floats["roles"], [[1, 1, 0], [0, 0, 0], [0.5, 0, 0], [0, 0, 0], [0, 0, 0]]
+            )
             self.assertEqual(arrays["noisy"].shape, (3, 1, 3))
             np.testing.assert_allclose(floats["denoised"], floats["noisy"] * 0.9, rtol=1e-6)
             for name in ("noisy.npy", "denoised.npy", "deep/z.npy", "deep/rgb.npy", "deep/ids.npy"):
@@ -293,6 +310,16 @@ class SidecarTest(unittest.TestCase):
             self.assertEqual(contract_samples.errors(published, (1, 3)), [])
             failures = shot_failures(shot)
             self.assertTrue(any(f.startswith("frame 1: samples_mismatch") for f in failures), failures)
+            pack.remove_samples(shot, range(1, 2))
+            unnested = frame.roles.copy()
+            unnested[2, 2] = 0.25
+            pack.write_samples(
+                dataclasses.replace(frame, roles=unnested), shot / "beauty" / "0001.exr", published
+            )
+            self.assertEqual(
+                contract_samples.errors(published, (1, 3)),
+                ["s_0001: roles must satisfy 0 <= fur <= hero <= foreground <= alpha"],
+            )
             shutil.rmtree(shot / "samples")
             self.assertTrue(any("frame 1: s_0001: missing" in f for f in shot_failures(shot)))
 

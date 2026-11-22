@@ -200,5 +200,5 @@ def author(
             time = Usd.TimeCode(first_frame - 1 + key * GROWTH_KEY_FRAMES)
             scales.Set(vec3f(instances.scales * row[:, None]), time)
     instancer.CreateProtoIndicesAttr(ints(instances.prototype_indices))
-    tag_instances(instancer.GetPrim(), np.arange(first_id, first_id + len(instances)))
+    tag_instances(instancer.GetPrim(), np.arange(first_id, first_id + len(instances)), layer.name)
     return instancer

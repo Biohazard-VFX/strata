@@ -68,7 +68,15 @@ class FollowTest(unittest.TestCase):
             placement = human.ClipPlacement(
                 10, 0.0, np.zeros((len(frames) + 2, 3)), np.zeros((len(frames) + 2, 3))
             )
-            human.author(stage, "/World/hero", "./clip.usdc", placement, first_frame=frames[0], instance_id=2)
+            human.author(
+                stage,
+                "/World/hero",
+                "./clip.usdc",
+                placement,
+                first_frame=frames[0],
+                instance_id=2,
+                name="hero_skin",
+            )
             info = HeroHair(
                 hairstyle.REGIONS,
                 (0.0, 0.0, 1.0),

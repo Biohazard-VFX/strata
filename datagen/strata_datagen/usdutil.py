@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 from pxr import Gf, Sdf, Usd, UsdGeom, Vt
 
-from strata_dataset import identity
+from strata_dataset import identity, roles
 
 FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.int64]
@@ -64,27 +64,28 @@ def relative_asset(target: Path, layer_dir: Path) -> str:
     return Path(os.path.relpath(target, layer_dir)).as_posix()
 
 
-def tag_instances(prim: Usd.Prim, ids: IntArray) -> None:
-    """Set `instance_id`, its `instance_check`, a `coverage` of 1 and a `foreground` of 1.
+def tag_instances(prim: Usd.Prim, ids: IntArray, name: str) -> None:
+    """Set `instance_id` and its checks, a `coverage` of 1 and the role primvars of the id range `name`.
 
     Constant for one id, per instance otherwise. Karma premultiplies deep extra channels by the
-    sample's float alpha but stores A as half, so `coverage` is the sample's float alpha;
-    `strata_dataset.identity.decode` rejects samples whose check disagrees with their rounded id.
-    `foreground` feeds the flat geometry mask; the sky backdrop overrides it to 0.
+    sample's float alpha but stores A as half, so `coverage` is the sample's float alpha. Each role
+    primvar (`strata_dataset.roles.membership`) is 1 or 0; the sky's `foreground` 0 also feeds the
+    flat geometry mask.
     """
     api = UsdGeom.PrimvarsAPI(prim)
-    checks = identity.check(ids)
+    values = {
+        "instance_check": identity.check(ids),
+        "instance_check2": identity.check2(ids),
+        "coverage": np.ones(ids.size, np.float32),
+    }
+    for role, member in zip(roles.ROLES, roles.membership(name), strict=True):
+        values[role] = np.full(ids.size, member, np.float32)
     if ids.size == 1:
         api.CreatePrimvar("instance_id", Sdf.ValueTypeNames.Int, UsdGeom.Tokens.constant).Set(int(ids[0]))
-        api.CreatePrimvar("instance_check", Sdf.ValueTypeNames.Float, UsdGeom.Tokens.constant).Set(
-            float(checks[0])
-        )
-        for name in ("coverage", "foreground"):
-            api.CreatePrimvar(name, Sdf.ValueTypeNames.Float, UsdGeom.Tokens.constant).Set(1.0)
+        for key, value in values.items():
+            api.CreatePrimvar(key, Sdf.ValueTypeNames.Float, UsdGeom.Tokens.constant).Set(float(value[0]))
         return
     api.CreatePrimvar("instance_id", Sdf.ValueTypeNames.IntArray, UsdGeom.Tokens.vertex).Set(ints(ids))
-    values = {"instance_check": checks, "coverage": np.ones(ids.size, np.float32)}
-    values["foreground"] = values["coverage"]
-    for name, value in values.items():
+    for key, value in values.items():
         array = cast("Vt.FloatArray", Vt.FloatArray.FromNumpy(value))  # pyright: ignore[reportUnknownMemberType]
-        api.CreatePrimvar(name, Sdf.ValueTypeNames.FloatArray, UsdGeom.Tokens.vertex).Set(array)
+        api.CreatePrimvar(key, Sdf.ValueTypeNames.FloatArray, UsdGeom.Tokens.vertex).Set(array)

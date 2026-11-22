@@ -16,10 +16,30 @@ from strata_datagen.qa.deep import flatten, instance_ids
 from strata_datagen.render import settings
 from strata_datagen.rng import stream
 from strata_datagen.usdutil import relative_asset, tag_instances
-from strata_dataset import identity
+from strata_dataset import identity, roles
+from tests.fixtures import membership
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy.typing import NDArray
+
+
+def _labels(
+    sources: list[list[tuple[float, int]]], alpha: "NDArray[np.float32]"
+) -> "dict[str, NDArray[np.float32]]":
+    """Premultiplied check and role channels of samples merged from (share, id) sources."""
+    out: dict[str, NDArray[np.float32]] = {}
+    for name, value in (("instance_check", identity.check), ("instance_check2", identity.check2)):
+        out[name] = (
+            np.array([sum(w * float(value(np.array([i]))[0]) for w, i in s) for s in sources], np.float32)
+            * alpha
+        )
+    for index, role in enumerate(roles.ROLES):
+        out[role] = (
+            np.array([sum(w * membership(i)[index] for w, i in s) for s in sources], np.float32) * alpha
+        )
+    return out
 
 
 def _deep(samples: list[list[tuple[float, float, float, float, float, float]]]) -> Deep:
@@ -35,7 +55,7 @@ def _deep(samples: list[list[tuple[float, float, float, float, float, float]]]) 
     channels["ZBack"] = channels["Z"].copy()
     ids = np.array([s[5] for s in flat], np.float64)
     channels["instance_id"] = ids.astype(np.float32) * a
-    channels["instance_check"] = identity.check(np.rint(ids).astype(np.int64)) * a
+    channels |= _labels([[(1.0, int(i))] for i in np.rint(ids)], a)
     channels["coverage"] = a.copy()
     channels["A"] = a.astype(np.float16).astype(np.float32)
     return Deep(len(samples), 1, counts, channels)
@@ -68,11 +88,14 @@ def write_deep(path: Path, samples: list[list[tuple[float, ...]]]) -> None:
             value = np.array([s[index] * (s[1] if name == "instance_id" else 1.0) for s in pixel], np.float32)
             cells[0, i] = value
         chans[name] = cells
-    checks_cells = np.empty((1, len(samples)), dtype=object)
-    for i, pixel in enumerate(samples):
-        alpha = np.array([s[1] for s in pixel], np.float32)
-        checks_cells[0, i] = identity.check(np.array([int(s[2]) for s in pixel], np.int64)) * alpha
-    chans["instance_check"] = checks_cells
+    labels = [
+        _labels([[(1.0, int(s[2]))] for s in p], np.array([s[1] for s in p], np.float32)) for p in samples
+    ]
+    for name in labels[0]:
+        cells = np.empty((1, len(samples)), dtype=object)
+        for i, found in enumerate(labels):
+            cells[0, i] = found[name]
+        chans[name] = cells
     for name in ("Z", "ZBack"):
         cells = np.empty((1, len(samples)), dtype=object)
         for i, pixel in enumerate(samples):
@@ -98,7 +121,7 @@ class QaTest(unittest.TestCase):
             write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
             self.assertEqual(checks.deep_metrics(read_deep(path), beauty, ranges)["uncovered"], 0.5)
             write_deep(path, [[(0.5, 1.0, 0)], [(0.2, 0.5, 2), (0.6, 1.0, 0, 3000.0)]])
-            self.assertGreater(checks.deep_metrics(read_deep(path), beauty, ranges)["sky_id_in_front"], 0.0)
+            self.assertGreater(checks.deep_metrics(read_deep(path), beauty, ranges)["sky_in_front"], 0.0)
 
     def test_merged_samples_fail_the_identity_check_even_when_they_round_to_a_declared_id(self) -> None:
         merged = [
@@ -124,21 +147,36 @@ class QaTest(unittest.TestCase):
 
 
 def _merged_deep(pixels: list[list[tuple[float, ...]]]) -> Deep:
-    """Pixels of (r, g, b, a, z, id quotient, share, id, ...) samples; the check averages its sources."""
+    """Pixels of (r, g, b, a, z, id quotient, share, id, ...) samples; checks and roles mix the sources."""
     flat = [s for p in pixels for s in p]
     a = np.array([s[3] for s in flat], np.float32)
-    checks = [
-        sum(float(s[i]) * float(identity.check(np.array([int(s[i + 1])]))[0]) for i in range(6, len(s), 2))
-        for s in flat
-    ]
     channels = {name: np.array([s[i] for s in flat], np.float32) * a for i, name in enumerate("RGB")}
+    channels |= _labels([[(float(s[i]), int(s[i + 1])) for i in range(6, len(s), 2)] for s in flat], a)
     channels["Z"] = np.array([s[4] for s in flat], np.float32)
     channels["ZBack"] = channels["Z"].copy()
     channels["instance_id"] = np.array([s[5] for s in flat], np.float32) * a
-    channels["instance_check"] = np.array(checks, np.float32) * a
     channels["coverage"] = a.copy()
     channels["A"] = a.astype(np.float16).astype(np.float32)
     return Deep(len(pixels), 1, np.array([len(p) for p in pixels]), channels)
+
+
+class RoleChannelTest(unittest.TestCase):
+    def test_role_channels_out_of_order_or_missing_fail_raw_qa(self) -> None:
+        deep = _deep([[(0, 0, 1, 1.0, 5.0, 3)], [(0, 1, 0, 0.5, 2.0, 2), (0, 1, 0, 1.0, 3000.0, 0)]])
+        beauty = {c: flatten(deep).rgba[..., i].astype(np.float32) for i, c in enumerate("RGB")}
+        ranges = [(0, 4)]
+        metrics = checks.deep_metrics(deep, beauty, ranges)
+        self.assertEqual((metrics["role_channels"], metrics["role_excess"]), (1.0, 0.0))
+        for name, low, high, excess in (("fur", 2, 3, 0.25), ("foreground", 0, 1, 0.5), ("hero", 0, 1, 1.0)):
+            broken = {**deep.channels, name: deep.channels[name].copy()}
+            broken[name][low:high] += excess
+            found = checks.deep_metrics(Deep(deep.width, deep.height, deep.counts, broken), beauty, ranges)
+            self.assertAlmostEqual(found["role_excess"], excess, places=6)
+            self.assertGreater(found["role_excess"], checks.LIMITS["role_excess"][1])
+        missing = {k: v for k, v in deep.channels.items() if k != "hero"}
+        found = checks.deep_metrics(Deep(deep.width, deep.height, deep.counts, missing), beauty, ranges)
+        self.assertEqual(found["role_channels"], 0.0)
+        self.assertNotIn("role_excess", found)
 
 
 class IdentityTest(unittest.TestCase):
@@ -162,31 +200,130 @@ class IdentityTest(unittest.TestCase):
         flipped = np.unpackbits((bits[1:] ^ bits[:-1]).view(np.uint8)).reshape(-1, 32).sum(axis=1)
         self.assertAlmostEqual(float(flipped.mean()), 23 / 2, delta=0.1)
 
-    def test_merges_of_different_ids_pass_the_check_at_the_stated_rate(self) -> None:
-        rng = np.random.default_rng(7)
-        count = 400_000
-        first = rng.integers(0, identity.MAX_ID, count)
-        second = (first + rng.integers(1, identity.MAX_ID, count)) % identity.MAX_ID
-        share = rng.choice([0.5, 0.25, 1 / 3, 1 / 64], count)
-        quotient = share * first + (1 - share) * second
-        check = share * identity.check(first) + (1 - share) * identity.check(second)
-        coverage = rng.uniform(1 / 64, 1.0, count)
+    def test_the_second_check_is_pinned_and_unrelated_to_the_first(self) -> None:
+        ids = np.arange(identity.MAX_ID)
+        first, second = identity.check(ids).astype(np.float64), identity.check2(ids).astype(np.float64)
+        self.assertTrue(np.all((second >= 1.0) & (second < 2.0)))
+        self.assertEqual(identity.check2(np.array([0, 1, 2, 3, 1000])).tolist(), PINNED_CHECKS2)
+        self.assertLess(abs(float(np.corrcoef(first, second)[0, 1])), 0.02)
+        self.assertLess(abs(float(np.corrcoef(np.diff(first), np.diff(second))[0, 1])), 0.02)
+
+    def test_two_source_merges_of_nearby_ids_pass_within_the_stated_bound(self) -> None:
+        for share in (1 / 2, 1 / 4, 1 / 16, 1 / 64, 1 / 256):
+            accepted, total = 0, 0
+            for distance in range(1, 9):
+                low = np.arange(identity.MAX_ID - distance)
+                for kept, other in ((low, low + distance), (low + distance, low)):
+                    decoded = _decode_merge([(kept, 1.0 - share), (other, share)])
+                    self.assertTrue(np.all((decoded == kept) | (decoded == identity.UNLABELLED)))
+                    accepted += int((decoded == kept).sum())
+                    total += kept.size
+            expected = _bound(share) * total
+            self.assertLessEqual(accepted, expected + 4.0 * np.sqrt(expected) + 1.0, share)
+
+    def test_many_source_merges_pass_within_the_stated_bound(self) -> None:
+        rng = np.random.default_rng(11)
+        count = 200_000
+        for share in (1 / 2, 1 / 10, 1 / 100):
+            accepted = 0
+            for others in range(1, 5):
+                kept = rng.integers(0, identity.MAX_ID, count)
+                steps = rng.integers(1, 9, (others, count)) * rng.choice([-1, 1], (others, count))
+                weights = rng.dirichlet(np.ones(others), count).T * share
+                sources = [(kept, np.full(count, 1.0 - share))]
+                sources += [((kept + steps[k]) % identity.MAX_ID, weights[k]) for k in range(others)]
+                accepted += int((_decode_merge(sources) != identity.UNLABELLED).sum())
+            expected = _bound(share) * 4 * count
+            self.assertLessEqual(accepted, expected + 4.0 * np.sqrt(expected) + 1.0, share)
+        absent = _decode_merge([(np.full(count, 1), 0.5), (np.full(count, 3), 0.5)])
+        self.assertTrue(np.all(absent == identity.UNLABELLED))
+
+    def test_merges_of_the_fixed_ids_never_keep_a_mislabelled_id(self) -> None:
+        grid = np.array([c for c in np.ndindex(*(33,) * 4) if sum(c) <= 32], np.float64)
+        shares = np.concatenate([grid, 32 - grid.sum(axis=1, keepdims=True)], axis=1) / 32
+        decoded = _decode_merge([(np.full(len(shares), k), shares[:, k]) for k in range(5)])
+        kept = decoded != identity.UNLABELLED
+        self.assertTrue(np.all(shares[kept, decoded[kept]] == 1.0))
+        self.assertEqual(int(kept.sum()), 5)
+
+    def test_reviewed_merges_lose_their_id(self) -> None:
+        cases = [
+            [(1, 107 / 256), (3, 113 / 256), (4, 36 / 256)],
+            [(1, 0.5), (3, 0.5)],
+            [(1, 0.5), (2001, 0.5)],
+            [(30000, 0.6), (30001, 0.4)],
+            [(13456, 0.51), (13457, 0.49)],
+            [(99, 0.99), (100, 0.01)],
+            [(2, 0.99), (3, 0.01)],
+        ]
+        for case in cases:
+            sources = [(np.array([i]), w) for i, w in case]
+            self.assertEqual(_decode_merge(sources).tolist(), [identity.UNLABELLED], case)
+
+    def test_single_check_collisions_of_adjacent_ids_fail_the_second_check(self) -> None:
+        low = np.arange(identity.MAX_ID - 1)
+        first = identity.check(low).astype(np.float64), identity.check(low + 1).astype(np.float64)
+        collided = low[np.abs(0.01 * (first[1] - first[0])) <= identity.TOLERANCE]
+        self.assertGreater(collided.size, 300)
+        decoded = _decode_merge([(collided, 0.99), (collided + 1, 0.01)])
+        self.assertLess(int((decoded != identity.UNLABELLED).sum()), collided.size // 20)
+
+    def test_a_dominant_source_keeps_its_id_when_the_rest_is_below_the_tolerance(self) -> None:
+        sources = [(np.array([2]), 1.0 - 2.0**-17), (np.array([3]), 2.0**-17)]
+        self.assertEqual(_decode_merge(sources).tolist(), [2])
+
+    def test_a_quotient_off_its_integer_loses_the_id_even_when_both_checks_match(self) -> None:
+        ids = np.array([1, 1, 2, 18000, 18000])
+        offsets = np.array([0.04, 0.3, -0.2, 0.3, 0.4])
+        coverage = np.full(ids.size, 0.5, np.float32)
         decoded = identity.decode(
-            (quotient * coverage).astype(np.float32),
-            (check * coverage).astype(np.float32),
-            coverage.astype(np.float32),
+            ((ids + offsets) * coverage).astype(np.float32),
+            identity.check(ids) * coverage,
+            identity.check2(ids) * coverage,
+            coverage,
         )
-        self.assertLess(float((decoded != identity.UNLABELLED).mean()), 4 * identity.TOLERANCE)
+        self.assertEqual(
+            decoded.tolist(), [1, identity.UNLABELLED, identity.UNLABELLED, 18000, identity.UNLABELLED]
+        )
 
     def test_unmerged_ids_survive_float32_premultiplication(self) -> None:
         ids = np.arange(identity.MAX_ID)
         coverage = np.random.default_rng(3).uniform(1 / 64, 1.0, ids.size).astype(np.float32)
-        decoded = identity.decode(ids.astype(np.float32) * coverage, identity.check(ids) * coverage, coverage)
+        decoded = identity.decode(
+            ids.astype(np.float32) * coverage,
+            identity.check(ids) * coverage,
+            identity.check2(ids) * coverage,
+            coverage,
+        )
         np.testing.assert_array_equal(decoded, ids)
         zero = np.zeros(1, np.float32)
-        self.assertEqual(identity.decode(zero, zero, zero).tolist(), [identity.UNLABELLED])
+        self.assertEqual(identity.decode(zero, zero, zero, zero).tolist(), [identity.UNLABELLED])
         self.assertEqual(identity.range_errors(0, identity.MAX_ID), [])
         self.assertTrue(identity.range_errors(identity.MAX_ID - 1, 2))
+
+
+def _bound(share: float) -> float:
+    """The documented chance that a merge whose mislabelled share is `share` keeps an id."""
+    return (2.0 * identity.TOLERANCE / share + 2.0**-23) ** 2
+
+
+def _decode_merge(
+    sources: "Sequence[tuple[NDArray[np.int64], NDArray[np.float64] | float]]",
+) -> "NDArray[np.int64]":
+    """Decode samples Karma merged from (ids, shares) sources, stored at coverage 0.75 in float32."""
+    count = max(ids.size for ids, _ in sources)
+    sums = np.zeros((3, count))
+    for ids, share in sources:
+        every = np.broadcast_to(ids, (count,))
+        weights = np.broadcast_to(np.asarray(share, np.float64), (count,))
+        sums += weights * np.stack(
+            [
+                every.astype(np.float64),
+                *(h(every).astype(np.float64) for h in (identity.check, identity.check2)),
+            ]
+        )
+    stored = (sums * 0.75).astype(np.float32)
+    return identity.decode(stored[0], stored[1], stored[2], np.full(count, 0.75, np.float32))
 
 
 PINNED_CHECKS = [
@@ -195,6 +332,13 @@ PINNED_CHECKS = [
     1.7041336297988892,
     1.9277628660202026,
     1.1540075540542603,
+]
+PINNED_CHECKS2 = [
+    1.9343010187149048,
+    1.6329020261764526,
+    1.058032751083374,
+    1.1534829139709473,
+    1.8366796970367432,
 ]
 
 
@@ -293,19 +437,30 @@ class SettingsTest(unittest.TestCase):
         stage = Usd.Stage.CreateInMemory()
         one = UsdGeom.Mesh.Define(stage, "/one").GetPrim()
         many = UsdGeom.PointInstancer.Define(stage, "/many").GetPrim()
-        tag_instances(one, np.array([3]))
-        tag_instances(many, np.array([1000, 1001, identity.MAX_ID - 1]))
-        found = UsdGeom.PrimvarsAPI(one).GetPrimvar("instance_check")
-        self.assertEqual(found.GetInterpolation(), UsdGeom.Tokens.constant)
-        self.assertEqual(np.float32(found.Get()), identity.check(np.array([3]))[0])
-        values = np.asarray(UsdGeom.PrimvarsAPI(many).GetPrimvar("instance_check").Get(), np.float32)
-        np.testing.assert_array_equal(values, identity.check(np.array([1000, 1001, identity.MAX_ID - 1])))
+        sky = UsdGeom.Mesh.Define(stage, "/sky").GetPrim()
+        tag_instances(one, np.array([3]), "hero_groom")
+        tag_instances(many, np.array([1000, 1001, identity.MAX_ID - 1]), "rock")
+        tag_instances(sky, np.array([0]), "sky")
+        for name, hashed in (("instance_check", identity.check), ("instance_check2", identity.check2)):
+            found = UsdGeom.PrimvarsAPI(one).GetPrimvar(name)
+            self.assertEqual(found.GetInterpolation(), UsdGeom.Tokens.constant)
+            self.assertEqual(np.float32(found.Get()), hashed(np.array([3]))[0])
+            values = np.asarray(UsdGeom.PrimvarsAPI(many).GetPrimvar(name).Get(), np.float32)
+            np.testing.assert_array_equal(values, hashed(np.array([1000, 1001, identity.MAX_ID - 1])))
+        for prim, expected in ((one, (1.0, 1.0, 1.0)), (sky, (0.0, 0.0, 0.0))):
+            found = tuple(float(UsdGeom.PrimvarsAPI(prim).GetPrimvar(r).Get()) for r in roles.ROLES)
+            self.assertEqual(found, expected)
+        for role, expected in zip(roles.ROLES, (1.0, 0.0, 0.0), strict=True):
+            values = np.asarray(UsdGeom.PrimvarsAPI(many).GetPrimvar(role).Get(), np.float32)
+            self.assertEqual(values.tolist(), [expected] * 3)
         with self.assertRaises(ValueError):
-            tag_instances(UsdGeom.Mesh.Define(stage, "/outside").GetPrim(), np.array([identity.MAX_ID]))
+            tag_instances(
+                UsdGeom.Mesh.Define(stage, "/outside").GetPrim(), np.array([identity.MAX_ID]), "rock"
+            )
         settings.author(
             stage, "/cam", settings.RenderConfig(4, 4, 8, (1,), motion_blur=False, depth_of_field=False)
         )
-        self.assertIn("instance_check", settings.DEEP_AOVS)
+        self.assertTrue({"instance_check", "instance_check2", *roles.ROLES} <= set(settings.DEEP_AOVS))
         names = {aov.name: aov for aov in settings.BEAUTY_AOVS}
         self.assertEqual(
             (names["instance_check"].source_type, names["instance_check"].file_format), ("primvar", "float")

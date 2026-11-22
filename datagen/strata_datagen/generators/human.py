@@ -54,7 +54,14 @@ def place(rng: np.random.Generator, ground: Ground, track: FloatArray, frames: i
 
 
 def author(
-    stage: Usd.Stage, path: str, asset: str, placement: ClipPlacement, *, first_frame: int, instance_id: int
+    stage: Usd.Stage,
+    path: str,
+    asset: str,
+    placement: ClipPlacement,
+    *,
+    first_frame: int,
+    instance_id: int,
+    name: str,
 ) -> UsdGeom.Xform:
     """Reference the clip so clip frame `start` plays at `first_frame`; its prims inherit the ids."""
     xform = UsdGeom.Xform(stage.DefinePrim(path))
@@ -65,5 +72,5 @@ def author(
     rotate.Set(placement.yaw_deg)
     for index, offset in enumerate(placement.offset):
         translate.Set(Gf.Vec3d(*(float(v) for v in offset)), Usd.TimeCode(first_frame - 1 + index))
-    tag_instances(xform.GetPrim(), np.array([instance_id]))
+    tag_instances(xform.GetPrim(), np.array([instance_id]), name)
     return xform

@@ -11,48 +11,81 @@ from numpy.typing import NDArray
 from strata_datagen.exr import Deep, read_deep
 from strata_datagen.qa.deep import flatten
 from strata_datagen.scene.export import CONTRACT_VERSION
-from strata_dataset import identity
+from strata_dataset import identity, roles
 
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
 FOCAL_MM = 18.0
 SENSOR_MM = 36.0
 
 
+NAMES = {0: "sky", 1: "terrain", 2: "hero_skin", 3: "hero_groom", 4: "hero_hair"}
+
+
+def membership(instance: int) -> tuple[float, float, float]:
+    """The role primvars of a fixture id: the named fixed ids, any other id a foreground layer."""
+    return roles.membership(NAMES.get(instance, "layer"))
+
+
 @dataclass(frozen=True)
 class Sample:
     """One deep sample: premultiplied grey, true float alpha (A is stored as half), id and depth.
 
-    `check` is the unpremultiplied `instance_check`; None stores the check of the integer `instance`.
+    `checks` are the unpremultiplied `instance_check` and `instance_check2`, `roles` the
+    unpremultiplied role channels; None stores those of the integer `instance`.
     """
 
     grey: float
     alpha: float
     instance: float
     z: float = 2.0
-    check: float | None = None
+    checks: tuple[float, float] | None = None
+    roles: tuple[float, float, float] | None = None
 
-    def instance_check(self) -> float:
-        if self.check is not None:
-            return self.check
-        return float(identity.check(np.array([int(self.instance)]))[0])
+    def instance_checks(self) -> tuple[float, float]:
+        if self.checks is not None:
+            return self.checks
+        ids = np.array([int(self.instance)])
+        return float(identity.check(ids)[0]), float(identity.check2(ids)[0])
+
+    def role_values(self) -> tuple[float, float, float]:
+        return self.roles if self.roles is not None else membership(int(self.instance))
 
 
-def merged(grey: float, alpha: float, sources: dict[int, float], z: float = 2.0) -> Sample:
-    """A sample Karma merged from `sources` (id to coverage share): both id channels are averaged."""
+def merged(
+    grey: float, alpha: float, sources: dict[int, float], z: float = 2.0, names: dict[int, str] | None = None
+) -> Sample:
+    """A sample Karma merged from `sources` (id to coverage share): every id and role channel is averaged.
+
+    `names` gives the id range name of ids other than the fixture's named ones.
+    """
     ids = np.array(list(sources))
     shares = np.array(list(sources.values()), np.float64)
-    check = float(np.dot(shares, identity.check(ids).astype(np.float64)))
-    return Sample(grey, alpha, float(np.dot(shares, ids)), z, check)
+    checks = tuple(
+        float(np.dot(shares, h(ids).astype(np.float64))) for h in (identity.check, identity.check2)
+    )
+    named = {**NAMES, **(names or {})}
+    members = [roles.membership(named.get(int(i), "layer")) for i in ids]
+    mixture = np.dot(shares, np.array(members, np.float64))
+    return Sample(
+        grey,
+        alpha,
+        float(np.dot(shares, ids)),
+        z,
+        (checks[0], checks[1]),
+        (float(mixture[0]), float(mixture[1]), float(mixture[2])),
+    )
 
 
 SKY = Sample(0.3, 1.0, 0, 3000.0)
 
 
 def write_deep(path: Path, pixels: list[Sample | list[Sample]]) -> None:
-    """A one-row deep EXR stored the way Karma writes it: half A and colour, float id, check and coverage."""
+    """A one-row deep EXR stored the way Karma writes it: half A and colour, float ids, coverage and roles."""
     rows = [[p] if isinstance(p, Sample) else p for p in pixels]
     values: dict[str, list[NDArray[np.float32]]] = {name: [] for name in ("R", "G", "B", "A", "Z", "ZBack")}
-    values |= {"instance_id": [], "instance_check": [], "coverage": []}
+    values |= {
+        name: [] for name in ("instance_id", "instance_check", "instance_check2", "coverage", *roles.ROLES)
+    }
     for samples in rows:
         alpha = np.array([s.alpha for s in samples], np.float32)
         grey = np.array([s.grey for s in samples], np.float16).astype(np.float32)
@@ -61,7 +94,10 @@ def write_deep(path: Path, pixels: list[Sample | list[Sample]]) -> None:
         values["A"].append(alpha.astype(np.float16).astype(np.float32))
         values["coverage"].append(alpha)
         values["instance_id"].append(np.array([s.instance for s in samples], np.float32) * alpha)
-        values["instance_check"].append(np.array([s.instance_check() for s in samples], np.float32) * alpha)
+        for index, name in enumerate(("instance_check", "instance_check2")):
+            values[name].append(np.array([s.instance_checks()[index] for s in samples], np.float32) * alpha)
+        for index, name in enumerate(roles.ROLES):
+            values[name].append(np.array([s.role_values()[index] for s in samples], np.float32) * alpha)
         values["Z"].append(np.array([s.z for s in samples], np.float32))
         values["ZBack"].append(values["Z"][-1].copy())
     channels: dict[str, OpenEXR.Channel] = {}

@@ -1,10 +1,13 @@
-"""Pixel roles shared by data generation and training: the visible coverage of named id ranges.
+"""Pixel roles shared by data generation and training, carried by linear deep channels, never by ids.
 
-A role is a set of `manifest.instance_ids` range names, never fixed ids: `foreground` is every range
-but the sky, `hero` the hero's skin, groom and hairstyle, `fur` its groom and hairstyle strands.
+Every surface carries one constant primvar per role, 1 when it plays the role and 0 otherwise, chosen
+by its `manifest.instance_ids` range name (`membership`): `foreground` is every range but the sky,
+`hero` the hero's skin, groom and hairstyle, `fur` its groom and hairstyle strands. Each renders as a
+deep channel premultiplied by the sample's float alpha, like `coverage`. Karma merges samples by
+summing their channels, so a merged sample holds exactly the coverage of each role among its
+sources; a role's pixel coverage sums its channel times the transmittance in front.
 """
 
-from collections.abc import Mapping, Sequence
 from typing import cast
 
 import numpy as np
@@ -18,44 +21,50 @@ HERO = ("hero_skin", *FUR)
 ROLES = ("foreground", "hero", "fur")
 CHANNELS = tuple(f"roles.{role}" for role in ROLES)
 
-Ranges = dict[str, list[tuple[int, int]]]
+
+def membership(name: str) -> tuple[float, float, float]:
+    """The constant value of each role primvar, in ROLES order, on surfaces of the range `name`."""
+    return (float(name != SKY), float(name in HERO), float(name in FUR))
 
 
-def ranges(instance_ids: Sequence[Mapping[str, object]]) -> Ranges:
-    """Each role's [first, end) id ranges, taken by name from a manifest's `instance_ids`."""
-    named: dict[str, tuple[int, int]] = {}
-    for record in instance_ids:
-        first, count = cast("int", record["first_id"]), cast("int", record["count"])
-        named[cast("str", record["name"])] = (first, first + count)
-    return {
-        "foreground": [span for name, span in named.items() if name != SKY],
-        "hero": [named[name] for name in HERO if name in named],
-        "fur": [named[name] for name in FUR if name in named],
-    }
+def nested(raw: NDArray[np.floating], alpha: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Owned (N, 3) premultiplied sample role coverage, clamped to 0 <= fur <= hero <= foreground <= alpha.
+
+    `raw` is the (N, 3) deep role channels in ROLES order, borrowed; float accumulation can leave
+    them a few ulps outside that order.
+    """
+    foreground = np.clip(raw[:, 0], 0.0, alpha)
+    hero = np.clip(raw[:, 1], 0.0, foreground)
+    fur = np.clip(raw[:, 2], 0.0, hero)
+    return np.ascontiguousarray(np.stack([foreground, hero, fur], axis=1), np.float32)
+
+
+def sky(alpha: NDArray[np.float32], foreground: NDArray[np.float32]) -> NDArray[np.bool_]:
+    """Samples mostly of the sky backdrop: their foreground share is below half their alpha."""
+    return 2.0 * foreground.astype(np.float64) < alpha.astype(np.float64)
 
 
 def coverage(
     alpha: NDArray[np.float32],
-    ids: NDArray[np.int64],
+    weights: NDArray[np.float32],
     counts: NDArray[np.int64],
     shape: tuple[int, int],
-    roles: Ranges,
 ) -> dict[str, NDArray[np.float32]]:
     """Owned (H, W) float32 coverage per channel name; inputs are borrowed and calls are thread-safe.
 
-    Samples are pixel-major and front to back within a pixel; a role's coverage is the summed
-    visible coverage (alpha times the transmittance in front) of its samples.
+    Samples are pixel-major and front to back within a pixel; `weights` is their (N, 3) premultiplied
+    role coverage in ROLES order. A role's coverage is the sum over samples of its weight times the
+    transmittance in front.
     """
-    if alpha.shape != ids.shape or int(counts.sum()) != alpha.size or counts.size != shape[0] * shape[1]:
-        raise ValueError("sample alpha and ids must match the sample counts and image shape")
+    if weights.shape != (alpha.size, len(ROLES)) or int(counts.sum()) != alpha.size:
+        raise ValueError("sample alpha and role weights must match the sample counts")
+    if counts.size != shape[0] * shape[1]:
+        raise ValueError("sample counts must match the image shape")
     transmitted = cast("NDArray[np.float64]", segmented.transmittance(alpha, counts))
-    visible = alpha.astype(np.float64) * transmitted
     pixel = np.repeat(np.arange(counts.size), counts)
     out: dict[str, NDArray[np.float32]] = {}
-    for role, channel in zip(ROLES, CHANNELS, strict=True):
-        member = np.zeros(ids.size, np.bool_)
-        for low, high in roles[role]:
-            member |= (ids >= low) & (ids < high)
-        summed = np.bincount(pixel[member], weights=visible[member], minlength=counts.size)
+    for index, channel in enumerate(CHANNELS):
+        visible = weights[:, index].astype(np.float64) * transmitted
+        summed = np.bincount(pixel, weights=visible, minlength=counts.size)
         out[channel] = np.clip(summed, 0.0, 1.0).astype(np.float32).reshape(shape)
     return out

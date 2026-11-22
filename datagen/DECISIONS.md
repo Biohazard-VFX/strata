@@ -6,10 +6,12 @@
 - Roughness and metallic AOVs are `inputs:aov:<name>` on the surface shader, rendered as raw render vars.
 - Camera-space normals come from Karma's `ray:hitN_camera`: x right, y up, +Z towards the viewer.
 - Deep carries `C`, `instance_id` and a float `coverage` (constant 1 on every surface, sky too): it is the sample's float alpha and id = round(instance_id / coverage); Karma stores A as half.
-- Deep also carries `instance_check` = hash(id) in [1, 2): Karma averages ids of merged samples, so a sample is labelled only if its check matches its rounded id (fix the encoding, not a tolerance).
-- Identity check tolerance is 2^-14 against ~1e-5 float noise: a merge of different ids passes with p <= 4 x 2^-14 = 2.4e-4 per merged sample.
+- Roles are linear deep and beauty channels (`foreground`, `hero`, `fur`: per-surface 0/1 primvars times alpha), exact through Karma's summing merges; roles never come from ids.
+- Each surface's role primvars follow its manifest id range name via strata_dataset.roles.membership, the one rule shared by authoring and the contract.
+- Instance ids are best-effort, for per-object use only: kept if the quotient is near-integer and two independent hashes (`instance_check`, `instance_check2`) match, else -1.
+- Id check tolerance is 2^-14 against ~1e-5 float noise; two hashes make a merge with mislabelled share m pass with p <= (2^-13/m)^2, one hash only 2^-13/m.
 - Ids stay below 2^15 so round(instance_id / coverage) is exact under float32 accumulation; authoring an id outside [0, 2^15) fails the build.
-- Samples failing the identity check keep colour, alpha and occlusion but carry id -1 and belong to no role; raw QA limits their fraction and coverage.
+- Samples failing the identity check keep colour, alpha, occlusion and roles but carry id -1; raw QA limits their fraction and coverage.
 - Datagen packing and raw QA refuse records of any other contract version (strata_dataset.records) instead of reinterpreting them.
 - Deep uses Karma compression 5: against 0 it moves K=4 layer alpha by 3e-4 on partial pixels and saves 20% (measured; ids are decoded via coverage).
 - Beauty carries a raw `C` (the deep flattens to it, targets stay raw) and an OIDN-denoised `denoised` copy (albedo and normal guides) as the model input.
@@ -46,7 +48,7 @@
 - Farm nodes never write a local shot: downloaded output enters only via `ingest`, staged in the shot and renamed in under the lock.
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
-- Every frame gets float32 sky-inclusive K=4 targets (strata_dataset.layers, sky masked); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.
+- Every frame gets float32 sky-inclusive K=4 targets (strata_dataset.layers, sky = samples under half foreground); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.
 - Thin structures are self-authored: flexible elements (cable, fence wire, twine, rope) as linear BasisCurves, rigid ones (posts, rails, bars) as tube meshes.
 - Thin-structure widths are drawn in pixels of a 1280-wide frame, main elements 0.15-5 px and members at most 24 px unless a kind's physical minimum is wider.
 - Thin structures sit in a depth band (foreground, between camera and subject, background) and are rejected if they come near any camera position or the subject.
@@ -77,7 +79,7 @@
 - Background is part of the deep: one opaque, finite-Z sample per pixel with reserved id 0 (manifest.background); depth losses ignore it, colour and coverage use it.
 - Off-stride raw deep is deleted by `prune` only when the frame's raw QA passed and every validated input (all but manifest timings) is unchanged.
 - Layer and sample alpha come from the float `coverage`, not half A, so near-opaque samples keep the visible layers behind them.
-- The flat geometry mask is a `foreground` primvar AOV (1 on geometry, 0 on the sky); deep `coverage` stays 1 on the sky for id decoding and float alpha.
+- The flat geometry mask is the `foreground` role AOV (1 on geometry, 0 on the sky); deep `coverage` stays 1 on the sky for id decoding and float alpha.
 - `coverage` stays in the beauty product as well: Karma's deep product writes only AOVs that a raster product renders (husk: "Unable to find AOV coverage").
 - The camera's vertical aperture follows the output aspect (36 mm x H/W), so square pixels need no aperture conform and fy = fx.
 - Creature raw exports are reused only when job, frames, scripts, sources with every file they reference, and the probed tool build all match.

@@ -58,7 +58,7 @@ def flatten(deep: Deep) -> Flattened:
     return Flattened(rgba.reshape(*shape, 4), covered.reshape(shape), partial.reshape(shape))
 
 
-IDENTITY_CHANNELS = ("instance_id", "instance_check", "coverage")
+IDENTITY_CHANNELS = ("instance_id", "instance_check", "instance_check2", "coverage")
 
 
 def instance_ids(deep: Deep) -> NDArray[np.int64]:

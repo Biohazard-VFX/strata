@@ -187,4 +187,4 @@ def author(
     for name in names:
         prim = stage.OverridePrim(f"/World/hero/hair/{name}")
         materials.bind(prim, scalp if name == "scalp" else facial)
-        tag_instances(prim, np.array([hero.HAIR_ID]))
+        tag_instances(prim, np.array([hero.HAIR_ID]), "hero_hair")

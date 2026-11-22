@@ -5,13 +5,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np
-from pxr import UsdGeom
+from pxr import Usd, UsdGeom
 
 from strata_datagen.library.catalogue import Hdri, Hero, HeroPose, Library, Model, Provenance, Surface
 from strata_datagen.presets import PRESETS
 from strata_datagen.scene import compose, export
 from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec, frames
 from strata_datagen.usdutil import ints, new_stage, vec3f
+from strata_dataset import roles
 
 PROVENANCE = Provenance("test", "test", "test")
 TEXTURES = {
@@ -94,6 +95,32 @@ class DeterminismTest(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             record = json.loads((build(Path(tmp), ShotSpec(seed=7)) / "manifest.json").read_text())
             self.assertIn({"name": "hero_groom", "first_id": 3, "count": 1}, record["instance_ids"])
+
+    def test_every_tagged_surface_carries_the_roles_of_its_manifest_id_range(self) -> None:
+        with TemporaryDirectory() as tmp:
+            directory = build(Path(tmp), ShotSpec(seed=7))
+            record = json.loads((directory / "manifest.json").read_text())
+            names = {
+                first + k: r["name"]
+                for r in record["instance_ids"]
+                for first in [r["first_id"]]
+                for k in range(r["count"])
+            }
+            stage = Usd.Stage.Open(str(directory / "scene" / "shot.usda"))
+            tagged = 0
+            for prim in stage.Traverse():
+                api = UsdGeom.PrimvarsAPI(prim)
+                if not api.GetPrimvar("instance_id").HasAuthoredValue():
+                    continue
+                ids = np.atleast_1d(np.asarray(api.GetPrimvar("instance_id").Get()))
+                found = np.stack([np.atleast_1d(np.asarray(api.GetPrimvar(r).Get())) for r in roles.ROLES], 1)
+                expected = np.array([roles.membership(names[int(i)]) for i in ids])
+                np.testing.assert_array_equal(
+                    np.broadcast_to(found, expected.shape), expected, str(prim.GetPath())
+                )
+                tagged += 1
+            self.assertGreater(tagged, 5)
+            self.assertEqual({names[i] for i in (0, 1, 2, 3)}, {"sky", "terrain", "hero_skin", "hero_groom"})
 
     def test_different_seeds_differ(self) -> None:
         with TemporaryDirectory() as tmp:

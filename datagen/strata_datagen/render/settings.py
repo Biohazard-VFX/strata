@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from pxr import Gf, Sdf, Usd, UsdRender
 
+from strata_dataset import roles
+
 VERSION = "render-settings-0.4.0"
 SETTINGS_PATH = "/Render/settings"
 
@@ -28,14 +30,15 @@ BEAUTY_AOVS = (
     Aov("Z", "raw", "ray:hitPz", "float", "float", '["minmax",{"mode":"zmin"}]'),
     Aov("instance_id", "primvar", "instance_id", "int", "float", '["minmax",{"mode":"zmin"}]'),
     Aov("instance_check", "primvar", "instance_check", "float", "float", '["minmax",{"mode":"zmin"}]'),
+    Aov("instance_check2", "primvar", "instance_check2", "float", "float", '["minmax",{"mode":"zmin"}]'),
     Aov("denoised", "lpe", "C.*[LO]", "color4f", "color4h"),
-    Aov("foreground", "primvar", "foreground", "float", "float"),
+    *(Aov(role, "primvar", role, "float", "float") for role in roles.ROLES),
     Aov("coverage", "primvar", "coverage", "float", "float"),
 )
 DENOISER = json.dumps(
     [["denoise", {"engine": "oidn", "use_albedo_input": True, "use_n_input": True, "aovs": ["denoised"]}]]
 )
-DEEP_AOVS = ("C", "instance_id", "instance_check", "coverage")
+DEEP_AOVS = ("C", "instance_id", "instance_check", "instance_check2", "coverage", *roles.ROLES)
 DEEP_COMPRESSION = 5
 DEEP_Z_BIAS_M = 0.0
 

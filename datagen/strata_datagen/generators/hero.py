@@ -51,10 +51,10 @@ def sample_coat(rng: np.random.Generator, samples: int) -> FloatArray:
     return brightness[:, None] * np.stack([1.0 + warmth, np.ones_like(warmth), 1.0 - warmth], axis=-1)
 
 
-def _bind(stage: Usd.Stage, path: Sdf.Path, material: UsdShade.Material, instance_id: int) -> None:
+def _bind(stage: Usd.Stage, path: Sdf.Path, material: UsdShade.Material, instance_id: int, name: str) -> None:
     prim = stage.OverridePrim(path)
     UsdShade.MaterialBindingAPI.Apply(prim).Bind(material, UsdShade.Tokens.strongerThanDescendants)
-    tag_instances(prim, np.array([instance_id]))
+    tag_instances(prim, np.array([instance_id]), name)
 
 
 def author(
@@ -74,6 +74,6 @@ def author(
         time = Usd.TimeCode(first_frame - 1 + index)
         translate.Set((float(position[0]), float(position[1]), float(position[2])), time)
         rotate.Set(float(yaw), time)
-    _bind(stage, xform.GetPath().AppendChild("skin"), skin, SKIN_ID)
-    _bind(stage, xform.GetPath().AppendChild("groom"), groom, GROOM_ID)
+    _bind(stage, xform.GetPath().AppendChild("skin"), skin, SKIN_ID, "hero_skin")
+    _bind(stage, xform.GetPath().AppendChild("groom"), groom, GROOM_ID, "hero_groom")
     return xform

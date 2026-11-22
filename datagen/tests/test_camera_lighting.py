@@ -105,7 +105,7 @@ class ForegroundTest(unittest.TestCase):
         hdri = lighting.Hdri("h", "h.exr", (0.48, 0.6, -0.64), 5.0, (1.0, 1.0, 1.0), 1.0)
         lighting.author(stage, "/lights", lighting.Lighting(hdri, 0.0, 1.0), 1)
         ground = UsdGeom.Mesh.Define(stage, "/ground").GetPrim()
-        tag_instances(ground, np.array([1]))
+        tag_instances(ground, np.array([1]), "terrain")
         sky = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/lights/backdrop"))
         self.assertEqual(sky.GetPrimvar("instance_id").Get(), lighting.SKY_ID)
         self.assertEqual(sky.GetPrimvar("coverage").Get(), 1.0)

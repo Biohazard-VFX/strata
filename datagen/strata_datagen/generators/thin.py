@@ -805,6 +805,7 @@ def _author_strands(
     structure: Structure,
     instance_id: int,
     *,
+    label: str,
     first_frame: int,
     samples: int,
 ) -> list[str]:
@@ -818,7 +819,7 @@ def _author_strands(
             [structure.strands[i] for i in indices],
             [structure.strand_widths[i] for i in indices],
         )
-        tag_instances(curves.GetPrim(), np.array([instance_id]))
+        tag_instances(curves.GetPrim(), np.array([instance_id]), label)
         prims.append(str(curves.GetPath()))
         if swing is None:
             continue
@@ -863,10 +864,13 @@ def author(
     structure: Structure,
     first_id: int,
     *,
+    name: str,
     first_frame: int,
     samples: int,
 ) -> list[Part]:
     """Author strands and members under path, each part tagged with its own instance id.
+
+    Part p carries the roles of the manifest id range `<name>_<p>`.
 
     Swinging spans are separate curves whose transform sample i is authored at first_frame - 1 + i.
     """
@@ -874,11 +878,17 @@ def author(
     parts: list[Part] = []
     if structure.strands:
         prims = _author_strands(
-            stage, f"{path}/strands", structure, first_id, first_frame=first_frame, samples=samples
+            stage,
+            f"{path}/strands",
+            structure,
+            first_id,
+            label=f"{name}_strands",
+            first_frame=first_frame,
+            samples=samples,
         )
         parts.append(Part("strands", first_id, tuple(prims)))
     if structure.members:
         mesh = _author_members(stage, f"{path}/members", structure)
-        tag_instances(mesh.GetPrim(), np.array([first_id + len(parts)]))
+        tag_instances(mesh.GetPrim(), np.array([first_id + len(parts)]), f"{name}_members")
         parts.append(Part("members", first_id + len(parts), (str(mesh.GetPath()),)))
     return parts

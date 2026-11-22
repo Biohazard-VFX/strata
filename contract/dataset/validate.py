@@ -24,11 +24,24 @@ BEAUTY = {
     "Z": {"Z.Z"},
     "instance_id": {"instance_id.instance_id"},
     "instance_check": {"instance_check.instance_check"},
+    "instance_check2": {"instance_check2.instance_check2"},
     "denoised": {"denoised.R", "denoised.G", "denoised.B", "denoised.A"},
-    "foreground": {"foreground.foreground"},
+    **{role: {f"{role}.{role}"} for role in roles.ROLES},
     "coverage": {"coverage.coverage"},
 }
-DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id", "instance_check", "coverage"}
+DEEP = {
+    "R",
+    "G",
+    "B",
+    "A",
+    "Z",
+    "ZBack",
+    "instance_id",
+    "instance_check",
+    "instance_check2",
+    "coverage",
+    *roles.ROLES,
+}
 LAYERS = {f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B")} | set(roles.CHANNELS)
 
 

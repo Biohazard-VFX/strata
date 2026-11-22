@@ -261,6 +261,7 @@ def _author_thin(shot: Shot, stage: Usd.Stage) -> None:
             "/structure",
             structure,
             next_id,
+            name=name,
             first_frame=shot.frames[0],
             samples=len(shot.track.samples),
         )
@@ -291,7 +292,7 @@ def _author_ground(shot: Shot, library: Library, stage: Usd.Stage, root: Path) -
     surface = next(s for s in library.surfaces if s.asset_id == shot.surface)
     prim = stage.DefinePrim("/World/terrain", "Mesh")
     prim.GetReferences().AddReference(_terrain_layer(shot))
-    tag_instances(prim, np.array([TERRAIN_ID]))
+    tag_instances(prim, np.array([TERRAIN_ID]), "terrain")
     materials.bind(prim, looks.ground(stage, root, shot.scene_dir, surface))
 
 
@@ -322,7 +323,13 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
         )
     else:
         human.author(
-            stage, "/World/hero", asset, shot.placement, first_frame=shot.frames[0], instance_id=hero.SKIN_ID
+            stage,
+            "/World/hero",
+            asset,
+            shot.placement,
+            first_frame=shot.frames[0],
+            instance_id=hero.SKIN_ID,
+            name="hero_skin",
         )
     if shot.hair is not None:
         entry = library.hero(shot.hero_key)

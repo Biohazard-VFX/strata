@@ -156,7 +156,9 @@ class PlacementTest(unittest.TestCase):
         stage = Usd.Stage.CreateInMemory()
         next_id = 100
         for index, s in enumerate(self.structures):
-            parts = thin.author(stage, f"/thin/s{index}", s, next_id, first_frame=1, samples=len(TIMES))
+            parts = thin.author(
+                stage, f"/thin/s{index}", s, next_id, name=f"s{index}", first_frame=1, samples=len(TIMES)
+            )
             self.assertEqual([p.instance_id for p in parts], list(range(next_id, next_id + len(parts))))
             next_id += len(parts)
             total = 0

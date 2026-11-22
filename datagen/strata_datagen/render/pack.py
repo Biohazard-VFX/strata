@@ -1,5 +1,7 @@
 """After rendering: K-layer targets and role coverage for every frame, raw-sample sidecars on the stride.
 
+Roles come from the deep role channels (`strata_dataset.roles`), never from instance ids.
+
 Packing never removes raw deep: it is QA evidence, and only `qa.checks.prune` removes it, after the
 frame has passed raw QA. Sidecars are write-once: a frame's directory is published whole and never
 changed; only the offline `remove_samples` deletes it. Every change holds the shot's writer lock.
@@ -19,7 +21,6 @@ from numpy.typing import NDArray
 
 from strata_datagen import shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
-from strata_datagen.generators.lighting import SKY_ID
 from strata_datagen.qa.deep import instance_ids
 from strata_dataset import records, roles
 from strata_dataset import samples as contract_samples
@@ -39,6 +40,7 @@ class Samples:
     z: NDArray[np.float32]
     alpha: NDArray[np.float32]
     rgb: NDArray[np.float32]
+    roles: NDArray[np.float32]
     ids: NDArray[np.int64]
 
     def arrays(self) -> dict[str, NDArray[np.generic]]:
@@ -48,21 +50,18 @@ class Samples:
             "z": self.z,
             "alpha": self.alpha,
             "rgb": self.rgb,
+            "roles": self.roles,
             "ids": self.ids,
         }
 
 
 @dataclass(frozen=True)
 class ShotFrames:
-    """The frame plan a manifest declares: frames on the deep stride are recomposition frames.
-
-    `roles` holds each role's id ranges, named in the manifest's `instance_ids`.
-    """
+    """The frame plan a manifest declares: frames on the deep stride are recomposition frames."""
 
     shot_id: str
     first: int
     stride: int
-    roles: roles.Ranges
 
     @staticmethod
     def load(shot: Path) -> "ShotFrames":
@@ -74,8 +73,7 @@ class ShotFrames:
             raise ValueError(f"{shot}: {'; '.join(errors)}")
         render = cast("dict[str, object]", manifest["render"])
         frames = cast("list[int]", render["frames"])
-        declared = roles.ranges(cast("list[dict[str, object]]", manifest["instance_ids"]))
-        return ShotFrames(str(manifest["shot_id"]), frames[0], cast("int", render["deep_stride"]), declared)
+        return ShotFrames(str(manifest["shot_id"]), frames[0], cast("int", render["deep_stride"]))
 
     def recomposition(self, frame: int) -> bool:
         return (frame - self.first) % self.stride == 0
@@ -87,17 +85,21 @@ class ShotFrames:
 def samples(deep: Deep) -> Samples:
     """Sample alpha is the float `coverage` channel; the half `A` rounds alpha above 0.99976 to 1.
 
-    Samples failing the identity check keep their colour and alpha but carry `identity.UNLABELLED`.
+    Role coverage is the deep role channels, nested within the sample alpha. Samples failing the
+    identity check keep their colour, alpha and roles but carry `identity.UNLABELLED`.
     """
     pixel = deep.pixel_index()
     order = np.lexsort((deep.channels["Z"], pixel))
     rgb = np.stack([deep.channels[c] for c in "RGB"], axis=-1)
+    alpha = np.ascontiguousarray(np.clip(deep.channels["coverage"][order], 0.0, 1.0), np.float32)
+    raw = np.stack([deep.channels[role][order] for role in roles.ROLES], axis=-1)
     return Samples(
         (deep.height, deep.width),
         deep.offsets.astype(np.int64),
         np.ascontiguousarray(deep.channels["Z"][order], np.float32),
-        np.ascontiguousarray(np.clip(deep.channels["coverage"][order], 0.0, 1.0), np.float32),
+        alpha,
         np.ascontiguousarray(rgb[order], np.float32),
+        roles.nested(raw, alpha),
         np.ascontiguousarray(instance_ids(deep)[order], np.int64),
     )
 
@@ -110,7 +112,7 @@ def layers(frame: Samples) -> Layers:
         frame.rgb.astype(np.float64),
         np.diff(frame.offsets),
         frame.shape,
-        sky=frame.ids == SKY_ID,
+        sky=roles.sky(frame.alpha, frame.roles[:, 0]),
     )
 
 
@@ -124,9 +126,9 @@ def layer_channels(targets: Layers) -> dict[str, NDArray[np.float32]]:
     return {name: np.ascontiguousarray(value, np.float32) for name, value in out.items()}
 
 
-def targets(frame: Samples, declared: roles.Ranges) -> dict[str, NDArray[np.float32]]:
+def targets(frame: Samples) -> dict[str, NDArray[np.float32]]:
     """Every channel of a frame's targets: its K layers and the coverage of each role."""
-    covered = roles.coverage(frame.alpha, frame.ids, np.diff(frame.offsets), frame.shape, declared)
+    covered = roles.coverage(frame.alpha, frame.roles, np.diff(frame.offsets), frame.shape)
     return layer_channels(layers(frame)) | covered
 
 
@@ -219,6 +221,6 @@ def pack(shot: Path, frames: range) -> None:
         for frame in frames:
             name = f"{frame:04d}.exr"
             frame_samples = samples(read_deep(shot / "deep" / name))
-            write_layers(targets(frame_samples, plan.roles), shot / "layers" / name)
+            write_layers(targets(frame_samples), shot / "layers" / name)
             if plan.recomposition(frame):
                 write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))

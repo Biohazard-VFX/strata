@@ -115,8 +115,7 @@ def _backdrop(stage: Usd.Stage, rig: Sdf.Path, lighting: Lighting) -> Usd.Attrib
     UsdGeom.PrimvarsAPI(prim).CreatePrimvar(
         "karma:object:rendervisibility", Sdf.ValueTypeNames.String, UsdGeom.Tokens.constant
     ).Set("primary")
-    tag_instances(prim, np.array([SKY_ID]))
-    UsdGeom.PrimvarsAPI(prim).GetPrimvar("foreground").Set(0.0)
+    tag_instances(prim, np.array([SKY_ID]), "sky")
     material = UsdShade.Material.Define(stage, rig.AppendChild("backdrop_look"))
     image = UsdShade.Shader.Define(stage, material.GetPath().AppendChild("sky"))
     image.CreateIdAttr("ND_image_color3")

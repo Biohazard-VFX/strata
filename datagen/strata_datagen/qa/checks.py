@@ -19,14 +19,15 @@ from numpy.typing import NDArray
 
 from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
-from strata_datagen.generators.lighting import BACKDROP_M, SKY_ID
+from strata_datagen.generators.lighting import BACKDROP_M
 from strata_datagen.qa.deep import IDENTITY_CHANNELS, flatten
 from strata_datagen.render import pack
 from strata_dataset import identity, records, roles, segmented
 from strata_dataset import samples as contract_samples
 
-VALIDATION = "raw-qa-3"
+VALIDATION = "raw-qa-4"
 LUMA = (0.2126, 0.7152, 0.0722)
+ROLE_EXCESS = 2.0**-15
 LIMITS = {
     "median_luma": (0.02, 1.5),
     "clipped_fraction": (0.0, 0.02),
@@ -40,8 +41,10 @@ LIMITS = {
     "id_check_failure_fraction": (0.0, 2e-4),
     "unlabelled_coverage": (0.0, 2e-4),
     "identity_channels": (1.0, 1.0),
+    "role_channels": (1.0, 1.0),
+    "role_excess": (0.0, ROLE_EXCESS),
     "coverage_alpha_error": (0.0, 2.0**-11),
-    "sky_id_in_front": (0.0, 1e-5),
+    "sky_in_front": (0.0, 1e-5),
     "camera_error": (0.0, 1e-3),
     "intrinsics_error": (0.0, 1e-4),
     "target_format": (1.0, 1.0),
@@ -67,8 +70,10 @@ DEEP_KEYS = (
     "id_check_failure_fraction",
     "unlabelled_coverage",
     "identity_channels",
+    "role_channels",
+    "role_excess",
     "coverage_alpha_error",
-    "sky_id_in_front",
+    "sky_in_front",
 )
 LAYER_NAMES = tuple(f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B"))
 
@@ -95,25 +100,38 @@ def _id_ranges(manifest: dict[str, object]) -> list[tuple[int, int]]:
     return [(r["first_id"], r["first_id"] + r["count"]) for r in ranges]
 
 
-def _identity_metrics(deep: Deep, ranges: list[tuple[int, int]]) -> dict[str, float]:
-    """Identity check failures, undeclared ids among checked samples, and the coverage left unlabelled.
+def _identity_metrics(frame: pack.Samples, ranges: list[tuple[int, int]]) -> dict[str, float]:
+    """Identity check failures, undeclared ids among checked samples, and the coverage left without an id.
 
-    `unlabelled_coverage` is the mean over pixels of the visible coverage of failing samples: the
-    coverage no role receives, so it bounds what failing samples remove from every role.
+    `unlabelled_coverage` is the mean over pixels of the visible coverage of samples with id -1:
+    per-object uses lose it; roles do not, they come from the role channels.
     """
-    frame = pack.samples(deep)
     counts = np.diff(frame.offsets)
     labelled = frame.ids != identity.UNLABELLED
     declared = np.zeros(frame.ids.size, bool)
     for low, high in ranges:
         declared |= (frame.ids >= low) & (frame.ids < high)
     visible = frame.alpha.astype(np.float64) * segmented.transmittance(frame.alpha, counts)
-    near_sky = (frame.ids == SKY_ID) & (frame.z < SKY_MIN_Z_M)
     return {
         "id_check_failure_fraction": float((~labelled).mean()) if labelled.size else 0.0,
         "valid_id_fraction": float(declared[labelled].mean()) if labelled.any() else 1.0,
         "unlabelled_coverage": float(visible[~labelled].sum() / counts.size),
-        "sky_id_in_front": float(near_sky.mean()) if near_sky.size else 0.0,
+    }
+
+
+def role_excess(deep: Deep) -> float:
+    """How far the raw role channels leave 0 <= fur <= hero <= foreground <= coverage, at most."""
+    chain = np.stack([deep.channels[name].astype(np.float64) for name in ("coverage", *roles.ROLES)])
+    if not chain.size:
+        return 0.0
+    return float(max(np.diff(chain, axis=0).max(), -chain.min(), 0.0))
+
+
+def _role_metrics(deep: Deep, frame: pack.Samples) -> dict[str, float]:
+    near_sky = roles.sky(frame.alpha, frame.roles[:, 0]) & (frame.z < SKY_MIN_Z_M)
+    return {
+        "role_excess": role_excess(deep),
+        "sky_in_front": float(near_sky.mean()) if near_sky.size else 0.0,
     }
 
 
@@ -123,9 +141,11 @@ def deep_metrics(
     flat = flatten(deep)
     z, zback = deep.channels["Z"], deep.channels["ZBack"]
     present = all(name in deep.channels for name in IDENTITY_CHANNELS)
-    metrics: dict[str, float] = {"identity_channels": float(present)}
-    if present:
-        metrics |= _identity_metrics(deep, ranges)
+    labelled = all(name in deep.channels for name in roles.ROLES)
+    metrics: dict[str, float] = {"identity_channels": float(present), "role_channels": float(labelled)}
+    if present and labelled:
+        frame = pack.samples(deep)
+        metrics |= _identity_metrics(frame, ranges) | _role_metrics(deep, frame)
         difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
         metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
     residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
@@ -174,9 +194,9 @@ def _role_coverage(dtypes: dict[str, np.dtype[np.generic]], targets: dict[str, N
     return float(bool(nested and np.all(foreground >= 0) and np.all(foreground <= 1) and np.all(fur >= 0)))
 
 
-def _target_mismatch(path: Path, frame: pack.Samples, declared: roles.Ranges) -> float:
+def _target_mismatch(path: Path, frame: pack.Samples) -> float:
     stored = read_flat(path)
-    expected = pack.targets(frame, declared)
+    expected = pack.targets(frame)
     if not expected.keys() <= stored.keys():
         return 1.0
     return float(max(np.abs(stored[name] - value).max(initial=0.0) for name, value in expected.items()))
@@ -264,7 +284,7 @@ def _raw_metrics(
     frame_samples = pack.samples(deep)
     failures: list[str] = []
     if paths["layers"].exists():
-        metrics["target_mismatch"] = _target_mismatch(paths["layers"], frame_samples, plan.roles)
+        metrics["target_mismatch"] = _target_mismatch(paths["layers"], frame_samples)
     if plan.recomposition(frame):
         mismatch, failures = _samples_mismatch(plan.sample_dir(shot, frame), frame_samples, paths["beauty"])
         metrics["samples_mismatch"] = mismatch
