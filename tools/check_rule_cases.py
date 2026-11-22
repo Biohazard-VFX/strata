@@ -84,6 +84,10 @@ COMMENT_CASES = [
 DECISION_CASES = [
     ('wrapped entry', {'docs/DECISIONS.md':'# Decisions\n\n- one\n  continued\n'}, 'single "- " lines'),
     ('long entry', {'docs/DECISIONS.md':'# Decisions\n\n- ' + 'x' * 201 + '\n'}, 'exceeds 200 characters'),
+    ('datagen wrapped entry', {'datagen/DECISIONS.md':'# Decisions\n\n- one\n  continued\n'}, 'datagen/DECISIONS.md:4'),
+    ('datagen long entry', {'datagen/DECISIONS.md':'# Decisions\n\n- ' + 'x' * 201 + '\n'}, 'datagen/DECISIONS.md:3: entry exceeds'),
+    ('datagen wrong title', {'datagen/DECISIONS.md':'# Datagen decisions\n\n- one\n'}, 'datagen/DECISIONS.md:1: must start'),
+    ('datagen valid entries', {'datagen/DECISIONS.md':'# Decisions\n\n- one\n'}, None),
     ('valid entries', {'docs/DECISIONS.md':'# Decisions\n\n- one\n- two\n'}, None),
 ]
 PATH_CASES = [

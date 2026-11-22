@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from strata_datagen.render import husk
-from tools import check_decisions, check_generators, check_identifiers
+from tools import check_generators, check_identifiers
 
 ASSET_WORD = "ja" + "guar"
 PROJECT_WORD = "EN" + "BD"
@@ -29,14 +29,6 @@ class ToolTest(unittest.TestCase):
             (folder / "b.py").write_text("from strata_datagen.generators import a\n")
             (folder / "c.py").write_text("from . import b\n")
             self.assertEqual(len(check_generators.violations(folder)), 2)
-
-    def test_decisions_are_short_single_line_bullets(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "DECISIONS.md"
-            path.write_text("# Decisions\n\n- fine\n- " + "x" * 199 + "\nwrapped text\n")
-            self.assertEqual(len(check_decisions.violations(path)), 2)
-            path.write_text("# Datagen decisions\n\n- fine\n")
-            self.assertEqual(len(check_decisions.violations(path)), 1)
 
 
 class _Monitor:
