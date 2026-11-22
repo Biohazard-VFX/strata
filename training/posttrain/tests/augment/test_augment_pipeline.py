@@ -26,7 +26,7 @@ OFF = AugmentConfig(
     grain=0.0,
     camera=0.0,
 )
-ROLES = Roles(frozenset({2, 3}), ((1000, 50),))
+ROLES = Roles(((1000, 50),))
 
 
 def layered_shot(seed: int, size: tuple[int, int] = (24, 32)) -> Shot:
@@ -156,7 +156,6 @@ def test_roles_follow_manifest_instance_ranges() -> None:
         ]
     }
     parsed = roles(manifest)
-    assert parsed.hero == frozenset({2, 3})
     assert parsed.is_scatter(np.array([1, 3, 1000, 1009, 1010])).tolist() == [
         False,
         False,

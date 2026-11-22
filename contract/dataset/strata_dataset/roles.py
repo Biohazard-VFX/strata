@@ -9,7 +9,7 @@ sources; a role's pixel coverage sums its channel times the transmittance in fro
 renders the same primvars as flat float AOVs (`AOVS`), an independent image of each role's coverage.
 """
 
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -41,9 +41,9 @@ def nested(raw: NDArray[np.floating], alpha: NDArray[np.float32]) -> NDArray[np.
     return np.ascontiguousarray(np.stack([foreground, hero, fur], axis=1), np.float32)
 
 
-def sky(alpha: NDArray[np.float32], foreground: NDArray[np.float32]) -> NDArray[np.bool_]:
+def sky(alpha: Any, foreground: Any) -> Any:
     """Samples mostly of the sky backdrop: their foreground share is below half their alpha."""
-    return 2.0 * foreground.astype(np.float64) < alpha.astype(np.float64)
+    return 2.0 * foreground < alpha
 
 
 def coverage(

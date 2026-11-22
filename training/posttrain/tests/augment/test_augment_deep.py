@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pytest
@@ -15,12 +14,9 @@ from strata_training.augment.deep import (
     from_unsorted,
     load_samples,
     merge,
-    read_samples,
     save_samples,
 )
 from strata_training.data.targets import reduce_samples
-
-exr: Any = __import__("OpenEXR")
 
 
 def random_deep(
@@ -88,56 +84,6 @@ def test_crop_selection_and_storage_preserve_samples(tmp_path: Path) -> None:
     assert loaded.shape == deep.shape
     for name in ("offsets", "z", "alpha", "rgb", "ids"):
         assert_array_equal(getattr(loaded, name), getattr(deep, name))
-
-
-def test_read_samples_decodes_premultiplied_instance_ids_and_sorts_by_depth(
-    tmp_path: Path,
-) -> None:
-    from strata_dataset.identity import check, check2
-
-    channels = {
-        n: np.empty((1, 2), dtype=object)
-        for n in (
-            "R",
-            "G",
-            "B",
-            "A",
-            "Z",
-            "ZBack",
-            "instance_id",
-            "coverage",
-            "instance_check",
-            "instance_check2",
-            "foreground",
-            "hero",
-            "fur",
-        )
-    }
-    coverage = np.array([0.5001, 0.2501], dtype=np.float32)
-    identity = np.array([10000, 3])
-    values = {
-        "Z": np.array([5.0, 2.0]),
-        "A": np.array([0.5, 0.25]),
-        "instance_id": identity * coverage,
-        "coverage": coverage,
-        "instance_check": check(identity) * coverage,
-        "instance_check2": check2(identity) * coverage,
-        "foreground": coverage,
-        "hero": np.array([0, 0.2501]),
-        "fur": np.array([0, 0.2501]),
-    }
-    for name, array in channels.items():
-        array[0, 0] = np.asarray(values.get(name, [0.1, 0.2]), dtype=np.float32)
-        array[0, 1] = np.empty(0, dtype=np.float32)
-    path = tmp_path / "deep.exr"
-    exr.File({"type": exr.deepscanline, "compression": exr.ZIPS_COMPRESSION}, channels).write(
-        str(path)
-    )
-    deep = read_samples(path)
-    assert deep.counts.tolist() == [2, 0]
-    assert_allclose(deep.z, [2.0, 5.0])
-    assert_allclose(deep.alpha, coverage[::-1], rtol=0, atol=0)
-    assert deep.ids.tolist() == [3, 10000]
 
 
 def shot_from(deep: DeepSamples, rng: np.random.Generator, noise: float) -> Shot:

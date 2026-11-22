@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from strata_dataset.samples import recorded_identity
 
 from strata_training.data.compact import read_layers
 from strata_training.data.exr import read_rgb, read_roles
@@ -11,6 +12,26 @@ from strata_training.data.metadata import camera_frames, category
 from strata_training.data.policy import is_test_only
 from strata_training.io import save_arrays, write_json
 from strata_training.types import Array, Layers, fp16_safe
+
+CACHE_VERSION = "targets-content-v1"
+
+
+def content_identity(
+    shot: Path, manifest: dict[str, Any], camera: dict[str, Any], frame: int, layers: int
+) -> str:
+    hashes: dict[str, str] = {}
+    for name in ("layers", "beauty"):
+        with (shot / name / f"{frame:04d}.exr").open("rb") as source:
+            hashes[name] = hashlib.file_digest(source, "sha256").hexdigest()
+    record = {
+        "version": CACHE_VERSION,
+        "layers": layers,
+        "manifest": manifest,
+        "camera": camera,
+        "samples": recorded_identity(shot / "samples" / f"{shot.name}_{frame:04d}"),
+        "files": hashes,
+    }
+    return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
 
 
 def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]]:
@@ -36,17 +57,16 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
             raise ValueError("Shot split must be train or test")
         for frame, camera in sorted(camera_frames(shot).items()):
             identifier = f"{shot.name}_{int(frame):04d}"
-            cache = output / f"{identifier}.npz"
+            identity = content_identity(shot, manifest, camera, int(frame), layers)
+            cache = output / f"{identifier}.{identity}.npz"
+            reusable = False
             if cache.exists():
                 with np.load(cache) as existing:
-                    if existing["alpha"].shape[0] != layers:
-                        raise ValueError("Target cache K changed; use a new cache directory")
-                    if (
-                        "role_mask_version" not in existing
-                        or str(existing["role_mask_version"]) != "linear-roles-v3"
-                    ):
-                        raise ValueError("Native role masks changed; use a new cache directory")
-            if not cache.exists():
+                    reusable = (
+                        "content_identity" in existing
+                        and str(existing["content_identity"]) == identity
+                    )
+            if not reusable:
                 packed = shot / "layers" / f"{int(frame):04d}.exr"
                 target = read_layers(packed, layers)
                 image = read_rgb(shot / "beauty" / f"{int(frame):04d}.exr")
@@ -69,7 +89,7 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                     beauty=fp16_safe(image),
                     srgb=srgb,
                     mixed=mixed,
-                    role_mask_version=np.array("linear-roles-v3"),
+                    content_identity=np.array(identity),
                     **reference,
                 )
             entries.append(
@@ -83,7 +103,8 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                     "category": manifest.get("category", category(camera)),
                     "cache": str(cache.resolve()),
                     "manifest": str(manifest_path.resolve()),
-                    "legacy_data": None,
+                    "recomposition_eligible": recorded_identity(shot / "samples" / identifier)
+                    is not None,
                     "compact_scene_only": False,
                 }
             )

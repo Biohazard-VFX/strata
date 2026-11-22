@@ -107,7 +107,15 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
     save_samples(samples / "sample/deep", data)
     save_array(samples / "sample/noisy.npy", image * 1.4)
     save_array(samples / "sample/denoised.npy", image)
-    frame = Frame({"id": "sample", "cache": str(cache), "manifest": str(manifest)}, root)
+    frame = Frame(
+        {
+            "id": "sample",
+            "cache": str(cache),
+            "manifest": str(manifest),
+            "recomposition_eligible": True,
+        },
+        root,
+    )
     np.testing.assert_array_equal(frame.arrays["beauty"], image)
     loader = OnlineLoader([frame], samples, 1)
     clean = loader.prepare([(0, 0, 0)], np.random.default_rng(31), 32, 0, "cpu")

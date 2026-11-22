@@ -109,6 +109,7 @@ def recompose_samples(
     record: dict[str, Any],
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor] | TensorSamples]:
     """Borrow tensors and caller RNG; return an owned native image and matching targets."""
+    del shot_roles
     device = shot.denoised.device
     scene = torch.eye(3, device=device, dtype=torch.float64)
     if rng.random() < config.scene_grade:
@@ -121,11 +122,10 @@ def recompose_samples(
     deep = shot.deep
     if rng.random() < config.instance_grade:
         assert deep is not None
-        present = (
-            cast(torch.Tensor, api.unique(api.unique_consecutive(deep.ids[deep.ids >= 0])))
-            .cpu()
-            .numpy()
-        )
+        hero = deep.roles[:, 1] > 0
+        present = cast(torch.Tensor, api.unique(deep.ids[(deep.ids >= 0) & ~hero])).cpu().numpy()
+        if bool(hero.any()):
+            present = np.concatenate((present, [-2]))
         if present.size:
             count = min(
                 int(rng.integers(config.instance_count[0], config.instance_count[1] + 1)),
@@ -134,9 +134,7 @@ def recompose_samples(
             chosen = rng.choice(present, count, replace=False)
             remaining = torch.ones_like(deep.ids, dtype=torch.bool)
             for instance in chosen:
-                mask = deep.ids == int(instance)
-                if instance in shot_roles.hero:
-                    mask = (deep.roles[:, 1] > 0) & (deep.ids >= 0)
+                mask = hero if instance == -2 else (deep.ids == int(instance)) & ~hero
                 mask &= remaining
                 remaining &= ~mask
                 layers.append(TensorLayer(deep.select(mask), shot, _grade(rng, config, device)))
@@ -203,7 +201,7 @@ def _element(
     assert donor.deep is not None
     deep = donor.deep
     device = deep.z.device
-    hero = (deep.roles[:, 1] > 0) & (deep.ids >= 0)
+    hero = deep.roles[:, 1] > 0
     scatter = torch.zeros_like(hero)
     for first, count in roles.scatter:
         scatter |= (deep.ids >= first) & (deep.ids < first + count)

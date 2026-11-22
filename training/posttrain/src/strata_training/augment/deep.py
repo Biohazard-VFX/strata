@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from strata_dataset.identity import decode
-from strata_dataset.roles import nested, sky
+from strata_dataset.roles import sky
+from strata_dataset.samples import read
 from strata_dataset.segmented import transmittance as sample_transmittance
 
 from strata_training.augment.segmented import (
@@ -13,7 +13,6 @@ from strata_training.augment.segmented import (
     merge_arrays,
     select_arrays,
 )
-from strata_training.data.exr import read_samples as read_channels
 from strata_training.data.targets import reduce_role_samples
 from strata_training.io import save_array
 from strata_training.types import Array, Layers
@@ -119,33 +118,9 @@ def from_unsorted(
 
 
 def read_samples(path: Path) -> DeepSamples:
-    values, counts, shape = read_channels(
-        path,
-        (
-            "Z",
-            "R",
-            "G",
-            "B",
-            "instance_id",
-            "instance_check",
-            "instance_check2",
-            "coverage",
-            "foreground",
-            "hero",
-            "fur",
-        ),
-    )
-    alpha = np.clip(values["coverage"], 0, 1).astype(np.float32)
-    ids = decode(
-        values["instance_id"],
-        values["instance_check"],
-        values["instance_check2"],
-        values["coverage"],
-    )
-    weights = nested(np.stack([values[c] for c in ("foreground", "hero", "fur")], axis=1), alpha)
-    rgb = np.stack([values[c] for c in "RGB"], axis=1).astype(np.float32)
-    pixel = np.repeat(np.arange(counts.size), counts)
-    return from_unsorted(shape, pixel, values["Z"].astype(np.float32), alpha, rgb, ids, weights)
+    arrays = read(path).arrays
+    shape = (int(arrays["shape"][0]), int(arrays["shape"][1]))
+    return DeepSamples(shape, **{k: arrays[k] for k in FIELDS})
 
 
 def save_samples(directory: Path, samples: DeepSamples) -> None:
@@ -196,7 +171,7 @@ def flatten(samples: DeepSamples) -> tuple[Array, Array]:
 class Shot:
     """Borrow native images; materialize raw deep only on first use of a crop."""
 
-    def __init__(self, deep: DeepSamples, noisy: Array, denoised: Array) -> None:
+    def __init__(self, deep: DeepSamples | None, noisy: Array, denoised: Array) -> None:
         self._deep: DeepSamples | None = deep
         self._source: tuple[Shot, int, int, int, int] | None = None
         self.noisy = noisy

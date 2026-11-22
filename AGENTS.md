@@ -25,6 +25,7 @@ Rules for anyone, human or agent, changing Strata. They are not suggestions. Whe
 - A failing gate is a finding. Root-cause it. Never loosen a tolerance, skip a case or add a suppression to get green unless the cause is proven and the evidence is in the commit message.
 - Gates must detect the failure they exist for: check signed bias, not only magnitudes; do not gate algebraic copies of the same value.
 - Every correction from review becomes a test or a check, not prose.
+- Accelerated contract ports must compare against the shared rule on producer-built fixtures and committed generic renderer crops in CI.
 - Tests prove behaviour. A test that would pass with the code deleted is not a test.
 
 ## Decisions

@@ -11,14 +11,19 @@ import numpy as np
 import torch
 
 from strata_training.augment.deep import (
-    FIELDS,
-    DeepSamples,
     Shot,
     load_samples,
     read_samples,
     save_samples,
 )
-from strata_training.augment.pipeline import AugmentConfig, Donor, Roles, augment_sample, roles
+from strata_training.augment.pipeline import (
+    AugmentConfig,
+    Donor,
+    Roles,
+    augment_sample,
+    photometric,
+    roles,
+)
 from strata_training.data.cache import display_rgb
 from strata_training.data.dataset import Frame, input_batch
 from strata_training.data.exr import read_rgb
@@ -51,14 +56,7 @@ def prepare_sample(entry: dict[str, Any], denoised: Array | None, output: Path) 
         raise ValueError("Denoised beauty must be finite and match native beauty dimensions")
     sidecar = shot / "samples" / entry["id"]
     if sidecar.exists():
-        from strata_dataset.samples import read
-
-        arrays = read(sidecar).arrays
-        shape = (int(arrays["shape"][0]), int(arrays["shape"][1]))
-        samples = DeepSamples(shape, **{k: arrays[k] for k in FIELDS})
-        save_samples(output / "deep", samples)
-    elif (shot / "deep" / frame).exists():
-        save_samples(output / "deep", read_samples(shot / "deep" / frame))
+        save_samples(output / "deep", read_samples(sidecar))
     save_array(output / "noisy.npy", noisy)
     save_array(output / "denoised.npy", denoised.astype(np.float32))
 
@@ -103,7 +101,7 @@ def _combine(
 @lru_cache(maxsize=2)
 def _shot(root: Path) -> Shot:
     return Shot(
-        load_samples(root / "deep"),
+        load_samples(root / "deep") if (root / "deep/shape.npy").exists() else None,
         np.load(root / "noisy.npy", mmap_mode="r"),
         np.load(root / "denoised.npy", mmap_mode="r"),
     )
@@ -127,6 +125,10 @@ class OnlineLoader:
             raise ValueError("Use clean_fraction, not augmentation.clean")
         self.augmentation = AugmentConfig.from_dict({**values, "clean": 0.0})
         self.samples = samples
+        self.eligible = tuple(
+            i for i, frame in enumerate(frames) if frame.entry["recomposition_eligible"]
+        )
+        self.eligible_fraction = len(self.eligible) / len(frames)
         self.roles: list[Roles] = []
         for frame in frames:
             root = samples / frame.entry["id"]
@@ -138,12 +140,12 @@ class OnlineLoader:
                 raise ValueError(
                     "Clean feature cache must match denoised sample; extract --samples"
                 )
-            if not (root / "deep/shape.npy").exists():
-                raise ValueError(
-                    f"Recomposition requires producer raw identities for {frame.entry['id']}"
-                )
+            if frame.entry["recomposition_eligible"] and not (root / "deep/shape.npy").exists():
+                raise ValueError(f"Published raw samples missing for {frame.entry['id']}")
             shot = _shot(root)
-            if shot.deep.shape != frame.base.shape or denoised.shape != (3, *shot.deep.shape):
+            if (
+                frame.entry["recomposition_eligible"] and shot.deep.shape != frame.base.shape
+            ) or denoised.shape != (3, *frame.base.shape):
                 raise ValueError(
                     "Raw samples, denoised image and targets must share native dimensions"
                 )
@@ -182,19 +184,28 @@ class OnlineLoader:
                 scale = frame.scale
             else:
                 live.append(position)
-                donor_i = int(rng.integers(len(self.frames)))
-                y, x = self.frames[donor_i].crop(rng, size)
-                donor = Donor(self.shot(donor_i).crop(y, x, size, size), self.roles[donor_i])
-                sample = augment_sample(
-                    self.shot(i).crop(top, left, size, size),
-                    self.roles[i],
-                    layers,
-                    donor,
-                    rng,
-                    self.augmentation,
+                if i in self.eligible:
+                    donor_i = self.eligible[int(rng.integers(len(self.eligible)))]
+                    y, x = self.frames[donor_i].crop(rng, size)
+                    donor = Donor(self.shot(donor_i).crop(y, x, size, size), self.roles[donor_i])
+                    sample = augment_sample(
+                        self.shot(i).crop(top, left, size, size),
+                        self.roles[i],
+                        layers,
+                        donor,
+                        rng,
+                        self.augmentation,
+                    )
+                    image, layers = sample.image, sample.layers
+                else:
+                    image = photometric(
+                        self.shot(i).denoised[:, *window], rng, self.augmentation, {}
+                    )
+                beauty = (
+                    composite(layers.alpha, layers.rgb)
+                    if i in self.eligible
+                    else frame.arrays.get("target_beauty", frame.arrays["beauty"])[:, *window]
                 )
-                image, layers = sample.image, sample.layers
-                beauty = composite(layers.alpha, layers.rgb)
 
                 # Native cropping changes normalized width, not focal length in pixels.
                 scale = frame.scale * size / frame.base.shape[1]

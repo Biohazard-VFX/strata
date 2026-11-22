@@ -306,6 +306,7 @@ def train(config_path: Path) -> dict[str, Any]:
         "peak_reserved_bytes": torch.cuda.max_memory_reserved() if device == "cuda" else 0,
         "trainable_parameters": sum(p.numel() for p in parameters),
         "train_frames": len(frames),
+        "recomposition_eligible_fraction": online.eligible_fraction if online else None,
         "final_train_loss": history[-1]["train_loss"],
         "stopped_step": last_step,
         "stopping_reason": "validation_patience" if stopped else "step_ceiling",

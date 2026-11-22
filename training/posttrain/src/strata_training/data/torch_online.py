@@ -109,6 +109,8 @@ def prepare_raw(
                     "camera",
                 )
             }
+            if i not in loader.eligible:
+                flags.update(instance_grade=0.0, recompose=0.0, occluders=0.0, scene_grade=0.0)
             config = replace(loader.augmentation, **flags)
             seed = int(rng.integers(0, 2**63))
             raw = bool(config.instance_grade or config.recompose or config.occluders)
@@ -118,7 +120,7 @@ def prepare_raw(
             donor: TensorShot | None = None
             donor_roles: Roles | None = None
             if config.recompose:
-                donor_i = int(rng.integers(len(loader.frames)))
+                donor_i = loader.eligible[int(rng.integers(len(loader.eligible)))]
                 y, x = loader.frames[donor_i].crop(rng, size)
                 donor = _read_shot(
                     loader.shot(donor_i),
@@ -174,6 +176,7 @@ def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch"
         images=prepared.images.clone(),
         target={k: v.clone() for k, v in prepared.target.items()},
     )
+    changed: list[int] = []
     pending: list[tuple[int, TensorSamples]] = []
     grains: list[tuple[int, GrainParams]] = []
     cameras: list[tuple[int, CameraParams]] = []
@@ -189,6 +192,8 @@ def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch"
         image, result = recompose_samples(
             job.shot, job.roles, targets, job.donor, job.donor_roles, rng, job.config, record
         )
+        if isinstance(result, TensorSamples) or "scene_gain" in record:
+            changed.append(position)
         if isinstance(result, TensorSamples):
             pending.append((position, result))
         else:
@@ -211,14 +216,12 @@ def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch"
             prepared.target[key][positions] = value.reshape(
                 *value.shape[:-2], len(pending), size, size
             ).movedim(-3, 0)
-    if prepared.live:
-        alpha = prepared.target["alpha"][prepared.live]
-        rgb = prepared.target["rgb"][prepared.live]
+    if changed:
+        alpha = prepared.target["alpha"][changed]
+        rgb = prepared.target["rgb"][changed]
         through = torch.cat((torch.ones_like(alpha[:, :1]), (1 - alpha[:, :-1]).cumprod(1)), dim=1)
-        prepared.target["beauty"][prepared.live] = (through[:, :, None] * rgb).sum(1)
-        prepared.target["mixed"][prepared.live] = (
-            (alpha[:, 0] > 0.03) & (alpha[:, 0] < 0.97)
-        ).float()
+        prepared.target["beauty"][changed] = (through[:, :, None] * rgb).sum(1)
+        prepared.target["mixed"][changed] = ((alpha[:, 0] > 0.03) & (alpha[:, 0] < 0.97)).float()
     if grains:
         positions = [i for i, _ in grains]
         prepared.images[positions] = apply_grain_batch(

@@ -80,7 +80,6 @@ class AugmentConfig:
 
 @dataclass(frozen=True)
 class Roles:
-    hero: frozenset[int]
     scatter: tuple[tuple[int, int], ...]
 
     def is_scatter(self, ids: Array) -> Array:
@@ -92,14 +91,8 @@ class Roles:
 
 def roles(manifest: dict[str, Any]) -> Roles:
     entries: list[dict[str, Any]] = manifest["instance_ids"]
-    hero = frozenset(
-        int(e["first_id"]) + i
-        for e in entries
-        if e["name"].startswith("hero")
-        for i in range(e["count"])
-    )
     scatter = tuple((int(e["first_id"]), int(e["count"])) for e in entries if "prototypes" in e)
-    return Roles(hero, scatter)
+    return Roles(scatter)
 
 
 @dataclass(frozen=True)
@@ -189,8 +182,12 @@ def _graded_background(
 ) -> list[Layer]:
     if rng.random() >= config.instance_grade:
         return []
+    del shot_roles
     deep = shot.deep
-    present = np.unique(deep.ids[deep.ids >= 0])
+    hero = deep.roles[:, 1] > 0
+    present = np.unique(deep.ids[(deep.ids >= 0) & ~hero])
+    if hero.any():
+        present = np.concatenate((present, [-2]))
     if not present.size:
         return []
     count = min(
@@ -200,9 +197,7 @@ def _graded_background(
     layers: list[Layer] = []
     remaining = np.ones(deep.z.size, dtype=bool)
     for instance in chosen:
-        mask = deep.ids == instance
-        if instance in shot_roles.hero:
-            mask = (deep.roles[:, 1] > 0) & (deep.ids >= 0)
+        mask = hero if instance == -2 else (deep.ids == instance) & ~hero
         mask &= remaining
         remaining &= ~mask
         layers.append(Layer(deep.select(mask), shot, grade_matrix(rng, config)))
@@ -219,7 +214,7 @@ def _element(
     record: dict[str, Any],
 ) -> Layer | None:
     deep = donor.shot.deep
-    hero = (deep.roles[:, 1] > 0) & (deep.ids >= 0)
+    hero = deep.roles[:, 1] > 0
     scatter_ids = np.unique(deep.ids[donor.roles.is_scatter(deep.ids)])
     if hero.any() and (rng.random() < config.hero or not scatter_ids.size):
         chosen = hero

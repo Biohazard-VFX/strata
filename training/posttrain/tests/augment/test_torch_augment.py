@@ -114,7 +114,7 @@ def test_torch_recomposition_matches_cpu(operation: str, math_device: str) -> No
     noisy = rng.uniform(0.01, 1, (3, *shape)).astype(np.float32)
     shot = Shot(deep, noisy, noisy * 0.97)
     donor = Shot(deep.scaled(0.7), noisy * 1.3, noisy * 1.25)
-    roles = Roles(frozenset([2, 3]), ((4, 1),))
+    roles = Roles(((4, 1),))
     config = replace(
         AugmentConfig(scene_grade=0, instance_grade=0, recompose=0, occluders=0), **{operation: 1}
     )

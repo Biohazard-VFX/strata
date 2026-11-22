@@ -59,11 +59,12 @@ def test_native_parts_and_role_masks_are_preserved_in_target_cache(
             assert_array_equal(data["fur"], [[0.25, 0.25, 0, 0]])
             assert_allclose(data["inverse_depth"][0, 0, :3], 0.5)
             assert data["inverse_depth"][0, 0, 3] == 0
-            assert data["role_mask_version"] == "linear-roles-v3"
-            obsolete = {k: data[k] for k in data.files if k != "role_mask_version"}
+            assert len(str(data["content_identity"])) == 64
+            obsolete = {k: data[k] for k in data.files if k != "content_identity"}
     save_arrays(Path(entries[0]["cache"]), **obsolete)
-    with pytest.raises(ValueError, match="role masks changed"):
-        prepare(packed_shot.parent, tmp_path / "targets")
+    prepare(packed_shot.parent, tmp_path / "targets")
+    with np.load(entries[0]["cache"]) as rebuilt:
+        assert "content_identity" in rebuilt
 
 
 @pytest.mark.parametrize("version", ["0.1.0", "0.2.0", "0.3.0", "0.5.0"])

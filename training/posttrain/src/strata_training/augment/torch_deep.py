@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 import torch
+from strata_dataset import roles
 
 from strata_training.torch_layers import reduce_sorted_samples, transmittance
 
@@ -22,7 +23,7 @@ class TensorSamples:
 
     @cached_property
     def sky(self) -> torch.Tensor:
-        return 2.0 * self.roles[:, 0].double() < self.alpha.double()
+        return roles.sky(self.alpha, self.roles[:, 0])
 
     @cached_property
     def pixel(self) -> torch.Tensor:
