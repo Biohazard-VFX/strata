@@ -15,7 +15,7 @@ import torch
 from depth_pro_2 import DepthPro2, create_model_and_transforms, load_rgb
 from numpy.typing import NDArray
 
-from ._precision import FloatProjection
+from ._precision import keep_float32_boundaries
 
 
 class Case(TypedDict):
@@ -129,7 +129,7 @@ def main() -> None:
     model, _ = create_model_and_transforms("depthpro2-h", precision=dtype)
     half_head = args.precision == "fp16" and not args.stock_head
     if half_head:
-        model.head[-2] = FloatProjection(model.head[-2])
+        keep_float32_boundaries(model)
     torch.cuda.synchronize()
     session_ms = 1000 * (time.perf_counter() - start)
     out.mkdir(parents=True, exist_ok=True)

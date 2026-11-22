@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TypedDict
 
 import numpy as np
@@ -12,6 +12,14 @@ class Rope(nn.Module):
 
 class Encoder(nn.Module):
     rope: Rope
+
+class MultiViewEncoder(Encoder):
+    blocks: nn.Sequential
+    reassemble: nn.ModuleList
+
+class DPTDecoder(nn.Module):
+    convs: nn.ModuleList
+    fusions: nn.ModuleList
 
 class FOVHead(nn.Module):
     def forward(self, tokens: Tensor, grid_size: tuple[int, int]) -> Tensor: ...
@@ -30,9 +38,20 @@ class Prediction(TypedDict):
 
 class DepthPro2(nn.Module):
     precision: torch.dtype
-    encoder: Encoder
+    encoder: MultiViewEncoder
+    decoder: DPTDecoder
     head: nn.Sequential
     fov: FOVEstimator | None
+    def __init__(
+        self,
+        backbone_preset: str,
+        reassembled_blocks: Sequence[int],
+        cross_frame_blocks: Sequence[int],
+        dims_reassemble: Sequence[int],
+        dim_decoder: int,
+        fov: bool = True,
+        precision: torch.dtype = torch.float32,
+    ) -> None: ...
     def forward(self, image: Tensor) -> Tensor: ...
     def infer(self, image: Tensor, f_px: float | None = None) -> Prediction: ...
 

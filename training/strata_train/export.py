@@ -17,7 +17,7 @@ from strata_contract import write_manifest
 from torch import Tensor, nn
 
 from ._external import resolve
-from ._precision import FloatProjection
+from ._precision import keep_float32_boundaries
 from .fold_constants import fold
 from .optimize import optimize
 
@@ -161,7 +161,7 @@ def main() -> None:
     setattr(model.encoder.rope, attribute, types.MethodType(dynamic_rope, model.encoder.rope))
     setattr(fov.trunk.rope, attribute, types.MethodType(dynamic_rope, fov.trunk.rope))
     if dtype == torch.float16:
-        model.head[-2] = FloatProjection(model.head[-2])
+        keep_float32_boundaries(model)
     model.fov = None
     out.parent.mkdir(parents=True, exist_ok=True)
     export_network(Depth(model), out, "network_inverse_depth")
