@@ -1,5 +1,6 @@
 """Step-keyed native CPU batches with bounded, persistent-worker prefetch."""
 
+from collections import deque
 from collections.abc import Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -109,7 +110,7 @@ class NativeBatches(Dataset[LoadedBatch]):
 
 @contextmanager
 def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[LoadedBatch]]:
-    """Own one lookahead batch; join preparation on exit, including early stop or errors.
+    """Own two lookahead batches; join preparation on exit, including early stop or errors.
 
     A single consumer thread owns iteration. CUDA preparation uses a private stream
     and worker thread; returned tensors are ordered and retained on the consumer stream.
@@ -132,11 +133,13 @@ def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[Lo
         return loaded, ready
 
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="strata-prepare") as executor:
-        future = executor.submit(prepare)
+        futures = deque(executor.submit(prepare) for _ in range(2))
 
         def consume() -> Iterator[LoadedBatch]:
-            nonlocal future
-            while (pending := future.result()) is not None:
+            while futures:
+                pending = futures.popleft().result()
+                if pending is None:
+                    break
                 loaded, ready = pending
                 current = torch.cuda.current_stream(device)
                 current.wait_event(ready)
@@ -148,15 +151,17 @@ def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[Lo
                     return value
 
                 loaded.map(retain)
-                future = executor.submit(prepare)
+                futures.append(executor.submit(prepare))
                 yield loaded
 
         try:
             yield consume()
         finally:
             try:
-                future.result()
+                for future in futures:
+                    future.result()
             finally:
+                executor.shutdown(wait=True)
                 stream.synchronize()
 
 

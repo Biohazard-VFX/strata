@@ -192,12 +192,21 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
         from strata_training.data.workers import device_batches
 
         cuda_config = {**config, "device": "cuda"}
-        serial = [
-            row.to("cuda") for row in batches(NativeBatches([frame], online, [[0]], cuda_config))
-        ]
-        for start_step in (0, 3):
+        pinned = list(batches(NativeBatches([frame], online, [[0]], cuda_config)))
+        for row in pinned:
+            assert row.prepared is not None
+            assert row.prepared.images.is_pinned()
+            for job in row.prepared.jobs:
+                if job.shot.deep is not None:
+                    for channel in ("counts", "z", "alpha", "rgb", "ids"):
+                        assert getattr(job.shot.deep, channel).is_pinned()
+        serial = [row.to("cuda") for row in pinned]
+        for start_step, workers in ((0, 0), (3, 2)):
             with device_batches(
-                NativeBatches([frame], online, [[0]], cuda_config, start_step), "cuda"
+                NativeBatches(
+                    [frame], online, [[0]], {**cuda_config, "loader_workers": workers}, start_step
+                ),
+                "cuda",
             ) as overlap:
                 for expected, actual in zip(serial[start_step:], overlap, strict=True):
                     a, b = expected.prepared, actual.prepared
@@ -274,6 +283,43 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
                 actual.target[key].cpu().numpy(), np.stack(values), atol=2e-6, rtol=2e-6
             )
             torch.testing.assert_close(actual.target[key], replay.target[key], atol=0, rtol=0)
+        if math_device == "cuda":
+            from strata_training.data.workers import device_batches
+
+            augmented_config = {
+                **config,
+                "device": "cuda",
+                "loader_math": "torch",
+                "crop": 16,
+                "halo": 8,
+                "steps": 3,
+            }
+            references = [
+                row.to("cuda")
+                for row in batches(NativeBatches([frame], augmented, [[0]], augmented_config))
+            ]
+            consumed: list[LoadedBatch] = []
+            cpu_rng = torch.get_rng_state().clone()
+            cuda_rng = torch.cuda.get_rng_state().clone()
+            with device_batches(
+                NativeBatches([frame], augmented, [[0]], augmented_config), "cuda"
+            ) as overlap:
+                for loaded in overlap:
+                    consumed.append(loaded.map(lambda value: value.clone()))
+            assert torch.equal(cpu_rng, torch.get_rng_state())
+            assert torch.equal(cuda_rng, torch.cuda.get_rng_state())
+            for expected, observed in zip(references, consumed, strict=True):
+                a, b = expected.prepared, observed.prepared
+                assert a is not None
+                assert b is not None
+                torch.testing.assert_close(a.images, b.images, atol=0, rtol=0)
+                torch.testing.assert_close(a.normalized, b.normalized, atol=0, rtol=0)
+                for key, value in a.target.items():
+                    torch.testing.assert_close(value, b.target[key], atol=0, rtol=0)
+            with device_batches(
+                NativeBatches([frame], augmented, [[0]], augmented_config), "cuda"
+            ) as overlap:
+                next(overlap)
 
     assert sorted(p.name for p in (samples / "sample").iterdir()) == [
         "deep",

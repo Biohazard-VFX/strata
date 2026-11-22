@@ -206,9 +206,11 @@ def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch"
         reduced = batch_samples([samples for _, samples in pending]).targets(
             prepared.target["alpha"].shape[1]
         )
-        for i, (position, _) in enumerate(pending):
-            for key, value in reduced.items():
-                prepared.target[key][position] = value[..., i * size : (i + 1) * size, :]
+        positions = [position for position, _ in pending]
+        for key, value in reduced.items():
+            prepared.target[key][positions] = value.reshape(
+                *value.shape[:-2], len(pending), size, size
+            ).movedim(-3, 0)
     if prepared.live:
         alpha = prepared.target["alpha"][prepared.live]
         rgb = prepared.target["rgb"][prepared.live]

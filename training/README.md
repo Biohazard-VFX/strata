@@ -188,20 +188,21 @@ stages the requested native row span, then gathers the crop's columns on the dev
 Wide frames therefore transfer extra samples outside the crop's horizontal extent,
 but never samples outside its row span.
 
-Training consumes `device_batches`, a context-managed, one-batch lookahead. A single
+Training consumes `device_batches`, a context-managed, two-batch lookahead. A single
 preparation thread runs nonblocking transfers and finalization on a private CUDA
 stream while the consumer runs the encoder/decoder/backward/optimizer step. A ready
 event orders consumption without synchronizing the whole device; `record_stream`
 protects every returned tensor through consumer use. Exit joins outstanding work,
 including early stopping and errors. CPU training remains synchronous. Lookahead
 uses absolute-step seeds and does not advance checkpoint RNG state. GPU memory now
-includes one prepared lookahead plus the current train step; host pinning includes
+includes two prepared lookaheads plus the current train step; host pinning includes
 raw row-span copies. `loader_seconds` measures consumer wait, not background work.
 
 `LoadedBatch.to` runs deep selection, stable depth merge, transmission, per-object
 and scene grading, all six procedural occluder families, photometric camera math
-and Alexa grain on the selected device. Changed deep targets are rebuilt together
-across the batch through `strata_contract.torch_layers.reduce_sorted_samples`;
+and Alexa grain on the selected device. Changed deep targets are rebuilt and
+scattered together across the batch through
+`strata_contract.torch_layers.reduce_sorted_samples`;
 that optional Torch module owns the same thresholds, tie breaking, hidden-sample
 rule and sky masking as `strata_contract.layers`. Reductions accumulate in float64.
 Transmission uses row-local log-prefix scans sized by actual maximum pixel density,
