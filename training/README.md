@@ -76,7 +76,7 @@ The container's one-command entry point is `uv run --frozen --no-dev strata-trai
 
 ## Oracle and OOD prediction
 
-`predict` accepts `--scale-mode oracle-aligned` to substitute the same GT-derived global-scale input used by the historical probe, and `--features PATH` to evaluate a checkpoint on a different feature cache. It records both training and inference configurations; checkpoint bytes remain unchanged. This is an oracle-conditioned diagnostic, not metric inference or oracle-trained retraining.
+`predict` accepts `--scale-mode oracle-aligned` to substitute the same GT-derived global-scale input used by the historical probe, and `--features PATH` to evaluate a checkpoint on a different feature cache. It records both training and inference configurations; checkpoint bytes remain unchanged. For a trainable decoder, a tiled scalar-only pass calibrates that checkpoint's current scalar prior using the same GT solid-surface rule as the probe cache, then a second pass conditions the nonlinear deep head on it. Reusing a stale stock-model scale after decoder training is not an oracle alignment. This is an oracle-conditioned diagnostic, not metric inference or oracle-trained retraining.
 
 `baselines ... --calibration PATH/curves.json` reuses the original training-only curves without fitting on OOD frames. An evaluation-only protocol can have an empty `train` list and all pilot frame IDs in `test`, with the exact index SHA256. Do not train on these shots. Native role masks decode `round(instance_id/A)` per deep sample, include any visible groom contribution, and threshold composited hero coverage at 0.1 for silhouettes.
 

@@ -6,15 +6,14 @@ from typing import Any
 
 import numpy as np
 import torch
-from scipy import ndimage
 from torch import nn
 
 from strata_training.data.metadata import camera_frames
+from strata_training.data.scale import oracle_metric_scale
 from strata_training.data.sequences import clip_indices
-from strata_training.data.targets import visible_inverse
 from strata_training.io import save_array, save_arrays, write_json
 from strata_training.model.dp2 import DeepDepthPro
-from strata_training.types import Array, Layers
+from strata_training.types import Array
 
 
 def _before(module: nn.Module, inputs: tuple[torch.Tensor, ...]) -> None:
@@ -54,24 +53,7 @@ def _save(
     target.mkdir(exist_ok=True)
     data = np.load(entry["cache"])
     legacy = Path(entry["legacy_data"]) if entry["legacy_data"] else None
-    if legacy:
-        old = np.load(legacy / "gt.npz")
-        solid = ndimage.binary_erosion(
-            (~old["two"]) & (old["A_tot"] > 0.999) & (old["inv_blend"] > 0), iterations=4
-        )
-        truth = old["inv_blend"]
-    else:
-        solid = (
-            (data["alpha"][0] > 0.999)
-            & (data["alpha"][1:].sum(axis=0) < 1e-6)
-            & (data["inverse_depth"][0] > 0)
-        )
-        truth = data["inverse_depth"][0]
-    if not solid.any():
-        target_layers = Layers(data["inverse_depth"], data["alpha"], data["rgb"])
-        truth = visible_inverse(target_layers)
-        solid = truth > 0
-    scale = float(np.exp(np.median(np.log(np.maximum(focal_inv[solid], 1e-8) / truth[solid]))))
+    metric_scale = oracle_metric_scale(entry, data, focal_inv)
     for level, tensor in enumerate(pyramid):
         save_array(target / f"pyramid_{level}.npy", tensor.half().cpu().numpy())
     if features is None:
@@ -86,8 +68,8 @@ def _save(
     write_json(target / "context.json", {"clip_ids": clip_ids})
     save_arrays(
         target / "base.npz",
-        inverse_depth=focal_inv / scale,
-        metric_scale=1 / scale,
+        inverse_depth=focal_inv * metric_scale,
+        metric_scale=metric_scale,
         raw_inverse_depth=focal_inv * raw_scale,
         raw_metric_scale=raw_scale,
     )
