@@ -22,7 +22,7 @@ from strata_datagen.usdutil import FloatArray, IntArray, floats, ints, matrix, t
 
 VERSION = "thin-0.1.0"
 BANDS = ("foreground", "between", "background")
-COUNT_WEIGHTS = (0.35, 0.35, 0.2, 0.1)
+COUNT_WEIGHTS = (0.2, 0.4, 0.25, 0.15)
 WINDOW_S = 8.0
 GUST_PERIOD_S = 1.5
 WIND_PERIOD_S = 10.0
@@ -31,7 +31,7 @@ PIXEL_WIDTH_RANGE = (0.15, 5.0)
 MAX_MEMBER_PX = 24.0
 MIN_MEMBER_RADIUS_M = 0.004
 POINT_BUDGET = 200_000
-ATTEMPTS = 8
+ATTEMPTS = 16
 TWIST_MIN_PX = 1.5
 CHECK_STEP_M = 0.1
 UP = np.array([0.0, 1.0, 0.0])
