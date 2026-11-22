@@ -6,7 +6,6 @@ from tempfile import TemporaryDirectory
 import numpy as np
 from pxr import Sdf
 
-from strata_datagen.generators import human
 from strata_datagen.library.catalogue import Hero, HeroPose, Library
 from strata_datagen.scene import compose
 from strata_datagen.scene.spec import ShotSpec
@@ -55,7 +54,6 @@ class ClipHeroTest(unittest.TestCase):
             prim = layer.GetPrimAtPath("/World/hero")
             refs = prim.referenceList.prependedItems
             self.assertEqual(refs[0].layerOffset.offset, shot.frames[0] - shot.placement.start)
-            self.assertEqual(prim.attributes["primvars:karma:object:geosamples"].default, human.GEO_SAMPLES)
             self.assertEqual(prim.attributes["primvars:instance_id"].default, 2)
             self.assertEqual(prim.attributes["primvars:coverage"].default, 1.0)
             self.assertFalse(layer.GetPrimAtPath("/World/materials/hero_skin"))

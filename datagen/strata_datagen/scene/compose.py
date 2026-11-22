@@ -23,7 +23,7 @@ from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
 from strata_datagen.render.pack import DEEP_STRIDE
 from strata_datagen.rng import stream
-from strata_datagen.scene import creature, hair, layers, looks
+from strata_datagen.scene import creature, deformation, hair, layers, looks
 from strata_datagen.scene.spec import DEFAULT_FRAMES, REFERENCE_WIDTH_PX, ShotSpec, frames
 from strata_datagen.timeline import FPS
 from strata_datagen.usdutil import new_stage, relative_asset, tag_instances
@@ -335,6 +335,7 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
         )
     _author_scatter(shot, library, stage, root)
     _author_thin(shot, stage)
+    deformation.apply(stage)
     camera.author(stage, "/World/camera", shot.track, render.width, render.height)
     lighting.author(stage, "/World/lights", shot.light, shot.frames[0])
     settings.author(

@@ -14,7 +14,6 @@ from strata_datagen.fields import Ground
 from strata_datagen.usdutil import FloatArray, tag_instances
 
 VERSION = "human-0.1.0"
-GEO_SAMPLES = 3
 
 
 @dataclass(frozen=True)
@@ -57,7 +56,7 @@ def place(rng: np.random.Generator, ground: Ground, track: FloatArray, frames: i
 def author(
     stage: Usd.Stage, path: str, asset: str, placement: ClipPlacement, *, first_frame: int, instance_id: int
 ) -> UsdGeom.Xform:
-    """Reference the clip so clip frame `start` plays at `first_frame`; ids and blur samples are inherited."""
+    """Reference the clip so clip frame `start` plays at `first_frame`; its prims inherit the ids."""
     xform = UsdGeom.Xform(stage.DefinePrim(path))
     xform.GetPrim().GetReferences().AddReference(
         asset, layerOffset=Sdf.LayerOffset(float(first_frame - placement.start))
@@ -67,7 +66,4 @@ def author(
     for index, offset in enumerate(placement.offset):
         translate.Set(Gf.Vec3d(*(float(v) for v in offset)), Usd.TimeCode(first_frame - 1 + index))
     tag_instances(xform.GetPrim(), np.array([instance_id]))
-    UsdGeom.PrimvarsAPI(xform).CreatePrimvar(
-        "karma:object:geosamples", Sdf.ValueTypeNames.Int, UsdGeom.Tokens.constant
-    ).Set(GEO_SAMPLES)
     return xform
