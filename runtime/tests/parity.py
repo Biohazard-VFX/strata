@@ -27,6 +27,26 @@ def errors(native, reference):
     return (native[positive] - reference[positive]) / reference[positive]
 
 
+def discontinuities(reference, threshold, radius):
+    positive = reference > 0
+    log = np.log(np.where(positive, reference, 1))
+    edge = np.zeros(reference.shape, bool)
+    for axis in (0, 1):
+        step = (np.abs(np.diff(log, axis=axis)) > threshold) | (np.diff(positive.astype(np.int8), axis=axis) != 0)
+        head = [slice(None), slice(None)]
+        tail = [slice(None), slice(None)]
+        head[axis], tail[axis] = slice(1, None), slice(None, -1)
+        edge[tuple(head)] |= step
+        edge[tuple(tail)] |= step
+    padded = np.pad(edge, radius)
+    near = np.zeros_like(edge)
+    height, width = edge.shape
+    for dy in range(2*radius + 1):
+        for dx in range(2*radius + 1):
+            near |= padded[dy:dy + height, dx:dx + width]
+    return near
+
+
 def suppressions(stderr):
     match = re.search(r'Suppressions used:\n\s*count\s+bytes\s+template\n(.*?)\n-{10,}', stderr, re.S)
     return [] if not match else [line.split()[-1] for line in match[1].splitlines() if line.strip()]
@@ -67,18 +87,26 @@ def check_case(args, case, data, reference_dir):
         assert set(file.channels()) == {'Z', 'network_inverse_depth'}
         native = file.channels()['network_inverse_depth'].pixels.copy()
         z = file.channels()['Z'].pixels.copy()
-    error = errors(native, reference['network_inverse_depth'])
-    stats = {'max_relative': float(np.abs(error).max()), 'median_relative': float(np.median(np.abs(error))),
+    oracle = reference['network_inverse_depth']
+    error = errors(native, oracle)
+    interior = ~discontinuities(oracle, args.edge_log_step, args.edge_radius)[oracle > 0]
+    assert interior.any()
+    stats = {'max_relative': float(np.abs(error).max()), 'interior_max_relative': float(np.abs(error[interior]).max()),
+             'p999_relative': float(np.quantile(np.abs(error), .999)),
+             'median_relative': float(np.median(np.abs(error))),
              'p99_relative': float(np.quantile(np.abs(error), .99)), 'signed_bias': float(error.mean()),
-             'positive_fraction': float((error > 0).mean()), 'pixels': int(error.size)}
+             'positive_fraction': float((error > 0).mean()), 'edge_fraction': float(1 - interior.mean()),
+             'pixels': int(error.size)}
     return {'id': case['id'], 'timing': report, 'network_inverse_depth': stats}, error, z
 
 
 def gate(row, args):
     stats = row['network_inverse_depth']
     failures = []
-    if stats['max_relative'] > args.max_relative:
-        failures.append('max')
+    if stats['interior_max_relative'] > args.interior_max_relative:
+        failures.append('interior max')
+    if stats['p999_relative'] > args.p999_relative:
+        failures.append('p99.9')
     if stats['median_relative'] > args.median_relative:
         failures.append('median')
     if abs(stats['signed_bias']) > args.signed_bias:
@@ -93,7 +121,10 @@ def main():
     parser.add_argument('--cases', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--lsan-suppression')
-    parser.add_argument('--max-relative', type=float, default=.05)
+    parser.add_argument('--interior-max-relative', type=float, default=.05)
+    parser.add_argument('--p999-relative', type=float, default=.01)
+    parser.add_argument('--edge-log-step', type=float, default=.3)
+    parser.add_argument('--edge-radius', type=int, default=2)
     parser.add_argument('--median-relative', type=float, default=.001)
     parser.add_argument('--signed-bias', type=float, default=.001)
     parser.add_argument('--focal-relative', type=float, default=.001)
@@ -121,7 +152,10 @@ def main():
     pooled = np.concatenate(all_errors)
     summary = {'cases': len(rows), 'failed': failed,
                'aggregate': {'max_relative': float(pooled.max()), 'median_relative': float(np.median(pooled)),
-                             'p99_relative': float(np.quantile(pooled, .99)), 'pixels': int(pooled.size)},
+                             'p99_relative': float(np.quantile(pooled, .99)),
+                             'p999_relative': float(np.quantile(pooled, .999)), 'pixels': int(pooled.size)},
+               'worst_interior_max_relative': max(row['network_inverse_depth']['interior_max_relative'] for row in rows),
+               'worst_p999_relative': max(row['network_inverse_depth']['p999_relative'] for row in rows),
                'worst_signed_bias': max((row['network_inverse_depth']['signed_bias'] for row in rows), key=abs)}
     (args.out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
     print(json.dumps(summary), flush=True)

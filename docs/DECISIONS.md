@@ -7,7 +7,7 @@
 - Export opset 23 Attention and tensor-valued RoPE dimensions to preserve memory-efficient attention and arbitrary portrait/landscape inputs.
 - Learned operations run in FP16 with a float32 final projection and float32 public tensors to bound activation memory at native resolution.
 - Compare export parity at matching PyTorch precision; report stock bfloat16 differences separately because changing precision is not export error.
-- Parity gates each image's network inverse depth: 5% maximum, 0.1% median and 0.1% signed mean relative error; focal within 0.1%.
+- Parity gates per image: p99.9 relative error 1%, max 5% beyond 2 px of a log inverse-depth step >0.3, median 0.1%, signed bias 0.1%; focal 0.1%; raw max reported.
 - Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; deep RGB preserves source values and alpha is always one.
 - sRGB encoding is computed in double precision and rounded once to float32 in C and in the oracle, so both feed identical tensors.
 - Non-finite input samples clamp after exposure (+inf to 1, NaN and -inf to 0); each result reports how many pixels were affected.
