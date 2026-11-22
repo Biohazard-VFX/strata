@@ -1,6 +1,7 @@
 """Writers in separate spawned processes, stopped and resumed at injected barriers."""
 
 import multiprocessing
+import time
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -9,6 +10,7 @@ from unittest import mock
 
 import numpy as np
 
+from strata_datagen import shotlock
 from strata_datagen.render import pack
 from tests.fixtures import SKY, Sample
 
@@ -51,6 +53,15 @@ def pausing(owner: object, name: str, entered: "Event", proceed: "Event") -> Abs
     return at_call(owner, name, lambda: (entered.set(), proceed.wait(TIMEOUT_S)))
 
 
+def free(shot: Path) -> bool:
+    """True when this process, holding nothing, can take the shot's lock now."""
+    try:
+        with shotlock.held(shot):
+            return True
+    except shotlock.ShotLockedError:
+        return False
+
+
 def pack_shot(shot: str, results: "Queue[str]") -> None:
     results.put(outcome(lambda: pack.pack(Path(shot), FRAMES)))
 
@@ -79,9 +90,13 @@ class Paused:
         self.outcome: str | None = None
         self.process = CONTEXT.Process(target=target, args=(*args, self.entered, self.proceed, self.results))
         self.process.start()
+        deadline = time.monotonic() + TIMEOUT_S
         while not self.entered.wait(0.1):
             if not self.process.is_alive():
                 raise RuntimeError(f"stopped before its barrier: {self.results.get(timeout=TIMEOUT_S)}")
+            if time.monotonic() > deadline:
+                self.process.kill()
+                raise RuntimeError("never reached its barrier")
 
     def resume(self) -> str:
         """Let the process pass its barrier and return what it reported."""

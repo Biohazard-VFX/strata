@@ -1,11 +1,14 @@
-"""The shot writer lock: one writer at a time, and only a verifiably dead owner loses the lock."""
+"""The shot writer lock: one holder at a time, and the kernel, not a pid, decides when it is free."""
 
 import fcntl
 import json
+import os
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,6 +22,7 @@ from tests.concurrency import (
     FRAMES,
     TIMEOUT_S,
     Paused,
+    free,
     pack_paused,
     pack_shot,
     pausing,
@@ -31,11 +35,13 @@ if TYPE_CHECKING:
     from multiprocessing.queues import Queue
     from multiprocessing.synchronize import Event
 
+SLEEPER = "import time; time.sleep(600)"
 
-def hold_after_guard(
+
+def hold_at_flock(
     shot: str, release: "Event", entered: "Event", proceed: "Event", results: "Queue[str]"
 ) -> None:
-    """Take the shot lock, stopping before the guard that serializes breaking a stale lock."""
+    """Take the shot lock, stopping after its file is open and before it is locked."""
     with pausing(fcntl, "flock", entered, proceed):
         try:
             with shotlock.held(Path(shot)):
@@ -45,10 +51,28 @@ def hold_after_guard(
             results.put("locked")
 
 
-def dead_pid() -> int:
-    process = subprocess.Popen([sys.executable, "-c", ""])
-    process.wait()
-    return process.pid
+def hand_to_renderer(shot: str, results: "Queue[str]") -> None:
+    """Hold the shot, start a renderer that inherits the lock descriptor, report its pid and wait."""
+    with shotlock.held(Path(shot)) as hold:
+        child = subprocess.Popen([sys.executable, "-c", SLEEPER], pass_fds=(hold.descriptor,))
+        results.put(str(child.pid))
+        time.sleep(TIMEOUT_S)
+
+
+def gone(pid: int) -> bool:
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        return True
+    return state in {"Z", "X"}
+
+
+def wait_gone(pid: int) -> None:
+    deadline = time.monotonic() + TIMEOUT_S
+    while not gone(pid):
+        if time.monotonic() > deadline:
+            raise TimeoutError(pid)
+        time.sleep(0.05)
 
 
 class ShotLockTest(unittest.TestCase):
@@ -57,20 +81,14 @@ class ShotLockTest(unittest.TestCase):
         self.shot = Path(self.directory.name) / "s"
         write_shot(self.shot, [FIRST], stride=1)
         pack.pack(self.shot, FRAMES)
-        self.lock = self.shot / shotlock.LOCK
 
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def write_lock(self, **changes: object) -> str:
-        text = json.dumps({**shotlock.owner(), **changes}, sort_keys=True) + "\n"
-        self.lock.write_text(text)
-        return text
-
     def test_the_lock_excludes_every_other_writer_of_the_shot(self) -> None:
         writer = Paused(pack_paused, str(self.shot))
         try:
-            owner = json.loads(self.lock.read_text())
+            owner = json.loads((self.shot / shotlock.OWNER).read_text())
             self.assertEqual((owner["pid"], owner["host"]), (writer.process.pid, socket.gethostname()))
             self.assertTrue(run(pack_shot, str(self.shot)).startswith("ShotLockedError"))
             writers: list[Callable[[Path, range], object]] = [
@@ -89,47 +107,47 @@ class ShotLockTest(unittest.TestCase):
         finally:
             outcome = writer.finish()
         self.assertEqual(outcome, "ok")
-        self.assertFalse(self.lock.exists())
+        self.assertTrue(free(self.shot))
 
-    def test_offline_removal_refuses_while_a_live_owner_holds_the_shot(self) -> None:
-        sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-        try:
-            text = self.write_lock(pid=sleeper.pid, start=shotlock.started(sleeper.pid))
-            with self.assertRaises(shotlock.ShotLockedError):
-                pack.remove_samples(self.shot, FRAMES)
-            self.assertTrue((self.shot / "samples" / "s_0001").is_dir())
-            self.assertEqual(self.lock.read_text(), text)
-        finally:
-            sleeper.kill()
-            sleeper.wait()
+    def test_a_lock_file_without_a_holder_never_blocks_whatever_its_record_says(self) -> None:
+        record = {**shotlock.owner(), "host": "another-host", "pid": 1, "start": "0", "boot": "b"}
+        for name in (shotlock.LOCK, shotlock.OWNER):
+            (self.shot / name).write_text(json.dumps(record) + "\n")
         self.assertEqual(pack.remove_samples(self.shot, FRAMES), [1])
-        self.assertFalse(self.lock.exists())
+        self.assertTrue((self.shot / shotlock.LOCK).exists())
 
-    def test_only_a_verifiably_dead_owner_loses_the_lock(self) -> None:
-        cases: list[tuple[str, dict[str, object], bool]] = [
-            ("exited", {"pid": dead_pid(), "start": "0"}, True),
-            ("pid reused", {"start": "0"}, True),
-            ("rebooted", {"boot": "another boot"}, True),
-            ("alive", {}, False),
-            ("other host", {"host": "another-host", "pid": dead_pid(), "start": "0"}, False),
-        ]
-        for name, changes, broken in cases:
-            with self.subTest(name):
-                text = self.write_lock(**changes)
-                if broken:
-                    pack.pack(self.shot, FRAMES)
-                    self.assertFalse(self.lock.exists())
-                else:
-                    with self.assertRaises(shotlock.ShotLockedError):
-                        pack.pack(self.shot, FRAMES)
-                    self.assertEqual(self.lock.read_text(), text)
-                    self.lock.unlink()
+    def test_a_renderer_holding_the_inherited_descriptor_keeps_the_shot_after_its_parent_dies(self) -> None:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(sig.name):
+                results: Queue[str] = CONTEXT.Queue()
+                parent = CONTEXT.Process(target=hand_to_renderer, args=(str(self.shot), results))
+                parent.start()
+                renderer = int(results.get(timeout=TIMEOUT_S))
+                try:
+                    os.kill(parent.pid or 0, sig)
+                    parent.join(TIMEOUT_S)
+                    self.assertEqual(parent.exitcode, -sig)
+                    self.assertFalse(gone(renderer))
+                    with self.assertRaisesRegex(shotlock.ShotLockedError, "locked by"):
+                        pack.remove_samples(self.shot, FRAMES)
+                    self.assertTrue((self.shot / "samples" / "s_0001").is_dir())
+                finally:
+                    os.kill(renderer, signal.SIGKILL)
+                wait_gone(renderer)
+                self.assertTrue(free(self.shot))
 
-    def test_two_processes_breaking_one_stale_lock_never_both_take_it(self) -> None:
-        self.write_lock(pid=dead_pid(), start="0")
+    def test_holds_nest_within_a_process_and_release_with_the_outermost(self) -> None:
+        with shotlock.held(self.shot) as outer:
+            with shotlock.held(self.shot) as inner:
+                self.assertIs(inner, outer)
+                self.assertTrue(run(pack_shot, str(self.shot)).startswith("ShotLockedError"))
+            self.assertTrue(run(pack_shot, str(self.shot)).startswith("ShotLockedError"))
+        self.assertEqual(run(pack_shot, str(self.shot)), "ok")
+
+    def test_two_processes_racing_for_the_lock_never_both_take_it(self) -> None:
         release = CONTEXT.Event()
-        first = Paused(hold_after_guard, str(self.shot), release)
-        second = Paused(hold_after_guard, str(self.shot), release)
+        first = Paused(hold_at_flock, str(self.shot), release)
+        second = Paused(hold_at_flock, str(self.shot), release)
         try:
             outcomes = [first.resume(), second.resume()]
         finally:
@@ -137,7 +155,22 @@ class ShotLockTest(unittest.TestCase):
             first.finish()
             second.finish()
         self.assertEqual(outcomes, ["acquired", "locked"])
-        self.assertFalse(self.lock.exists())
+        self.assertTrue(free(self.shot))
+
+    def test_a_contender_that_opened_the_lock_before_the_shot_moved_refuses(self) -> None:
+        release = CONTEXT.Event()
+        contender = Paused(hold_at_flock, str(self.shot), release)
+        destination = self.shot.with_name("moved")
+        try:
+            with shotlock.held(self.shot) as hold:
+                hold.move(destination)
+            outcome = contender.resume()
+        finally:
+            release.set()
+            contender.finish()
+        self.assertEqual(outcome, "locked")
+        self.assertFalse(self.shot.exists())
+        self.assertTrue(free(destination))
 
 
 if __name__ == "__main__":

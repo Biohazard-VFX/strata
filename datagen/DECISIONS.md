@@ -75,5 +75,5 @@
 - Creature raw exports are reused only when job, frames, scripts, sources with every file they reference, and the probed tool build all match.
 - Sidecars are write-once: staged, then renamed to an absent samples/<frame_id>; identical repacks are no-ops, different ones refused; only offline remove-samples deletes.
 - Publishing uses rename(2), which never replaces a non-empty directory: renameat2 RENAME_NOREPLACE returns EINVAL on the NTFS-FUSE dataset mounts.
-- One writer per shot: build, render, pack, accept, prune, remove-samples and qa hold <shot>/.lock (host, boot, pid, start); only a verifiably dead same-host owner's lock is broken.
-- A locked shot is refused, never waited for; qa rejects a shot by renaming it with its lock inside, so no lock is left at the old place.
+- One writer per shot: every shot write holds an exclusive flock on <shot>/.lock; the kernel decides liveness, so no lock is broken by pid checks.
+- A locked shot is refused, never waited for; qa rejects a shot by renaming it while held, and a contender whose lock path moved refuses.

@@ -1,6 +1,5 @@
 """Audit-hook record of every write inside a shot directory made without the writer lock."""
 
-import json
 import os
 import sys
 from collections.abc import Generator
@@ -28,11 +27,7 @@ def _path(value: object) -> Path | None:
 
 
 def _held(shot: Path) -> bool:
-    try:
-        record = json.loads((shot / shotlock.LOCK).read_text())
-    except (FileNotFoundError, NotADirectoryError):
-        return False
-    return record["pid"] == os.getpid()
+    return shotlock.holding(shot) is not None
 
 
 def _targets(event: str, args: tuple[object, ...]) -> list[tuple[object, bool]]:

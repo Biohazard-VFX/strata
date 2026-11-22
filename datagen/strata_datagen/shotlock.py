@@ -1,113 +1,49 @@
-"""One writer per shot: `<shot>/.lock` names its owner and exists while that owner changes the shot.
+"""One writer per shot: an exclusive `flock` on `<shot>/.lock`, held while any process keeps its descriptor.
 
-The lock file is created whole and exclusively (a hard link of a written temporary, which fails if
-it exists). A lock is broken only when its owner is verifiably dead: same host, and another boot or
-no live process with the recorded pid and start time. Breaking is serialized by `flock` on the shot
-directory, so no two processes break the same lock. The lock file lives inside the shot, so a shot
-moved while held takes its lock along and releases it at the new place.
+Liveness is the kernel's: the lock ends when the last descriptor of the locked open file closes, so a
+renderer that inherits the descriptor keeps the shot locked after its parent dies, and no lock is ever
+broken by reasoning about pids. A contender tries once without blocking and is refused. `.lock` is
+never removed; `.lock.owner` names the latest holder for diagnostics only. Holds nest within a
+process. The lock file lives inside the shot, so a shot moved while held stays locked at its new place,
+and a contender whose lock path no longer leads to the file it locked refuses.
 """
 
 import fcntl
 import json
 import os
-import secrets
+import shlex
 import socket
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+
+from strata_datagen import files
 
 LOCK = ".lock"
-BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
+OWNER = ".lock.owner"
 
 
 class ShotLockedError(RuntimeError):
-    """Another live process, or one that cannot be verified dead, holds the shot."""
-
-
-def _boot() -> str:
-    return BOOT_ID.read_text().strip()
-
-
-def started(pid: int) -> str | None:
-    """The start time of process `pid` in clock ticks since boot; None when no such process exists."""
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-    except FileNotFoundError:
-        return None
-    return stat.rsplit(")", 1)[1].split()[19]
+    """Another open descriptor of the shot's lock file holds the lock."""
 
 
 def owner() -> dict[str, object]:
-    pid = os.getpid()
     return {
         "host": socket.gethostname(),
-        "boot": _boot(),
-        "pid": pid,
-        "start": started(pid),
+        "pid": os.getpid(),
         "since": datetime.now(UTC).isoformat(timespec="seconds"),
+        "command": shlex.join(sys.argv),
     }
 
 
-def dead(record: dict[str, object]) -> bool:
-    """True only when the owner is verifiably gone; an owner on another host never is."""
-    if record["host"] != socket.gethostname():
-        return False
-    return record["boot"] != _boot() or started(cast("int", record["pid"])) != record["start"]
-
-
-def _link(temporary: Path, lock: Path) -> bool:
-    try:
-        lock.hardlink_to(temporary)
-    except FileExistsError:
-        return False
-    return True
-
-
-def _record(lock: Path) -> dict[str, object] | None:
-    try:
-        return cast("dict[str, object]", json.loads(lock.read_text()))
-    except FileNotFoundError:
-        return None
-
-
-@contextmanager
-def _breaking(shot: Path) -> Generator[None]:
-    descriptor = os.open(shot, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
-    finally:
-        os.close(descriptor)
-
-
-def _refusal(shot: Path, record: dict[str, object]) -> ShotLockedError:
-    return ShotLockedError(
-        f"{shot} is locked by pid {record['pid']} on {record['host']} since {record['since']}; wait for it,"
-        f" or remove {shot / LOCK} by hand once that process is known to be gone"
-    )
-
-
-def _acquire(shot: Path, temporary: Path) -> None:
-    lock = shot / LOCK
-    if _link(temporary, lock):
-        return
-    with _breaking(shot):
-        record = _record(lock)
-        if record is not None:
-            if not dead(record):
-                raise _refusal(shot, record)
-            lock.unlink()
-        if not _link(temporary, lock):
-            raise _refusal(shot, cast("dict[str, object]", json.loads(lock.read_text())))
-
-
 class Hold:
-    """A held shot lock; `location` follows the shot when `move` renames it."""
+    """A held shot lock: `descriptor` keeps it; `location` follows the shot when `move` renames it."""
 
-    def __init__(self, shot: Path) -> None:
+    def __init__(self, shot: Path, descriptor: int) -> None:
         self.location = shot
+        self.descriptor = descriptor
 
     def move(self, destination: Path) -> None:
         """Rename the shot, lock file inside, to the absent `destination` on the same filesystem."""
@@ -115,17 +51,69 @@ class Hold:
         self.location = destination
 
 
+_holds: dict[tuple[int, int], Hold] = {}
+
+
+def _identity(descriptor: int) -> tuple[int, int]:
+    status = os.fstat(descriptor)
+    return status.st_dev, status.st_ino
+
+
+def _path_identity(lock: Path) -> tuple[int, int] | None:
+    try:
+        status = lock.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return status.st_dev, status.st_ino
+
+
+def holding(shot: Path) -> Hold | None:
+    """This process's hold of `shot`, or None."""
+    identity = _path_identity(shot / LOCK)
+    return None if identity is None else _holds.get(identity)
+
+
+def _refusal(shot: Path) -> ShotLockedError:
+    try:
+        record = json.loads((shot / OWNER).read_text())
+        who = f"pid {record['pid']} on {record['host']} since {record['since']} ({record['command']})"
+    except (FileNotFoundError, ValueError, KeyError):
+        who = "another process"
+    return ShotLockedError(f"{shot} is locked by {who}; wait for it to finish")
+
+
+def _lock(shot: Path, descriptor: int) -> None:
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise _refusal(shot) from None
+    if _path_identity(shot / LOCK) != _identity(descriptor):
+        raise ShotLockedError(f"{shot} was locked by a writer that moved it; look again")
+
+
+def _acquire(shot: Path) -> Hold:
+    descriptor = os.open(shot / LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        _lock(shot, descriptor)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return Hold(shot, descriptor)
+
+
 @contextmanager
 def held(shot: Path) -> Generator[Hold]:
-    """Hold the shot's writer lock for the block; raise ShotLockedError when another owner has it."""
-    temporary = shot / f"{LOCK}.{os.getpid()}.{secrets.token_hex(4)}"
-    temporary.write_text(json.dumps(owner(), sort_keys=True) + "\n")
+    """Hold the shot's writer lock for the block; raise ShotLockedError when another holder has it."""
+    outer = holding(shot)
+    if outer is not None:
+        yield outer
+        return
+    hold = _acquire(shot)
+    identity = _identity(hold.descriptor)
+    _holds[identity] = hold
     try:
-        _acquire(shot, temporary)
-    finally:
-        temporary.unlink()
-    hold = Hold(shot)
-    try:
+        files.write_text(shot / OWNER, json.dumps(owner(), sort_keys=True) + "\n")
         yield hold
     finally:
-        (hold.location / LOCK).unlink()
+        del _holds[identity]
+        os.close(hold.descriptor)

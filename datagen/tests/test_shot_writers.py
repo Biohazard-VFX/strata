@@ -10,8 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from strata_datagen import cli, files, shotlock
+from strata_datagen import cli, files
 from strata_datagen.render import husk
+from tests.concurrency import free
 from tests.fixtures import SKY, Sample, write_shot
 from tests.shotwrites import watching
 
@@ -123,7 +124,7 @@ class ShotWriterTest(unittest.TestCase):
         self.assertEqual(watch.unlocked, [])
         self.assertTrue((self.root / "rejected" / "bad" / "qa.json").exists())
         self.assertFalse((self.root / "shots" / "bad").exists())
-        self.assertEqual(sorted(p.name for p in (self.root / "shots" / "good").glob(shotlock.LOCK + "*")), [])
+        self.assertTrue(free(self.root / "shots" / "good"))
 
 
 if __name__ == "__main__":

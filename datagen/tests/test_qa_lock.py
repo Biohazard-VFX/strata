@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from strata_datagen import cli, shotlock
-from tests.concurrency import FIRST, FRAMES, Paused, pack_paused
+from tests.concurrency import FIRST, FRAMES, Paused, free, pack_paused, pack_shot, run
 from tests.fixtures import write_shot
 
 
@@ -24,7 +24,7 @@ class QaLockTest(unittest.TestCase):
         try:
             with self.assertRaisesRegex(shotlock.ShotLockedError, "locked by"):
                 cli.main(["qa", "--root", str(self.root)])
-            self.assertTrue((self.shot / shotlock.LOCK).exists())
+            self.assertFalse(free(self.shot))
             self.assertFalse((self.root / "rejected").exists())
             self.assertFalse((self.shot / "qa.json").exists())
         finally:
@@ -38,22 +38,22 @@ class QaLockTest(unittest.TestCase):
         rejected = self.root / "rejected" / "s"
         self.assertFalse(self.shot.exists())
         self.assertTrue((rejected / "qa.json").exists())
-        self.assertEqual(sorted(p.name for p in rejected.glob(".lock*")), [])
+        self.assertTrue(free(rejected))
         self.assertTrue((rejected / "samples" / "s_0001").is_dir())
 
     def test_a_shot_moved_while_held_releases_its_lock_at_the_new_place(self) -> None:
         destination = self.root / "moved"
         with shotlock.held(self.shot) as hold:
             hold.move(destination)
-            self.assertTrue((destination / shotlock.LOCK).exists())
-        self.assertFalse((destination / shotlock.LOCK).exists())
+            self.assertTrue(run(pack_shot, str(destination)).startswith("ShotLockedError"))
+        self.assertTrue(free(destination))
 
     def test_a_refused_move_releases_the_lock_where_the_shot_stays(self) -> None:
         destination = self.root / "taken"
         (destination / "x").mkdir(parents=True)
         with self.assertRaises(OSError), shotlock.held(self.shot) as hold:
             hold.move(destination)
-        self.assertFalse((self.shot / shotlock.LOCK).exists())
+        self.assertTrue(free(self.shot))
         self.assertFalse((destination / shotlock.LOCK).exists())
 
 
