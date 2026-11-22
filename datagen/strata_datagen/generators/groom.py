@@ -81,6 +81,7 @@ def _from_guides(
     tree = KDTree(guide_roots)
     spacing = float(np.median(tree.query(guide_roots, k=2)[0][:, 1]))
     distance, index = tree.query(roots, k=params.neighbours)
+    distance, index = distance.reshape(len(roots), -1), index.reshape(len(roots), -1)
     weight = 1.0 / np.maximum(distance, 1e-6) ** 2
     weight /= weight.sum(axis=1, keepdims=True)
     blended = np.einsum("nk,nksd->nsd", weight, shapes[index])
