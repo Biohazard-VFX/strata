@@ -25,6 +25,7 @@ if [[ $# -gt 0 ]]; then
 fi
 uv lock --project training --check
 uv lock --project datagen --check
+"$python" tools/check_environments.py
 bash datagen/check.sh
 if [[ "$cpu" == 0 ]]; then
   UV_PROJECT_ENVIRONMENT=$("$python" -c 'import sys; print(sys.prefix)') \

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Prove each source check rejects its violation and accepts allowed code, in isolated repos."""
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -200,7 +202,46 @@ def run(name, files, error, script):
             assert result.returncode != 0 and error in result.stderr, (name,result.stdout,result.stderr)
 
 
+ENVIRONMENT_CASES = [
+    ('clean environments', {}, None),
+    ('training holds both contracts', {'training':{'strata_contract/__init__.py':'','strata_dataset/__init__.py':''}}, None),
+    ('datagen finds model contract', {'datagen':{'strata_contract/__init__.py':''}}, 'datagen environment'),
+    ('datagen path file reaches model contract', {'datagen':{'escape.pth':'{root}/contract\n'},
+                                                  'repo':{'contract/strata_contract/__init__.py':''}}, 'can import strata_contract'),
+    ('datagen holds training distribution', {'datagen':{'strata_train-0.1.0.dist-info/METADATA':'Metadata-Version: 2.1\nName: strata-train\nVersion: 0.1.0\n'}}, 'holds strata-train'),
+    ('training finds datagen', {'training':{'strata_datagen.py':''}}, 'training environment'),
+]
+
+
+def run_environment(name, files, error):
+    with tempfile.TemporaryDirectory(prefix='environment-cases-',dir=ROOT/'build') as temporary:
+        directory = Path(temporary)
+        (directory/'tools').mkdir()
+        for tool in ('check_environments.py','boundaries.py'):
+            shutil.copy2(ROOT/'tools'/tool,directory/'tools'/tool)
+        for relative,text in files.get('repo',{}).items():
+            (directory/relative).parent.mkdir(parents=True,exist_ok=True)
+            (directory/relative).write_text(text)
+        for project in ('training','datagen'):
+            venv = directory/project/'.venv'
+            subprocess.run([sys.executable,'-m','venv','--without-pip',str(venv)],check=True)
+            site = subprocess.check_output([str(venv/'bin'/'python'),'-c','import sysconfig; print(sysconfig.get_path("purelib"))'],text=True)
+            for relative,text in files.get(project,{}).items():
+                path = Path(site.strip())/relative
+                path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_text(text.replace('{root}',str(directory)))
+        env = {key: value for key, value in os.environ.items() if key != 'PYTHONPATH'}
+        result = subprocess.run([str(directory/'training'/'.venv'/'bin'/'python'),'tools/check_environments.py'],
+                                cwd=directory,capture_output=True,text=True,env=env)
+        if error is None:
+            assert result.returncode == 0, (name,result.stderr)
+        else:
+            assert result.returncode != 0 and error in result.stderr, (name,result.stdout,result.stderr)
+
+
+for name,files,error in ENVIRONMENT_CASES:
+    run_environment(name,files,error)
 for cases,script in ((CASES,'check_layers.sh'),(COMMENT_CASES,'check_comments.sh'),(DECISION_CASES,'check_decisions.sh'),(PATH_CASES,'check_paths.sh')):
     for name,files,error in cases:
         run(name,files,error,script)
-print(f'rule cases: {len(CASES)} layer, {len(COMMENT_CASES)} comment, {len(DECISION_CASES)} decision and {len(PATH_CASES)} path scenarios passed')
+print(f'rule cases: {len(ENVIRONMENT_CASES)} environment, {len(CASES)} layer, {len(COMMENT_CASES)} comment, {len(DECISION_CASES)} decision and {len(PATH_CASES)} path scenarios passed')
