@@ -3,7 +3,15 @@ name = "strata-training"
 version = "0.1.0"
 description = "Fixed-layer deep supervision for Depth Pro 2"
 requires-python = ">=3.12,<3.14"
-dependencies = ["numpy>=2", "torch>=2.6", "OpenEXR>=3.3", "scipy>=1.14", "pillow>=11", "depth-pro-2"]
+dependencies = [
+    "numpy>=2",
+    "torch>=2.6",
+    "OpenEXR>=3.3",
+    "scipy>=1.14",
+    "pillow>=11",
+    "depth-pro-2",
+    "av>=14",
+]
 
 [project.scripts]
 strata-train = "strata_training.cli:main"

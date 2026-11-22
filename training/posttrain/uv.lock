@@ -999,6 +999,7 @@ name = "strata-training"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "av" },
     { name = "depth-pro-2" },
     { name = "numpy" },
     { name = "openexr" },
@@ -1017,6 +1018,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "av", specifier = ">=14" },
     { name = "depth-pro-2", git = "https://github.com/apple-aiml-research/ml-depth-pro-2?rev=aa389cbb0b74341664ed663a0966c859905cd6c0" },
     { name = "numpy", specifier = ">=2" },
     { name = "openexr", specifier = ">=3.3" },
