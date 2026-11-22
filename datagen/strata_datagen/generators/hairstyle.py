@@ -56,6 +56,12 @@ SKIN_OFFSET_M = 0.002
 MAX_POINTS = 6_000_000
 SHOT_POINTS = 9_000_000
 MAX_WIDTH_SCALE = 4.0
+BROW_Y = 0.05
+FACE_Z = 0.45
+FACE_HALF = 0.72
+FACE_FADE = 0.6
+HUG = 0.8
+SHORT_CURL_SHARE = 0.08
 
 
 @dataclass(frozen=True)
@@ -270,6 +276,7 @@ class _Frame:
     up: FloatArray
     forward: FloatArray
     side: FloatArray
+    brow: float
 
 
 class _Skin:
@@ -284,6 +291,13 @@ class _Skin:
         self.points = head.points
         self.normals = normals / np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-12)
         self.tree = KDTree(head.points)
+
+    def hug(self, points: FloatArray, directions: FloatArray, share: float) -> FloatArray:
+        """Directions with `share` of their outward part along the nearest skin normal removed."""
+        _, index = self.tree.query(points)
+        normal = self.normals[index]
+        out = directions - share * normal * np.maximum(np.sum(directions * normal, axis=1), 0.0)[:, None]
+        return out / np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-12)
 
     def push(self, points: FloatArray, offset: FloatArray | float) -> FloatArray:
         flat = points.reshape(-1, 3)
@@ -304,7 +318,12 @@ def _frame(head: Head) -> _Frame:
     up = head.up / np.linalg.norm(head.up)
     forward = head.forward - up * (head.forward @ up)
     forward /= np.linalg.norm(forward)
-    return _Frame(centre, radius, up, forward, np.cross(up, forward))
+    side = np.cross(up, forward)
+    brows = head.regions.get("brows")
+    if brows is None or not (brows > 0.5).any():
+        return _Frame(centre, radius, up, forward, side, BROW_Y)
+    brow = float((((head.points[brows > 0.5] - centre) / radius) @ up).max())
+    return _Frame(centre, radius, up, forward, side, brow)
 
 
 def _sample_region(
@@ -372,11 +391,13 @@ def _comb(style: Style, frame: _Frame, roots: FloatArray, normals: FloatArray) -
     if style.cut == "short":
         back = back - 1.0 * np.clip(q[:, 2], 0.0, 1.0)
     fringe = _fringe(style, q)
+    if style.cut in ("medium", "long"):
+        back = np.where(q[:, 2] > FACE_Z, np.maximum(back, 0.5 + 0.5 * q[:, 2]), back)
     back = np.where(fringe, -1.5, back)
     lateral = np.where(fringe, lateral * 0.3, lateral)
     want = frame.side[None] * lateral[:, None] - frame.forward[None] * back[:, None] - frame.up[None] * 0.4
     along = _tangent(want, normals)
-    rise = 0.05 + (0.4 if style.cut == "short" else 0.9) * style.volume**2
+    rise = 0.03 + (0.15 if style.cut == "short" else 0.9) * style.volume**2
     lift = np.where(fringe, 0.0, rise)[:, None]
     out = along * (1.0 - lift) + normals * lift
     return out / np.linalg.norm(out, axis=1, keepdims=True)
@@ -391,7 +412,8 @@ def _lengths(style: Style, frame: _Frame, roots: FloatArray, rng: np.random.Gene
     if style.cut in ("medium", "long"):
         base = base * (1.0 - 0.25 * np.clip(q[:, 2], 0.0, 1.0))
     fringe = _fringe(style, q)
-    base = np.where(fringe, np.minimum(base, frame.radius * rng.uniform(0.9, 1.3)), base)
+    to_brow = (q[:, 1] - frame.brow) * frame.radius * rng.uniform(1.0, 1.15, len(q))
+    base = np.where(fringe, np.clip(to_brow, 0.01, base), base)
     return base * rng.uniform(0.85, 1.0, len(roots))
 
 
@@ -405,21 +427,49 @@ def _grow(
     samples: int,
     stiffness: float,
     offset: FloatArray,
+    hug: float = 0.0,
+    face: bool = False,
 ) -> FloatArray:
-    """Grow chains from roots, turning to gravity (stiffness is kept per cm) and pushed out of the skin."""
+    """Grow chains from roots, turning to gravity (stiffness is kept per cm) and pushed out of the skin.
+
+    `hug` bends each step toward the skin's tangent plane (short cuts follow the scalp); `face`
+    keeps strands out of the face in front of and below the brows.
+    """
     step = lengths / (samples - 1)
     out = np.empty((len(roots), samples, 3))
     out[:, 0] = roots
+    sides = np.where(_local(frame, roots)[:, 0] < 0.0, -1.0, 1.0)
     direction = directions.copy()
     keep = (stiffness ** (step / 0.01))[:, None]
     for k in range(1, samples):
         direction = direction * keep - frame.up[None] * (1.0 - keep)
         direction /= np.linalg.norm(direction, axis=1, keepdims=True)
-        point = skin.push(out[:, k - 1] + direction * step[:, None], offset)
+        if hug > 0.0:
+            direction = skin.hug(out[:, k - 1], direction, hug)
+        point = out[:, k - 1] + direction * step[:, None]
+        if face:
+            point = _clear_face(frame, point, sides)
+        point = skin.push(point, offset)
         moved = point - out[:, k - 1]
         direction = moved / np.maximum(np.linalg.norm(moved, axis=1, keepdims=True), 1e-12)
         out[:, k] = out[:, k - 1] + direction * step[:, None]
     return out
+
+
+def _ramp(x: FloatArray) -> FloatArray:
+    t = np.clip(x, 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _clear_face(frame: _Frame, points: FloatArray, side: FloatArray) -> FloatArray:
+    """Points in front of the face below the brows eased out to the face's edge on their root's side.
+
+    The push fades in over FACE_FADE of the head radius in depth and height, so it is continuous.
+    """
+    q = _local(frame, points)
+    weight = _ramp((q[..., 2] - FACE_Z) / FACE_FADE) * _ramp((frame.brow - q[..., 1]) / FACE_FADE)
+    shift = weight * np.maximum(FACE_HALF - side * q[..., 0], 0.0) * side * frame.radius
+    return points + shift[..., None] * frame.side
 
 
 def _samples(style: Style, length: float, base: int) -> int:
@@ -467,16 +517,19 @@ def _texture(
     curves = strands.clump(
         curves, guide, factor=style.clump, shape=0.35, tip_spread=0.002 * (1.0 - style.clump), rng=rng
     )
+    short = style.cut == "short"
     if style.curl_radius_m > 0.0:
         own = np.arange(len(curves))
         axis = own if style.texture in ("coily", "wavy") else guide
         curves = strands.curl(
             curves,
             axis,
-            radius=style.curl_radius_m,
+            radius=min(style.curl_radius_m, SHORT_CURL_SHARE * style.length_m)
+            if short
+            else style.curl_radius_m,
             turns_per_m=style.curl_turns_per_m,
             rng=rng,
-            start=max(start, 0.05),
+            start=max(start, 0.3 if short else 0.05),
             factor_start=0.6,
             factor_end=1.0,
             random_phase=1.0 if axis is own else 0.15,
@@ -485,7 +538,7 @@ def _texture(
     tangle = style.texture == "coily"
     curves = strands.noise(
         curves,
-        distance=0.01 if tangle else 0.002 + 0.006 * style.volume,
+        distance=0.01 if tangle else (0.4 if short else 1.0) * (0.002 + 0.006 * style.volume),
         scale=160.0 if tangle else 40.0,
         shape=0.4,
         rng=rng,
@@ -559,7 +612,7 @@ def _visible(rank: FloatArray, share: float) -> FloatArray:
 
 
 def _finish(
-    skin: _Skin, base: _Base, style: Style, envelope: Style, *, down: bool
+    skin: _Skin, frame: _Frame, base: _Base, style: Style, envelope: Style, *, down: bool
 ) -> tuple[FloatArray, FloatArray]:
     """One key of a strand set: shaped past `split` (an updo's tie), faded by density.
 
@@ -574,7 +627,8 @@ def _finish(
     curves = np.concatenate([fixed, loose], axis=1)
     curves = _flyaways(curves, style, rng)
     if down:
-        curves = skin.push(curves, SKIN_OFFSET_M * 0.5)
+        sides = np.where(_local(frame, base.roots)[:, 0] < 0.0, -1.0, 1.0)[:, None]
+        curves = skin.push(_clear_face(frame, curves, sides), SKIN_OFFSET_M * 0.5)
     curves[:, 0] = base.roots
     widths = _widths(
         curves, style.width_m * base.width_scale, np.random.default_rng(base.seed + 1), taper=base.taper
@@ -592,7 +646,7 @@ def _down(
     lengths = _lengths(style, frame, guide_roots, rng)
     height = np.clip((_local(frame, guide_roots)[:, 1] + 0.3), 0.0, 1.3)
     offset = SKIN_OFFSET_M + height[:, None] * 0.012 * (0.3 + style.volume)
-    stiffness = {"buzz": 0.99, "short": 0.93}.get(style.cut, 0.6 + 0.3 * style.volume)
+    stiffness = {"buzz": 0.99, "short": 0.85}.get(style.cut, 0.6 + 0.3 * style.volume)
     stiffness = 0.9 + 0.06 * style.volume if style.texture == "coily" else stiffness
     stiffness = stiffness * (0.8 if style.wet else 1.0)
     guides = _grow(
@@ -604,6 +658,8 @@ def _down(
         samples=samples,
         stiffness=stiffness,
         offset=offset[:, 0],
+        hug=HUG if style.cut in ("buzz", "short") else 0.0,
+        face=True,
     )
     roots, _ = _sample_region(head, skin, weight, count, rng)
     part = _part_x(style)
@@ -822,7 +878,7 @@ def build(
     envelope = _envelope(style, keys)
     down = style.updo == "down"
     base = (_down if down else _updo)(head, skin, frame, envelope, rng, keys=len(seconds))
-    shaped = [_finish(skin, base, key, envelope, down=down) for key in keys]
+    shaped = [_finish(skin, frame, base, key, envelope, down=down) for key in keys]
     sets = [StrandSet("scalp", np.stack([c for c, _ in shaped]), np.stack([w for _, w in shaped]))]
     if style.facial != "none":
         beard = _beard(head, skin, frame, envelope, rng)

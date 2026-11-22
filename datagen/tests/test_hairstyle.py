@@ -168,6 +168,31 @@ def drifting(seed: int, **changes: object) -> hairstyle.Style:
     return replace(style(seed, **changes), drift=hairstyle.Drift(curves, 0.0, 0.0))
 
 
+class LookTest(unittest.TestCase):
+    """The test head is a sphere, so its hair frame is CENTRE and RADIUS with the world axes."""
+
+    def test_long_hair_and_fringes_leave_the_face_clear(self) -> None:
+        brows = head().points[head().regions["brows"] > 0.5]
+        brow = float(((brows - CENTRE) / RADIUS)[:, 1].max())
+        for part in ("none", "centre", "side"):
+            drawn = style(3, cut="long", updo="down", texture="straight", part=part, bangs=True, length_m=0.5)
+            q = (scalp(build(drawn)).curves.reshape(-1, 3) - CENTRE) / RADIUS
+            deep = hairstyle.FACE_Z + hairstyle.FACE_FADE
+            face = (
+                (q[:, 2] > deep)
+                & (q[:, 1] < brow - hairstyle.FACE_FADE)
+                & (np.abs(q[:, 0]) < 0.9 * hairstyle.FACE_HALF)
+            )
+            self.assertEqual(int(face.sum()), 0, part)
+
+    def test_short_cuts_lie_close_to_the_head(self) -> None:
+        for texture in ("straight", "wavy"):
+            drawn = style(7, cut="short", updo="down", texture=texture, length_m=0.08, volume=0.4)
+            points = scalp(build(drawn)).curves.reshape(-1, 3)
+            rise = np.linalg.norm(points - CENTRE, axis=1) - RADIUS
+            self.assertLess(float(np.percentile(rise, 95)), 0.4 * drawn.length_m, texture)
+
+
 class CostTest(unittest.TestCase):
     def test_point_cap_trades_strands_for_width_and_keeps_summed_width(self) -> None:
         drawn = replace(style(17, updo="down", cut="long", texture="straight"), drift=hairstyle.STILL)
