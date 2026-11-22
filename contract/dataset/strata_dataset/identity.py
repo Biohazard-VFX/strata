@@ -4,22 +4,25 @@ Karma premultiplies every deep extra channel by the sample's float alpha and mer
 pixel by summing them, so a merged sample holds the coverage-weighted mean of its sources' ids,
 which can round to an absent id or to one that holds only part of the sample. A sample keeps its
 rounded id r only if its quotient lies within max(RESIDUAL, RELATIVE_RESIDUAL x id) of r and both
-`instance_check` and `instance_check2`, two independent hashes of the id in [1, 2) merged the same
-way, lie within TOLERANCE of `check(r)` and `check2(r)`.
+`instance_check` and `instance_check2`, two hashes of the id in [1, 2) from different mixing
+functions with different keys and merged the same way, lie within TOLERANCE of `check(r)` and
+`check2(r)`.
 
-Bound: let m be the share of a merged sample held by sources whose id is not r. Each merged check
-differs from r's by m x (the other sources' weighted mean check - r's check). With r's two checks
-independent and uniform given the other sources' checks, each passes with probability at most
+Bound, conditional on a model: let m be the share of a merged sample held by sources whose id is not
+r. Each merged check differs from r's by m x (the other sources' weighted mean check - r's check).
+If r's two checks behave as independent uniform values given the other sources' checks and the
+sources and shares do not depend on them, each passes with probability at most
 p(m) = 2 TOLERANCE / m + 2^-23 (float grid), so a sample whose mislabelled share is at least m is
 accepted with probability at most p(m)^2 (6e-8 at m = 1/2), for any number of sources and shares,
-r present or absent. The expected mislabelled share accepted per merged sample is at most
-2 TOLERANCE = 2^-13.
+r present or absent, and the expected mislabelled share accepted per merged sample is at most
+2 TOLERANCE = 2^-13. The hashes are fixed functions: this is a statistical model, checked
+numerically on all ids, not a guarantee for any one chosen merge.
 """
 
 import numpy as np
 from numpy.typing import NDArray
 
-VERSION = "instance-check-2"
+VERSION = "instance-check-3"
 MAX_ID = 1 << 15
 TOLERANCE = 2.0**-14
 RESIDUAL = 0.05
@@ -29,19 +32,21 @@ _MASK = np.uint64(0xFFFFFFFF)
 _KEYS = (np.uint64(0x9E3779B9), np.uint64(0x7F4A7C15))
 
 
-def _finalize(x: NDArray[np.uint64]) -> NDArray[np.uint64]:
+def _mix(
+    x: NDArray[np.uint64], multipliers: tuple[int, int], shifts: tuple[int, int, int]
+) -> NDArray[np.uint64]:
     x = x & _MASK
-    x ^= x >> np.uint64(16)
-    x = (x * np.uint64(0x85EBCA6B)) & _MASK
-    x ^= x >> np.uint64(13)
-    x = (x * np.uint64(0xC2B2AE35)) & _MASK
-    return x ^ (x >> np.uint64(16))
+    x ^= x >> np.uint64(shifts[0])
+    x = (x * np.uint64(multipliers[0])) & _MASK
+    x ^= x >> np.uint64(shifts[1])
+    x = (x * np.uint64(multipliers[1])) & _MASK
+    return x ^ (x >> np.uint64(shifts[2]))
 
 
-def _hash(ids: NDArray[np.integer]) -> NDArray[np.uint64]:
+def _keyed(ids: NDArray[np.integer], key: int) -> NDArray[np.uint64]:
     if ids.size and (int(ids.min()) < 0 or int(ids.max()) >= MAX_ID):
         raise ValueError(f"instance ids must be in [0, {MAX_ID})")
-    return _finalize(ids.astype(np.uint64) + _KEYS[0])
+    return ids.astype(np.uint64) + _KEYS[key]
 
 
 def _unit(x: NDArray[np.uint64]) -> NDArray[np.float32]:
@@ -50,12 +55,12 @@ def _unit(x: NDArray[np.uint64]) -> NDArray[np.float32]:
 
 def check(ids: NDArray[np.integer]) -> NDArray[np.float32]:
     """h(id) in [1, 2): the top 23 bits of the murmur3 32-bit finalizer of id + 0x9E3779B9 as mantissa."""
-    return _unit(_hash(ids))
+    return _unit(_mix(_keyed(ids, 0), (0x85EBCA6B, 0xC2B2AE35), (16, 13, 16)))
 
 
 def check2(ids: NDArray[np.integer]) -> NDArray[np.float32]:
-    """g(id) in [1, 2): the same finalizer applied again to that hash + 0x7F4A7C15, top 23 bits."""
-    return _unit(_finalize(_hash(ids) + _KEYS[1]))
+    """g(id) in [1, 2): the top 23 bits of the lowbias32 mix of id + 0x7F4A7C15, never of h's hash."""
+    return _unit(_mix(_keyed(ids, 1), (0x7FEB352D, 0x846CA68B), (16, 15, 16)))
 
 
 def decode(

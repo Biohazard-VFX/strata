@@ -159,15 +159,20 @@ holding only part of the sample.
 `strata_dataset.identity.decode` gives each sample's best-effort id: id = round(instance_id /
 coverage), kept only when id is in [0, 32768), |instance_id / coverage - id| <= max(0.05, 2e-5 x id)
 and both |instance_check / coverage - check(id)| and |instance_check2 / coverage - check2(id)| are
-at most 2^-14 (`identity-check-2`). `check(id)` is 1 + 2^-23 x the top 23 bits of the murmur3 32-bit
-finalizer of (id + 0x9E3779B9) mod 2^32; `check2(id)` applies the finalizer again to that 32-bit hash
-plus 0x7F4A7C15. Both are exact float32 in [1, 2); unmerged samples meet them within about 1e-5.
-Bound: if a merged sample's sources other than id hold share m, each check misses check(id) by m
-times a difference of independent uniform hashes, so it passes with probability at most
-p = 2 x 2^-14 / m + 2^-23 and both with at most p^2 (6e-8 at m = 1/2, 1.5e-6 at m = 1/10), whatever
-the number of sources, their shares and whether id is among them. The expected mislabelled share
-accepted per merged sample is at most 2^-13. Raw QA bounds the fraction of samples and of coverage
-with id -1.
+at most 2^-14 (`instance-check-3`). `check(id)` is 1 + 2^-23 x the top 23 bits of the murmur3 32-bit
+finalizer of (id + 0x9E3779B9) mod 2^32; `check2(id)` is the same of the lowbias32 mix (x ^= x >> 16,
+x *= 0x7FEB352D, x ^= x >> 15, x *= 0x846CA68B, x ^= x >> 16, mod 2^32) of (id + 0x7F4A7C15) mod 2^32,
+a different function with a different key, never applied to the first hash. Both are exact float32
+in [1, 2); unmerged samples meet them within about 1e-5.
+Bound, under a statistical model: if a merged sample's sources other than id hold share m, each
+check misses check(id) by m times a difference of hash values. If the two hashes of id behave as
+independent uniform values given the other sources' hashes, and sources and shares do not depend on
+them, each passes with probability at most p = 2 x 2^-14 / m + 2^-23 and both with at most p^2
+(6e-8 at m = 1/2, 1.5e-6 at m = 1/10), whatever the number of sources, their shares and whether id
+is among them, and the expected mislabelled share accepted per merged sample is at most 2^-13. The
+hashes are fixed functions, so this is not a guarantee for any one chosen merge; the model is
+checked numerically on all ids (nearby-id differences of the two hashes coincide as often as
+independent ones would, and merge acceptance stays within the bound). Raw QA bounds the fraction of samples and of coverage with id -1.
 
 ZBack - Z stays at most about 1 mm for surfaces.
 Fully occluded surfaces are not stored. Beauty and deep share a one-pixel box filter: compositing

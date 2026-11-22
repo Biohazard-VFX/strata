@@ -8,8 +8,8 @@
 - Deep carries `C`, `instance_id` and a float `coverage` (constant 1 on every surface, sky too): it is the sample's float alpha and id = round(instance_id / coverage); Karma stores A as half.
 - Roles are linear deep and beauty channels (`foreground`, `hero`, `fur`: per-surface 0/1 primvars times alpha), exact through Karma's summing merges; roles never come from ids.
 - Each surface's role primvars follow its manifest id range name via strata_dataset.roles.membership, the one rule shared by authoring and the contract.
-- Instance ids are best-effort, for per-object use only: kept if the quotient is near-integer and two independent hashes (`instance_check`, `instance_check2`) match, else -1.
-- Id check tolerance is 2^-14 against ~1e-5 float noise; two hashes make a merge with mislabelled share m pass with p <= (2^-13/m)^2, one hash only 2^-13/m.
+- Instance ids are best-effort, for per-object use only: kept if the quotient is near-integer and two hashes from different mixers and keys (`instance_check`, `instance_check2`) match, else -1.
+- Id check tolerance is 2^-14 against ~1e-5 float noise; if the two hashes act as independent uniforms (tested on all ids), a merge with mislabelled share m passes with p <= (2^-13/m)^2.
 - Ids stay below 2^15 so round(instance_id / coverage) is exact under float32 accumulation; authoring an id outside [0, 2^15) fails the build.
 - Samples failing the identity check keep colour, alpha, occlusion and roles but carry id -1; raw QA limits their fraction and coverage.
 - Datagen packing and raw QA refuse records of any other contract version (strata_dataset.records) instead of reinterpreting them.

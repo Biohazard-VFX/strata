@@ -208,6 +208,19 @@ class IdentityTest(unittest.TestCase):
         self.assertLess(abs(float(np.corrcoef(first, second)[0, 1])), 0.02)
         self.assertLess(abs(float(np.corrcoef(np.diff(first), np.diff(second))[0, 1])), 0.02)
 
+    def test_the_checks_of_nearby_ids_differ_independently(self) -> None:
+        ids = np.arange(identity.MAX_ID)
+        first, second = identity.check(ids).astype(np.float64), identity.check2(ids).astype(np.float64)
+        for close in (2.0**-5, 2.0**-7):
+            near = np.zeros((2, 2), np.int64)
+            for distance in range(1, 9):
+                low, high = ids[:-distance], ids[distance:]
+                a = np.abs(first[high] - first[low]) <= close
+                b = np.abs(second[high] - second[low]) <= close
+                near += np.array([[a.sum(), b.sum()], [(a & b).sum(), low.size]])
+            expected = near[0, 0] * near[0, 1] / near[1, 1]
+            self.assertLess(abs(near[1, 0] - expected), 4.0 * np.sqrt(expected), close)
+
     def test_two_source_merges_of_nearby_ids_pass_within_the_stated_bound(self) -> None:
         for share in (1 / 2, 1 / 4, 1 / 16, 1 / 64, 1 / 256):
             accepted, total = 0, 0
@@ -334,11 +347,11 @@ PINNED_CHECKS = [
     1.1540075540542603,
 ]
 PINNED_CHECKS2 = [
-    1.9343010187149048,
-    1.6329020261764526,
-    1.058032751083374,
-    1.1534829139709473,
-    1.8366796970367432,
+    1.99704110622406,
+    1.52652907371521,
+    1.0283201932907104,
+    1.6577625274658203,
+    1.535722255706787,
 ]
 
 
