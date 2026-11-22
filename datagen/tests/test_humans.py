@@ -139,7 +139,8 @@ class RegionsTest(unittest.TestCase):
         total = found["scalp"].astype(int) + found["face"] + found["ears"] + found["body"]
         np.testing.assert_array_equal(total[head > 0.5], 1)
         self.assertFalse(np.any(found["brows"] & ~found["face"]))
-        self.assertTrue(np.all(points[found["scalp"], 1] > 1.65 - human_regions.NAPE_BELOW_EYES_M))
+        span = points[head > 0.5, 1].max() - 1.65
+        self.assertTrue(np.all(points[found["scalp"], 1] > 1.65 - human_regions.NAPE_BELOW_EYES * span))
 
 
 class SamplingTest(unittest.TestCase):

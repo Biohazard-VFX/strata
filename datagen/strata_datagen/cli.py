@@ -9,7 +9,7 @@ from typing import cast
 
 from strata_datagen import files
 from strata_datagen.library import build as library_build
-from strata_datagen.library import catalogue, fetch
+from strata_datagen.library import catalogue, fetch, humans
 from strata_datagen.presets import PRESETS
 from strata_datagen.qa import checks, contact
 from strata_datagen.render import husk, pack
@@ -42,6 +42,13 @@ def cmd_prepare(args: argparse.Namespace) -> None:
             }
         )
     )
+
+
+def cmd_humans(args: argparse.Namespace) -> None:
+    recipe = humans.Recipe.load(args.recipe)
+    only = None if args.only is None else tuple(args.only)
+    for folder in humans.build_library(recipe, args.library, only):
+        print("built", folder, flush=True)
 
 
 def cmd_build(args: argparse.Namespace) -> None:
@@ -118,6 +125,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--sources", type=Path, required=True)
     p.set_defaults(run=cmd_prepare)
+    p = sub.add_parser("humans", help="build the human hero library from a recipe (MPFB + CMU)")
+    p.add_argument("--recipe", type=Path, required=True)
+    p.add_argument("--library", type=Path, required=True)
+    p.add_argument("--only", type=int, nargs="*", help="human indices to build (default: all)")
+    p.set_defaults(run=cmd_humans)
     p = sub.add_parser("build", help="compose shots and write the husk job list")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--presets", nargs="*", default=[], choices=sorted(PRESETS))
