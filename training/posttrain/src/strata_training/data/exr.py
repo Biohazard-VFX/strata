@@ -24,39 +24,45 @@ def read_rgb(path: Path, *, legacy: bool = False) -> Array:
         return np.stack([channels[c].pixels for c in "RGB"]).astype(np.float32)
 
 
-def read_instances(path: Path) -> Array:
-    with exr.File(str(path), separate_channels=True) as file:
-        for part in file.parts:
-            if part.name() == "instance_id":
-                ids: Array = part.channels["instance_id.instance_id"].pixels
-                if not np.all(np.isfinite(ids) & (ids >= 0) & (ids == np.floor(ids))):
-                    raise ValueError("Flat instance IDs must be nonnegative integers")
-                return ids.astype(np.int64)
-    raise ValueError(f"Contract beauty is missing its instance_id part: {path}")
-
-
-def read_deep(path: Path, layers: int = 4) -> Layers:
+def _samples(
+    path: Path, names: str | tuple[str, ...]
+) -> tuple[dict[str, Array], Array, tuple[int, int]]:
     with exr.File(str(path), separate_channels=True) as file:
         channels = file.parts[0].channels
         z: Array = channels["Z"].pixels
         counts = np.fromiter((len(v) if v is not None else 0 for v in z.flat), np.int64)
-
-        def flatten(name: str) -> Array:
+        arrays: dict[str, Array] = {}
+        for name in names:
             chunks: list[Array] = [v for v in channels[name].pixels.flat if v is not None]
-            return (
+            arrays[name] = (
                 np.concatenate(chunks).astype(np.float64)
                 if chunks
                 else np.empty(0, dtype=np.float64)
             )
+        return arrays, counts, z.shape
 
-        return reduce_samples(
-            flatten("Z"),
-            flatten("A"),
-            np.stack([flatten(c) for c in "RGB"], axis=1),
-            counts,
-            z.shape,
-            layers,
-        )
+
+def read_roles(path: Path) -> dict[str, Array]:
+    arrays, counts, shape = _samples(path, ("Z", "A", "instance_id"))
+    alpha, premultiplied = arrays["A"], arrays["instance_id"]
+    if not np.all(np.isfinite(premultiplied) & (premultiplied >= 0)):
+        raise ValueError("Deep instance IDs must be finite and nonnegative")
+    ids = np.rint(np.divide(premultiplied, alpha, out=np.zeros_like(alpha), where=alpha > 0))
+    markers = np.stack((ids == 3, (ids == 2) | (ids == 3), np.zeros_like(ids)), axis=1)
+    coverage = reduce_samples(arrays["Z"], alpha, markers * alpha[:, None], counts, shape, 1)
+    return {"fur": coverage.rgb[0, 0] > 1e-12, "foreground": coverage.rgb[0, 1] > 0.1}
+
+
+def read_deep(path: Path, layers: int = 4) -> Layers:
+    arrays, counts, shape = _samples(path, "ZARGB")
+    return reduce_samples(
+        arrays["Z"],
+        arrays["A"],
+        np.stack([arrays[c] for c in "RGB"], axis=1),
+        counts,
+        shape,
+        layers,
+    )
 
 
 def write_deep(path: Path, prediction: Layers) -> None:

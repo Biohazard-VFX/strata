@@ -52,7 +52,7 @@ def predict_probe(
             ).astype(np.float32)
             inputs = (inputs - norm["mean"][:, None, None]) / norm["std"][:, None, None]
             with torch.no_grad():
-                prediction: torch.Tensor = model(torch.as_tensor(inputs)[None])
+                prediction: torch.Tensor = model(torch.as_tensor(inputs.astype(np.float32))[None])
                 values = prediction[0].numpy()
             h, w = min(256, height - y), min(256, width - x)
             output[:, y : y + h, x : x + w] = values[:, y - y0 : y - y0 + h, x - x0 : x - x0 + w]

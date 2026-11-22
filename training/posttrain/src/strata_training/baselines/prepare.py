@@ -12,10 +12,19 @@ from strata_training.types import Array
 
 
 def prepare_baselines(
-    index: Path, protocol: Path, features: Path, output: Path, probe: Path, normalization: Path
+    index: Path,
+    protocol: Path,
+    features: Path,
+    output: Path,
+    probe: Path,
+    normalization: Path,
+    calibration: Path | None = None,
 ) -> None:
     train = entries_for(index, protocol, "train")
     test = entries_for(index, protocol, "test")
+    train_ids = {e["id"] for e in train}
+    if calibration is None and not train:
+        raise ValueError("Baseline curve fitting requires training frames or frozen calibration")
     output.mkdir(parents=True, exist_ok=True)
     predicted: dict[int, list[Array]] = {6: [], 16: []}
     truth: list[Array] = []
@@ -40,9 +49,9 @@ def prepare_baselines(
                 else:
                     a, f, b = analytic(base["inverse_depth"], radius)
                 save_arrays(path, alpha=a, inv_fg=f, inv_bg=b)
-            if entry["split"] == "train":
+            if entry["id"] in train_ids:
                 predicted[radius].append(np.load(path)["alpha"])
-        if entry["split"] == "train":
+        if entry["id"] in train_ids:
             truth.append(data["reference_a_fg"] if "reference_a_fg" in data else data["alpha"][0])
             masks.append(data["mixed"])
         elif not (target / "probe.npz").exists():
@@ -60,7 +69,13 @@ def prepare_baselines(
                 inv_fg=prediction.inverse_depth[0],
                 inv_bg=prediction.inverse_depth[1],
             )
-    curves: dict[str, Any] = {
-        str(r): fit_curve(predicted[r], truth, masks).tolist() for r in (6, 16)
-    }
-    write_json(output / "curves.json", {"curves": curves, "train_ids": [e["id"] for e in train]})
+    if calibration is not None:
+        import json
+
+        frozen: dict[str, Any] = json.loads(calibration.read_text())
+    else:
+        frozen = {
+            "curves": {str(r): fit_curve(predicted[r], truth, masks).tolist() for r in (6, 16)},
+            "train_ids": [e["id"] for e in train],
+        }
+    write_json(output / "curves.json", frozen)

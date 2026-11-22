@@ -31,6 +31,7 @@ def main() -> None:
     baselines = sub.add_parser("baselines")
     for name in ("index", "protocol", "features", "output", "probe", "normalization"):
         baselines.add_argument(name, type=Path)
+    baselines.add_argument("--calibration", type=Path)
     pipeline = sub.add_parser("pipeline")
     pipeline.add_argument("config", type=Path)
     training = sub.add_parser("train")
@@ -40,6 +41,8 @@ def main() -> None:
         prediction.add_argument(name, type=Path)
     prediction.add_argument("--export-frames", type=int, default=1)
     prediction.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    prediction.add_argument("--scale-mode", choices=("raw", "oracle-aligned"))
+    prediction.add_argument("--features", type=Path)
     evaluation = sub.add_parser("evaluate")
     evaluation.add_argument("index", type=Path)
     evaluation.add_argument("protocol", type=Path)
@@ -68,7 +71,13 @@ def main() -> None:
         from strata_training.baselines.prepare import prepare_baselines
 
         prepare_baselines(
-            args.index, args.protocol, args.features, args.output, args.probe, args.normalization
+            args.index,
+            args.protocol,
+            args.features,
+            args.output,
+            args.probe,
+            args.normalization,
+            args.calibration,
         )
     elif args.command == "pipeline":
         from strata_training.pipeline import pipeline
@@ -90,6 +99,8 @@ def main() -> None:
                     args.output,
                     args.export_frames,
                     args.device,
+                    args.scale_mode,
+                    args.features,
                 )
             )
         )

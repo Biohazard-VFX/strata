@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from strata_training.data.exr import read_deep, read_instances, read_rgb
+from strata_training.data.exr import read_deep, read_rgb, read_roles
 from strata_training.data.metadata import CONTRACT, camera_frames, category
 from strata_training.io import save_arrays, write_json
 from strata_training.types import Array, Layers, fp16_safe
@@ -58,9 +58,9 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                 else:
                     srgb = display_rgb(image, manifest.get("color_space", "ACEScg"))
                     mixed = (target.alpha[0] > 0.03) & (target.alpha[0] < 0.97)
-                    ids = read_instances(shot / "beauty" / f"{frame:04d}.exr")
-                    fur = ids == 3
-                    reference = {"foreground": (ids == 2) | (ids == 3)}
+                    roles = read_roles(shot / "deep" / f"{frame:04d}.exr")
+                    fur = roles["fur"]
+                    reference = {"foreground": roles["foreground"]}
                 save_arrays(
                     cache,
                     inverse_depth=target.inverse_depth,

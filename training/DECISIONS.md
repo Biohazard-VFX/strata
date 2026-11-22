@@ -20,3 +20,5 @@
 - Deep EXR export preserves every positive-coverage sample, including faint HDR contributions.
 - Native role masks use ID 3 for groom and IDs 2/3 for hero silhouettes; scattered instances remain separate.
 - Post-training lives in training/posttrain so model export remains independently owned.
+- Native role masks decode round(instance_id/A) from deep samples and composite visible role coverage, rather than labeling only the nearest surface.
+- OOD baselines reuse frozen training-only calibration; oracle-conditioned predictions retain checkpoint training-scale provenance.

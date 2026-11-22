@@ -100,8 +100,17 @@ def cache_predictions(
     output: Path,
     export_frames: int = 1,
     device: str = "cuda",
+    scale_mode: str | None = None,
+    features: Path | None = None,
 ) -> dict[str, Any]:
-    model, config = load_model(checkpoint, device)
+    model, training_config = load_model(checkpoint, device)
+    config = dict(training_config)
+    if scale_mode is not None:
+        if scale_mode not in {"raw", "oracle-aligned"}:
+            raise ValueError("Prediction scale must be raw or oracle-aligned")
+        config["scale_mode"] = scale_mode
+    if features is not None:
+        config["features"] = str(features)
     entries = entries_for(index, protocol, "test")
     output.mkdir(parents=True, exist_ok=True)
     for i, entry in enumerate(entries):
@@ -117,6 +126,7 @@ def cache_predictions(
             write_deep(output / f"{entry['id']}.exr", prediction)
     report = {
         "config": config,
+        "training_config": training_config,
         "test_ids": [e["id"] for e in entries],
         "checkpoint_sha256": hashlib.file_digest(checkpoint.open("rb"), "sha256").hexdigest(),
         "device": device,

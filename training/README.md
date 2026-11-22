@@ -72,4 +72,10 @@ docker run --rm --gpus all --memory=32g --memory-swap=32g -v /absolute/persisten
 
 The container's one-command entry point is `uv run --frozen --no-dev strata-train pipeline configs/runpod.json`: targets → frozen split → native/temporal features → training → evaluation/deep export. Use the same command in a uv-enabled RunPod image if building this Dockerfile there. Baseline assets are optional external research artifacts; run the `baselines` command with the H+ cache and frozen v004 weights to add all historical competitors on a new dataset. The pipeline's default report contains its trained model and matched scalar DP2 baseline, not fabricated unavailable probe results.
 
-See `DECISIONS.md` for design choices and `results/README.md` for measured smoke outcomes and failures.
+## Oracle and OOD prediction
+
+`predict` accepts `--scale-mode oracle-aligned` to substitute the same GT-derived global-scale input used by the historical probe, and `--features PATH` to evaluate a checkpoint on a different feature cache. It records both training and inference configurations; checkpoint bytes remain unchanged. This is an oracle-conditioned diagnostic, not metric inference or oracle-trained retraining.
+
+`baselines ... --calibration PATH/curves.json` reuses the original training-only curves without fitting on OOD frames. An evaluation-only protocol can have an empty `train` list and all pilot frame IDs in `test`, with the exact index SHA256. Do not train on these shots. Native role masks decode `round(instance_id/A)` per deep sample, include any visible groom contribution, and threshold composited hero coverage at 0.1 for silhouettes.
+
+See `DECISIONS.md` for design choices. Measured outcomes and diagnostics live outside the repository under the project's results/data directories.
