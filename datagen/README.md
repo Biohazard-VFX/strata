@@ -64,5 +64,17 @@ Animated `hero.json` (a hero with `clips` instead of `poses`):
 | `phenotype`, `face_targets`, `skin`, `eyes`, `outfit` | MPFB recipe of the human |
 | `source`, `license`, `licenses`, `redistributable` | provenance; `licenses` has one line per source |
 
+`strata-datagen morphs --recipe recipe.json --library LIBRARY` builds morphing humans (recipe block
+`morph`): each family is a few MPFB corner humans sharing one outfit, so all parts keep one topology.
+A take (default 30 s) blends the corners' rest points, rigs and skin textures with seeded smooth
+weights (`library/curves.py`) while CMU clips chained with crossfades (`library/motion_chain.py`)
+play, so gender, age, body shape, height, skin tone and face drift continuously with no cuts or
+pops; clothes follow because they are skinned and blended like the body, and root travel scales with
+the blended hip height so feet stay grounded. Morph heroes have `kind` `human_morph`, `corners`
+(each corner's skin, phenotype and face targets) and per clip `parameters`: a JSON file with the
+corner weights, the blended phenotype per frame and the chained CMU windows. The skin look mixes the
+corner skins through `albedo_mix<i>` nodes whose `mix` inputs are time-sampled. Regions are on the
+fixed topology, so they move with the morph.
+
 A groom generator binds strands to skin faces in a region using `rest`, then moves each root with its
 face's animated points at every time sample of the clip.
