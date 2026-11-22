@@ -9,7 +9,7 @@ draws fresh parameters from the caller's `numpy.random.Generator`.
 from strata_training.augment.deep import Shot, load_samples
 from strata_training.augment.pipeline import AugmentConfig, Donor, augment_sample, roles
 
-sample = augment_sample(shot, shot_roles, donor, rng, config)
+sample = augment_sample(shot, shot_roles, targets, donor, rng, config)
 # sample.image   (3, H, W) float32 scene-linear model input (degraded)
 # sample.clean   (3, H, W) float32 clean recomposed input (composite-loss beauty)
 # sample.layers  Layers with K slots rebuilt from the merged deep samples
@@ -17,7 +17,10 @@ sample = augment_sample(shot, shot_roles, donor, rng, config)
 ```
 
 `shot` is a `Shot(deep, noisy, denoised)`: deep samples, the noisy beauty `C` part and the
-denoised beauty, all on the same window. `roles(manifest)` reads hero and scatter id ranges.
+denoised beauty, all on the same window; `targets` are that window's cached K-layer targets
+(`shot.deep.targets(K)`). They are returned or linearly regraded unless samples are added,
+removed or graded per instance, in which case targets are rebuilt from the merged deep.
+`roles(manifest)` reads hero and scatter id ranges.
 `donor` is another `Donor(Shot, Roles)` cropped to the same window of a shot with the same
 resolution, or `None`. `AugmentConfig.from_dict` reads a JSON object and rejects unknown keys.
 

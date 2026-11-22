@@ -182,3 +182,15 @@ def test_merge_rejects_mismatched_grids() -> None:
     rng = np.random.default_rng(8)
     with pytest.raises(ValueError, match="identical pixel grids"):
         merge([random_deep(rng, (2, 2), 1, (1,)), random_deep(rng, (2, 3), 1, (1,))])
+
+
+def test_samples_need_positive_depth() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        from_unsorted(
+            (1, 1),
+            np.zeros(1, dtype=np.int64),
+            np.zeros(1, dtype=np.float32),
+            np.ones(1, dtype=np.float32),
+            np.ones((1, 3), dtype=np.float32),
+            np.ones(1, dtype=np.int64),
+        )

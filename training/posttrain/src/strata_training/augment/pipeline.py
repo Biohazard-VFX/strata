@@ -4,7 +4,7 @@ from typing import Any, cast
 import numpy as np
 
 from strata_training.augment.camera import AP1_LUMINANCE, CODECS, CameraParams, degrade
-from strata_training.augment.deep import Composition, DeepSamples, Layer, Shot, compose
+from strata_training.augment.deep import DeepSamples, Layer, Shot, compose
 from strata_training.augment.grain import ISO_STOPS, PROFILES, GrainParams, apply_grain
 from strata_training.augment.occluders import (
     KINDS,
@@ -57,7 +57,6 @@ class AugmentConfig:
     jpeg_quality: tuple[int, int] = (30, 95)
     crf: tuple[int, int] = (18, 38)
     ten_bit: float = 0.3
-    layers: int = 4
 
     @classmethod
     def from_dict(cls, values: dict[str, Any]) -> "AugmentConfig":
@@ -119,6 +118,7 @@ class AugmentedSample:
 def augment_sample(
     shot: Shot,
     shot_roles: Roles,
+    targets: Layers,
     donor: Donor | None,
     rng: np.random.Generator,
     config: AugmentConfig,
@@ -126,22 +126,20 @@ def augment_sample(
     record: dict[str, Any] = {}
     if rng.random() < config.clean:
         record["clean"] = True
-        layers = shot.deep.targets(config.layers)
-        return AugmentedSample(shot.denoised, shot.denoised, layers, record)
-    composition = recompose(shot, shot_roles, donor, rng, config, record)
-    clean = composition.image
-    image = photometric(clean, rng, config, record)
-    return AugmentedSample(image, clean, composition.samples.targets(config.layers), record)
+        return AugmentedSample(shot.denoised, shot.denoised, targets, record)
+    clean, layers = recompose(shot, shot_roles, targets, donor, rng, config, record)
+    return AugmentedSample(photometric(clean, rng, config, record), clean, layers, record)
 
 
 def recompose(
     shot: Shot,
     shot_roles: Roles,
+    targets: Layers,
     donor: Donor | None,
     rng: np.random.Generator,
     config: AugmentConfig,
     record: dict[str, Any],
-) -> Composition:
+) -> tuple[Array, Layers]:
     scene = np.eye(3)
     if rng.random() < config.scene_grade:
         stops = rng.uniform(*config.exposure_stops)
@@ -158,8 +156,13 @@ def recompose(
             layers.append(element)
     if rng.random() < config.occluders:
         layers.append(Layer(_occluders(shot, rng, config, record), None))
+    if len(layers) == 1:
+        rgb = np.einsum("ij,kjhw->kihw", scene, targets.rgb).astype(np.float32)
+        image = np.tensordot(scene, shot.denoised, axes=1).astype(np.float32)
+        return image, Layers(targets.inverse_depth, targets.alpha, rgb)
     scoped = [Layer(layer.samples, layer.shot, scene @ layer.matrix) for layer in layers]
-    return compose(scoped, shot, scene)
+    composition = compose(scoped, shot, scene)
+    return composition.image, composition.samples.targets(targets.alpha.shape[0])
 
 
 def _grade(rng: np.random.Generator, config: AugmentConfig) -> Array:

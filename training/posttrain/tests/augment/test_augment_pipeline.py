@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from strata_training.augment.deep import Shot, flatten, from_unsorted
+from strata_training.augment.deep import Layer, Shot, compose, flatten, from_unsorted
 from strata_training.augment.pipeline import (
     AugmentConfig,
     AugmentedSample,
@@ -83,7 +83,9 @@ def test_photometric_augmentations_never_change_targets() -> None:
     reference = shot.deep.targets()
     config = replace(OFF, grain=1.0, camera=1.0, sharpen=1.0)
     for seed in range(4):
-        sample = augment_sample(shot, ROLES, None, np.random.default_rng(seed), config)
+        sample = augment_sample(
+            shot, ROLES, shot.deep.targets(), None, np.random.default_rng(seed), config
+        )
         for name, value in reference.arrays().items():
             assert_array_equal(sample.layers.arrays()[name], value)
         assert_allclose(sample.clean, shot.denoised, rtol=1e-6)
@@ -94,19 +96,30 @@ def test_scene_grade_changes_target_colour_with_the_input() -> None:
     shot = layered_shot(2)
     reference = shot.deep.targets()
     sample = augment_sample(
-        shot, ROLES, None, np.random.default_rng(3), replace(OFF, scene_grade=1.0)
+        shot,
+        ROLES,
+        shot.deep.targets(),
+        None,
+        np.random.default_rng(3),
+        replace(OFF, scene_grade=1.0),
     )
     gains = np.array(sample.record["scene_gain"])
     assert_array_equal(sample.layers.alpha, reference.alpha)
     assert_array_equal(sample.layers.inverse_depth, reference.inverse_depth)
     assert_allclose(sample.layers.rgb, gains[None, :, None, None] * reference.rgb, rtol=1e-5)
     assert_allclose(sample.image, gains[:, None, None] * shot.denoised, rtol=1e-5)
+    rebuilt = compose([Layer(shot.deep, shot, np.diag(gains))], shot, np.diag(gains))
+    assert_allclose(sample.image, rebuilt.image, rtol=1e-5)
+    for name, value in rebuilt.samples.targets().arrays().items():
+        assert_allclose(sample.layers.arrays()[name], value, rtol=1e-5, atol=1e-7)
 
 
 def test_recomposition_places_the_donor_hero_in_front_with_consistent_input() -> None:
     shot, donor = layered_shot(3), layered_shot(4)
     config = replace(OFF, recompose=1.0, hero=1.0, element_front=1.0)
-    sample = augment_sample(shot, ROLES, Donor(donor, ROLES), np.random.default_rng(5), config)
+    sample = augment_sample(
+        shot, ROLES, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(5), config
+    )
     assert sample.record["element"] == "hero"
     assert sample.record["element_depth_scale"] < 3.0 / 6.0
     hero = np.zeros(donor.deep.shape, dtype=bool)
@@ -126,8 +139,12 @@ def flatten_layers(sample: AugmentedSample) -> Array:
 def test_occluders_and_grades_rebuild_exact_targets_deterministically() -> None:
     shot, donor = layered_shot(6), layered_shot(7)
     config = replace(OFF, recompose=1.0, occluders=1.0, instance_grade=1.0, grain=1.0)
-    first = augment_sample(shot, ROLES, Donor(donor, ROLES), np.random.default_rng(8), config)
-    second = augment_sample(shot, ROLES, Donor(donor, ROLES), np.random.default_rng(8), config)
+    first = augment_sample(
+        shot, ROLES, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(8), config
+    )
+    second = augment_sample(
+        shot, ROLES, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(8), config
+    )
     assert first.record == second.record
     assert_array_equal(first.image, second.image)
     for name, value in first.layers.arrays().items():
@@ -138,7 +155,9 @@ def test_occluders_and_grades_rebuild_exact_targets_deterministically() -> None:
 
 def test_clean_share_returns_the_untouched_sample() -> None:
     shot = layered_shot(9)
-    sample = augment_sample(shot, ROLES, None, np.random.default_rng(0), AugmentConfig(clean=1.0))
+    sample = augment_sample(
+        shot, ROLES, shot.deep.targets(), None, np.random.default_rng(0), AugmentConfig(clean=1.0)
+    )
     assert sample.record == {"clean": True}
     assert_array_equal(sample.image, shot.denoised)
     assert_array_equal(sample.layers.alpha, shot.deep.targets().alpha)
@@ -150,6 +169,7 @@ def test_recomposition_rejects_a_donor_on_another_grid() -> None:
         augment_sample(
             layered_shot(1),
             ROLES,
+            layered_shot(1).deep.targets(),
             Donor(layered_shot(2, (24, 30)), ROLES),
             np.random.default_rng(0),
             config,
