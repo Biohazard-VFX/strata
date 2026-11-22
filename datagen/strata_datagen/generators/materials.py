@@ -43,12 +43,16 @@ class Textures:
 
 @dataclass(frozen=True)
 class Look:
-    textures: Textures
+    """Without textures the surface is the constant base_color."""
+
+    textures: Textures | None
     tile_m: float | None = None
     foliage: bool = False
     roughness: float = 0.6
     tint: tuple[float, float, float] = (1.0, 1.0, 1.0)
     macro_variation: float = 0.0
+    base_color: tuple[float, float, float] = (0.18, 0.18, 0.18)
+    metallic: float = 0.0
 
 
 @cache
@@ -107,8 +111,12 @@ def _image(graph: _Graph, name: str, kind: str, path: str, texcoord: Link) -> Li
     return (shader, "out")
 
 
-def _base_color(graph: _Graph, look: Look, texcoord: Link) -> Link:
-    color = _image(graph, "albedo", "color3", look.textures.albedo, texcoord)
+def _constant(graph: _Graph, name: str, kind: str, value: Value) -> Link:
+    return (graph.node(name, f"ND_constant_{kind}", kind, {"value": value}), "out")
+
+
+def _base_color(graph: _Graph, look: Look, textures: Textures, texcoord: Link) -> Link:
+    color = _image(graph, "albedo", "color3", textures.albedo, texcoord)
     tinted = graph.node("tint", "ND_multiply_color3", "color3", {"in2": Gf.Vec3f(*look.tint)}, {"in1": color})
     if look.macro_variation <= 0.0:
         return (tinted, "out")
@@ -126,22 +134,29 @@ def _base_color(graph: _Graph, look: Look, texcoord: Link) -> Link:
     return (varied, "out")
 
 
-def _roughness(graph: _Graph, look: Look, texcoord: Link) -> Link:
-    if look.textures.roughness is None:
-        constant = graph.node("roughness", "ND_constant_float", "float", {"value": look.roughness})
-        return (constant, "out")
-    return _image(graph, "roughness", "float", look.textures.roughness, texcoord)
+def _roughness(graph: _Graph, look: Look, textures: Textures, texcoord: Link) -> Link:
+    if textures.roughness is None:
+        return _constant(graph, "roughness", "float", look.roughness)
+    return _image(graph, "roughness", "float", textures.roughness, texcoord)
 
 
-def _surface_links(graph: _Graph, look: Look, texcoord: Link) -> dict[str, Link]:
-    base = _base_color(graph, look, texcoord)
-    links = {"base_color": base, "specular_roughness": _roughness(graph, look, texcoord)}
-    if look.textures.normal is not None:
-        tangent = _image(graph, "normal_map", "vector3", look.textures.normal, texcoord)
+def _constant_links(graph: _Graph, look: Look) -> dict[str, Link]:
+    return {
+        "base_color": _constant(graph, "albedo", "color3", Gf.Vec3f(*look.base_color)),
+        "specular_roughness": _constant(graph, "roughness", "float", look.roughness),
+    }
+
+
+def _surface_links(graph: _Graph, look: Look, textures: Textures) -> dict[str, Link]:
+    texcoord = _texcoord(graph, look.tile_m)
+    base = _base_color(graph, look, textures, texcoord)
+    links = {"base_color": base, "specular_roughness": _roughness(graph, look, textures, texcoord)}
+    if textures.normal is not None:
+        tangent = _image(graph, "normal_map", "vector3", textures.normal, texcoord)
         normal = graph.node("normal", "ND_normalmap_float", "vector3", None, {"in": tangent})
         links["normal"] = (normal, "out")
-    if look.textures.opacity is not None:
-        alpha = _image(graph, "opacity_map", "float", look.textures.opacity, texcoord)
+    if textures.opacity is not None:
+        alpha = _image(graph, "opacity_map", "float", textures.opacity, texcoord)
         opacity = graph.node("opacity", "ND_convert_float_color3", "color3", None, {"in": alpha})
         links["opacity"] = (opacity, "out")
     if look.foliage:
@@ -158,10 +173,10 @@ def _export_aovs(surface: UsdShade.Shader, roughness: Link, metallic: Link) -> N
 def author(stage: Usd.Stage, path: str, look: Look) -> UsdShade.Material:
     material = UsdShade.Material.Define(stage, path)
     graph = _Graph(stage, material)
-    texcoord = _texcoord(graph, look.tile_m)
-    links = _surface_links(graph, look, texcoord)
-    metallic = graph.node("metallic", "ND_constant_float", "float", {"value": 0.0})
-    links["metalness"] = (metallic, "out")
+    links = (
+        _constant_links(graph, look) if look.textures is None else _surface_links(graph, look, look.textures)
+    )
+    links["metalness"] = _constant(graph, "metallic", "float", look.metallic)
     values: dict[str, Value] = {"base": 1.0, "specular": 0.5}
     if look.foliage:
         values.update({"thin_walled": True, "subsurface": 0.35})
