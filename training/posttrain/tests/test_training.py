@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from strata_training.io import save_array, save_arrays, write_json
+from strata_training.io import atomic_path, save_array, save_arrays, write_json
 from strata_training.train import train
 
 
@@ -46,6 +46,7 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) ->
         "layers": 4,
         "mode": "head",
         "scale_mode": "raw",
+        "input_mode": "cached",
         "seed": 4004,
         "crop": 32,
         "halo": 0,
@@ -72,3 +73,11 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) ->
         write_json(path, changed)
         with pytest.raises(ValueError, match="Resume model/data/scale"):
             train(path)
+    for key in ("input_mode", "clean_fraction", "compile_encoder"):
+        state["config"].pop(key, None)
+    historical = tmp_path / "historical.pt"
+    with atomic_path(historical) as temporary:
+        torch.save(state, temporary)
+    write_json(path, {**config, "resume": str(historical)})
+    with pytest.raises(ValueError, match="already reaches"):
+        train(path)

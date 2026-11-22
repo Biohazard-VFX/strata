@@ -81,3 +81,38 @@ The container's one-command entry point is `uv run --frozen --no-dev strata-trai
 `baselines ... --calibration PATH/curves.json` reuses the original training-only curves without fitting on OOD frames. An evaluation-only protocol can have an empty `train` list and all pilot frame IDs in `test`, with the exact index SHA256. Do not train on these shots. Native role masks decode `round(instance_id/A)` per deep sample, include any visible groom contribution, and threshold composited hero coverage at 0.1 for silhouettes.
 
 See `DECISIONS.md` for design choices. Measured outcomes and diagnostics live outside the repository under the project's results/data directories.
+
+
+## Hybrid native-crop training
+
+New training configs default to `input_mode: "hybrid"`, `crop: 512`, `halo: 0`,
+`clean_fraction: 0.4`. Clean samples reuse the clean denoised feature/pyramid cache;
+changed samples run the frozen encoder live in bf16/no-grad with SDPA. Independent
+images are batched without DP2 cross-frame mixing, preserving its single-frame prefix
+semantics. The decoder/head still backpropagate normally. Native crops are not resized;
+live scalar conditioning uses crop width / native focal length. Hybrid mode requires
+raw scale and clip_length=1; explicit cached mode retains temporal cached training.
+The historical v004 reproduction configs select `input_mode: "cached"` explicitly.
+
+Supply `samples: "/data/samples"`. Each `<samples>/<frame-id>/` contains `deep/` in the
+augmentation package's public memory-map format, `noisy.npy`, and `denoised.npy`
+(scene-linear ACEScg CHW). `strata_training.data.online.prepare_sample(entry,
+denoised_array, output_directory)` builds this boundary from the native contract and
+an actual denoiser output. Missing denoised images/IDs are errors, never noisy or
+invented fallbacks. The current datagen contract does not yet publish a denoised layer;
+prepare supplied denoises explicitly until it does.
+
+Build the clean cache from those same images:
+
+```sh
+strata-train features /data/targets/index.json /data/clean_features --preset depthpro2-h --samples /data/samples
+```
+
+Set `features` to that clean cache. Input-content hashes reject old noisy caches and
+changed denoises. Raw deep samples remain available before rebuilding K-layer targets.
+The exact training-side augmentation hook is `OnlineLoader.prepare` in
+`strata_training.data.online`: it calls `augment.pipeline.augment_sample` on the native
+crop plus halo, then transfers its image and matching targets. No augmented features
+are written. `augmentation` passes explicit settings to `AugmentConfig.from_dict`;
+use top-level `clean_fraction`, not `augmentation.clean`. Logs include loader seconds
+and clean/live counts. CPU-heavy augmentation is not silently pre-baked.

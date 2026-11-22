@@ -9,13 +9,16 @@
   "mode": "decoder",
   "scale_mode": "raw",
   "seed": 4004,
-  "crop": 128,
-  "halo": 64,
+  "crop": 512,
+  "halo": 0,
   "batch_size": 4,
   "steps": 10000,
   "learning_rate": 0.0004,
   "log_every": 250,
-  "clip_length": 4,
+  "clip_length": 1,
   "decoder_learning_rate": 5e-06,
-  "warmup_steps": 500
+  "warmup_steps": 500,
+  "input_mode": "hybrid",
+  "samples": "/data/samples",
+  "clean_fraction": 0.4
 }

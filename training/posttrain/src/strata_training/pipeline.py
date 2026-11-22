@@ -23,6 +23,7 @@ def pipeline(config_path: Path) -> None:
         config["preset"],
         int(config.get("clip_length", 1)),
         config.get("device", "cuda"),
+        samples=Path(config["samples"]) if config.get("samples") else None,
     )
     train(config_path)
     evaluate(

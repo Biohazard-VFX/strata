@@ -13,5 +13,6 @@
   "steps": 5000,
   "learning_rate": 0.0004,
   "log_every": 250,
-  "output": "/data/strata_v0/runs/s_head"
+  "output": "/data/strata_v0/runs/s_head",
+  "input_mode": "cached"
 }

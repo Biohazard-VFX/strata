@@ -1,3 +1,5 @@
+import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,16 @@ class Frame:
         with np.load(self.entry["cache"]) as file:
             self.arrays = {k: file[k] for k in file.files}
         root = self.feature_root / self.entry["id"]
+        context_path = root / "context.json"
+        if context_path.exists():
+            context = json.loads(context_path.read_text())
+            if "image_sha256" in context:
+                image = np.load(root / "image.npy", mmap_mode="r")
+                digest = hashlib.sha256(np.asarray(image, dtype=np.float32).tobytes()).hexdigest()
+                if digest != context["image_sha256"]:
+                    raise ValueError("Feature cache image identity mismatch")
+                self.arrays["target_beauty"] = self.arrays["beauty"]
+                self.arrays["beauty"] = image
         self.features = np.load(root / "features.npy", mmap_mode="r")
         self.pyramid = [np.load(root / f"pyramid_{i}.npy", mmap_mode="r") for i in range(4)]
         with np.load(root / "base.npz") as data:

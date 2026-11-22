@@ -11,6 +11,7 @@ def test_pretrained_and_new_parameters_keep_separate_warmup_rates() -> None:
     model = nn.ModuleDict({"base": nn.Linear(2, 2), "deep_head": nn.Linear(2, 1)})
     config = {
         "mode": "decoder",
+        "input_mode": "cached",
         "learning_rate": 4e-4,
         "decoder_learning_rate": 5e-6,
         "warmup_steps": 20,

@@ -8,7 +8,9 @@ import numpy as np
 import torch
 from torch import nn
 
+from strata_training.data.cache import display_rgb
 from strata_training.data.metadata import camera_frames
+from strata_training.data.online import image_digest
 from strata_training.data.scale import oracle_metric_scale
 from strata_training.data.sequences import clip_indices
 from strata_training.io import save_array, save_arrays, write_json
@@ -76,11 +78,18 @@ def _save(
 
 
 def extract(
-    index: Path, output: Path, preset: str, clip_length: int = 1, device: str = "cuda"
+    index: Path,
+    output: Path,
+    preset: str,
+    clip_length: int = 1,
+    device: str = "cuda",
+    samples: Path | None = None,
 ) -> None:
     entries: list[dict[str, Any]] = json.loads(index.read_text())
     if clip_length < 1:
         raise ValueError("clip_length must be positive")
+    if samples is not None and clip_length != 1:
+        raise ValueError("Denoised clean caches require independent single frames")
     by_shot: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in entries:
         by_shot[entry["shot"]].append(entry)
@@ -95,9 +104,22 @@ def extract(
             clip = [shot[i] for i in indices]
             ids = [e["id"] for e in clip]
             if all((output / e["id"] / "base.npz").exists() for e in clip):
+                if samples is not None:
+                    for entry in clip:
+                        context = json.loads((output / entry["id"] / "context.json").read_text())
+                        image = np.load(samples / entry["id"] / "denoised.npy", mmap_mode="r")
+                        if context.get("image_sha256") != image_digest(image):
+                            raise ValueError(
+                                "Existing clean cache input changed; use a new directory"
+                            )
                 completed += len(clip)
                 continue
-            arrays = [np.load(e["cache"])["srgb"] for e in clip]
+            arrays = [
+                np.load(e["cache"])["srgb"]
+                if samples is None
+                else display_rgb(np.load(samples / e["id"] / "denoised.npy"), "ACEScg")
+                for e in clip
+            ]
             image = torch.as_tensor(np.stack(arrays).astype(np.float32) / 255, device=device)
             height, width = image.shape[-2:]
             normalized = torch.nn.functional.pad(
@@ -107,7 +129,12 @@ def extract(
                 pyramid = model.pyramid(normalized)
                 for i, entry in enumerate(clip):
                     frame_pyramid = [p[i : i + 1] for p in pyramid]
-                    if preset == "depthpro2-h" and entry["legacy_data"] and len(clip) == 1:
+                    if (
+                        preset == "depthpro2-h"
+                        and entry["legacy_data"]
+                        and len(clip) == 1
+                        and samples is None
+                    ):
                         inverse = np.load(Path(entry["legacy_data"]) / "dp2.npz")["inverse_depth"]
                         full_features = None
                     else:
@@ -131,6 +158,20 @@ def extract(
                         ids,
                     )
                     completed += 1
+                    if samples is not None:
+                        save_array(
+                            output / entry["id"] / "image.npy",
+                            np.load(samples / entry["id"] / "denoised.npy").astype(np.float32),
+                        )
+                        write_json(
+                            output / entry["id"] / "context.json",
+                            {
+                                "clip_ids": ids,
+                                "image_sha256": image_digest(
+                                    np.load(samples / entry["id"] / "denoised.npy")
+                                ),
+                            },
+                        )
     write_json(
         output / "extraction.json",
         {

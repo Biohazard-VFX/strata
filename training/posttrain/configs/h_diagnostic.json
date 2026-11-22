@@ -12,8 +12,9 @@
   "batch_size": 1,
   "steps": 400,
   "learning_rate": 0.0004,
-  "decoder_learning_rate": 0.000005,
+  "decoder_learning_rate": 5e-06,
   "warmup_steps": 20,
   "log_every": 20,
-  "output": "/data/strata_v0/runs/h_diagnostic"
+  "output": "/data/strata_v0/runs/h_diagnostic",
+  "input_mode": "cached"
 }

@@ -28,6 +28,7 @@ def main() -> None:
     features.add_argument("--preset", choices=("depthpro2-s", "depthpro2-h"), default="depthpro2-s")
     features.add_argument("--clip-length", type=int, default=1)
     features.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    features.add_argument("--samples", type=Path)
     baselines = sub.add_parser("baselines")
     for name in ("index", "protocol", "features", "output", "probe", "normalization"):
         baselines.add_argument(name, type=Path)
@@ -66,7 +67,7 @@ def main() -> None:
     elif args.command == "features":
         from strata_training.model.features import extract
 
-        extract(args.index, args.output, args.preset, args.clip_length, args.device)
+        extract(args.index, args.output, args.preset, args.clip_length, args.device, args.samples)
     elif args.command == "baselines":
         from strata_training.baselines.prepare import prepare_baselines
 

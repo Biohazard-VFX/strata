@@ -7,8 +7,9 @@ import numpy as np
 import torch
 from torch import nn
 
-from strata_training.config import validate_config
+from strata_training.config import training_defaults, validate_config
 from strata_training.data.dataset import Frame, batch, normalization
+from strata_training.data.online import OnlineLoader
 from strata_training.data.sequences import clip_indices
 from strata_training.eval.protocol import entries_for
 from strata_training.io import write_json
@@ -16,12 +17,13 @@ from strata_training.losses.deep import deep_loss
 from strata_training.model.checkpoint import save_checkpoint
 from strata_training.model.dp2 import DeepDepthPro
 from strata_training.model.head import DeepHead
+from strata_training.model.live import FrozenEncoder
 from strata_training.optim import gradient_norm, learning_rate_multiplier, parameter_groups
 from strata_training.torch_api import api
 
 
 def train(config_path: Path) -> dict[str, Any]:
-    config: dict[str, Any] = json.loads(config_path.read_text())
+    config = training_defaults(json.loads(config_path.read_text()))
     config["objective"] = "coverage-bce-logits-v1"
     validate_config(config)
     device = config.get("device", "cuda")
@@ -31,6 +33,15 @@ def train(config_path: Path) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     entries = entries_for(Path(config["index"]), Path(config["protocol"]), "train")
     frames = [Frame(e, Path(config["features"]), config["scale_mode"]) for e in entries]
+    online = (
+        OnlineLoader(
+            frames, Path(config["samples"]), config["clean_fraction"], config.get("augmentation")
+        )
+        if config["input_mode"] == "hybrid"
+        else None
+    )
+    if any(min(frame.base.shape) < config["crop"] + 2 * config["halo"] for frame in frames):
+        raise ValueError("Native frames must fit the requested crop plus halo without resizing")
     clip_length = int(config.get("clip_length", 1))
     clips = clip_indices(entries, clip_length)
     if clip_length > 1 and not any(len(c) > 1 for c in clips):
@@ -47,6 +58,19 @@ def train(config_path: Path) -> dict[str, Any]:
         channels = frames[0].features.shape[0]
         head = DeepHead(channels, nn.Identity(), config["layers"]).to(device)
         model = head
+    teacher: DeepDepthPro | None = None
+    encoder: FrozenEncoder | None = None
+    if online is not None:
+        teacher = (
+            cast(DeepDepthPro, model)
+            if decoder
+            else DeepDepthPro(config["preset"], config["layers"], decoder_trainable=False)
+            .to(device)
+            .eval()
+            .requires_grad_(False)
+        )
+        teacher.base.encoder.to(device)
+        encoder = FrozenEncoder(teacher.base.encoder, compiled=config["compile_encoder"])
     mean, std = normalization(frames)
     head.input_mean.copy_(torch.as_tensor(mean).to(device))
     head.input_std.copy_(torch.as_tensor(std).to(device))
@@ -69,8 +93,14 @@ def train(config_path: Path) -> dict[str, Any]:
             "decoder_learning_rate",
             "warmup_steps",
             "steps",
+            "input_mode",
+            "crop",
+            "halo",
         )
-        if any(state["config"].get(key) != config.get(key) for key in keys):
+        if config["input_mode"] == "hybrid":
+            keys += ("clean_fraction", "samples", "augmentation", "compile_encoder")
+        saved_config = {"input_mode": "cached", **state["config"]}
+        if any(saved_config.get(key) != config.get(key) for key in keys):
             raise ValueError("Resume model/data/scale does not match config")
         missing, unexpected = cast(
             tuple[list[str], list[str]], model.load_state_dict(state["model"], strict=False)
@@ -97,16 +127,28 @@ def train(config_path: Path) -> dict[str, Any]:
             selections.extend(
                 (i, *coordinates) for i in clip[: config["batch_size"] - len(selections)]
             )
-        inputs, target, pyramid = batch(
-            frames, selections, crop, halo, device=device, decoder=decoder
-        )
+        inputs: dict[str, torch.Tensor] = {}
+        pyramid: list[torch.Tensor] = []
+        loading_start = time.monotonic()
+        prepared = online.prepare(selections, rng, crop, halo, device) if online else None
+        if prepared is None:
+            inputs, target, pyramid = batch(
+                frames, selections, crop, halo, device=device, decoder=decoder
+            )
+        else:
+            target = prepared.target
+        loader_seconds = time.monotonic() - loading_start
         optimizer.zero_grad(set_to_none=True)
         multiplier = learning_rate_multiplier(step, config["steps"], config.get("warmup_steps", 0))
         for group in optimizer.param_groups:
             group["lr"] = group["initial_lr"] * multiplier
         model.train()
         with torch.autocast(device, dtype=torch.bfloat16):
-            if decoder:
+            if online is not None and prepared is not None:
+                assert encoder is not None
+                assert teacher is not None
+                prediction = online.predict(prepared, encoder, teacher, model, crop, halo, decoder)
+            elif decoder:
                 prediction = cast(DeepDepthPro, model).from_pyramid(
                     pyramid, inputs["image"], inputs["scale"]
                 )
@@ -147,6 +189,9 @@ def train(config_path: Path) -> dict[str, Any]:
                     else None
                 ),
                 "peak_vram_bytes": torch.cuda.max_memory_allocated() if device == "cuda" else 0,
+                "loader_seconds": loader_seconds,
+                "clean_samples": len(prepared.clean) if prepared else len(selections),
+                "live_samples": len(prepared.live) if prepared else 0,
             }
             history.append(row)
             running.clear()

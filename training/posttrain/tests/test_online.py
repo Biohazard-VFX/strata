@@ -1,0 +1,165 @@
+from importlib import import_module
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+import torch
+from torch import nn
+
+from strata_training.augment.deep import DeepSamples, save_samples
+from strata_training.config import training_defaults, validate_config
+from strata_training.data.dataset import Frame
+from strata_training.data.online import OnlineLoader, image_digest
+from strata_training.io import save_array, save_arrays, write_json
+from strata_training.model.live import FrozenEncoder
+from strata_training.torch_api import api
+
+
+def test_frozen_encoder_has_independent_batches_and_trainable_consumers() -> None:
+    upstream: Any = import_module("depth_pro_2.model")
+    config = upstream.PRESETS["depthpro2-s"]
+    api.manual_seed(719)
+    base: Any = (
+        upstream.MultiViewEncoder(
+            backbone_preset=config.backbone_preset,
+            reassembled_blocks=config.reassembled_blocks,
+            cross_frame_blocks=config.cross_frame_blocks,
+            dims_reassemble=config.dims_reassemble,
+        )
+        .eval()
+        .requires_grad_(False)
+    )
+    for name, parameter in base.named_parameters():
+        if name.endswith((".gamma_1", ".gamma_2")):
+            parameter.fill_(1)
+    encoder = FrozenEncoder(base)
+    image = torch.randn(2, 3, 32, 64)
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        tokens, grid = base.encode(image[:1])
+        reference = base.reassemble_tokens(tokens, grid)
+    for expected, actual in zip(reference, encoder(image[:1]), strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    original = encoder(image)
+    changed = image.clone()
+    changed[1] *= -7
+    for expected, actual in zip(original, encoder(changed), strict=True):
+        torch.testing.assert_close(actual[:1], expected[:1], rtol=0, atol=0)
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        a, grid = base.encode(image)
+        b, _ = base.encode(changed)
+        joint_a = base.reassemble_tokens(a, grid)
+        joint_b = base.reassemble_tokens(b, grid)
+    assert any(not torch.equal(a[:1], b[:1]) for a, b in zip(joint_a, joint_b, strict=True))
+    head = nn.Conv2d(original[0].shape[1], 1, 1)
+    api.autograd.backward(head(original[0].float()).square().mean())
+    assert head.weight.grad is not None
+    assert head.weight.grad.abs().sum().item() > 0
+    assert all(parameter.grad is None for parameter in base.parameters())
+
+
+def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features(
+    tmp_path: Path,
+) -> None:
+    height, width = 32, 64
+    image = np.full((3, height, width), 0.5, dtype=np.float32)
+    target = np.zeros((4, height, width), dtype=np.float32)
+    target[:2] = np.array([0.2, 1.0])[:, None, None]
+    inverse = target.copy()
+    inverse[:2] = np.array([0.5, 0.25])[:, None, None]
+    colour = np.full((4, 3, height, width), 0.1, dtype=np.float32)
+    cache = tmp_path / "target.npz"
+    save_arrays(
+        cache,
+        alpha=target,
+        inverse_depth=inverse,
+        rgb=colour,
+        beauty=image * 1.4,
+        mixed=np.ones((height, width), dtype=bool),
+    )
+    manifest = tmp_path / "manifest.json"
+    write_json(manifest, {"instance_ids": []})
+    root = tmp_path / "features"
+    save_array(root / "sample/features.npy", np.zeros((128, height, width), dtype=np.float32))
+    for level in range(4):
+        save_array(root / f"sample/pyramid_{level}.npy", np.zeros((1, 1, 1)))
+    save_arrays(
+        root / "sample/base.npz", raw_inverse_depth=np.ones((height, width)), raw_metric_scale=1.0
+    )
+    write_json(root / "sample/context.json", {"image_sha256": image_digest(image)})
+    save_array(root / "sample/image.npy", image)
+    samples = tmp_path / "samples"
+    data = DeepSamples(
+        (height, width),
+        np.arange(height * width + 1) * 2,
+        np.tile([2.0, 4.0], height * width).astype(np.float32),
+        np.tile([0.2, 1.0], height * width).astype(np.float32),
+        np.full((height * width * 2, 3), 0.1, dtype=np.float32),
+        np.zeros(height * width * 2, dtype=np.int64),
+    )
+    save_samples(samples / "sample/deep", data)
+    save_array(samples / "sample/noisy.npy", image * 1.4)
+    save_array(samples / "sample/denoised.npy", image)
+    frame = Frame({"id": "sample", "cache": str(cache), "manifest": str(manifest)}, root)
+    np.testing.assert_array_equal(frame.arrays["beauty"], image)
+    loader = OnlineLoader([frame], samples, 1)
+    clean = loader.prepare([(0, 0, 0)], np.random.default_rng(31), 32, 0, "cpu")
+    assert clean.clean == [0]
+    assert clean.live == []
+    assert clean.normalized is None
+    torch.testing.assert_close(clean.images, torch.full((1, 3, 32, 32), 0.5))
+    assert clean.scales.item() == 1
+    loader = OnlineLoader(
+        [frame],
+        samples,
+        0,
+        {
+            "recompose": 0,
+            "occluders": 0,
+            "instance_grade": 0,
+            "scene_grade": 1,
+            "exposure_stops": [1, 1],
+            "white_balance_stops": 0,
+            "grain": 0,
+            "camera": 0,
+        },
+    )
+    changed = loader.prepare([(0, 0, 0)], np.random.default_rng(31), 32, 0, "cpu")
+    assert changed.live == [0]
+    assert changed.clean == []
+    assert changed.normalized is not None
+    torch.testing.assert_close(changed.images, torch.ones((1, 3, 32, 32)))
+    torch.testing.assert_close(changed.target["alpha"], torch.as_tensor(target[:, :, :32])[None])
+    torch.testing.assert_close(changed.target["rgb"], torch.full((1, 4, 3, 32, 32), 0.2))
+    assert changed.scales.item() == 0.5
+    assert sorted(p.name for p in (samples / "sample").iterdir()) == [
+        "deep",
+        "denoised.npy",
+        "noisy.npy",
+    ]
+    write_json(root / "sample/context.json", {"image_sha256": "stale"})
+    with pytest.raises(ValueError, match="match denoised"):
+        OnlineLoader([frame], samples)
+
+
+def test_hybrid_policy_defaults_and_unsupported_temporal_or_oracle_inputs() -> None:
+    config = training_defaults(
+        {
+            "mode": "head",
+            "samples": "samples",
+            "scale_mode": "raw",
+            "learning_rate": 4e-4,
+            "steps": 100,
+            "batch_size": 2,
+        }
+    )
+    assert (config["input_mode"], config["clean_fraction"], config["crop"], config["halo"]) == (
+        "hybrid",
+        0.4,
+        512,
+        0,
+    )
+    validate_config(config)
+    for changes in ({"scale_mode": "oracle-aligned"}, {"clip_length": 2}, {"clean_fraction": -0.1}):
+        with pytest.raises(ValueError, match=r"Hybrid native crops|clean_fraction"):
+            validate_config({**config, **changes})
