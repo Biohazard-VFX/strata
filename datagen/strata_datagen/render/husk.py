@@ -113,9 +113,10 @@ def _frame_seconds(shot: Path) -> list[float]:
 
 
 def run(shot: Path, frames: range, husk: str, lock: int) -> dict[str, object]:
-    """Render `frames` GPU-only, falling back to XPU with the CPU device; returns timing records.
+    """Render `frames` GPU-only and return timing records; a GPU failure is the task's failure.
 
-    `lock` is the descriptor of the caller's held shot lock, passed on to husk.
+    XPU's Embree CPU device drops camera samples on hair curves and puts ZBack in front of Z, so it is
+    never used. `lock` is the descriptor of the caller's held shot lock, passed on to husk.
     """
     baseline = _VramMonitor()
     baseline.start()
@@ -125,16 +126,12 @@ def run(shot: Path, frames: range, husk: str, lock: int) -> dict[str, object]:
     monitor = _VramMonitor()
     monitor.start()
     started = time.monotonic()
-    device = "gpu"
     code = _husk(shot, frames, husk, GPU_ONLY, lock)
-    if code != 0:
-        device = "gpu+cpu"
-        code = _husk(shot, frames, husk, {}, lock)
     monitor.done.set()
     seconds = _frame_seconds(shot)
     return {
         "exit_code": code,
-        "device": device,
+        "device": "gpu",
         "wall_seconds": round(time.monotonic() - started, 2),
         "frame_seconds": seconds,
         "mean_frame_seconds": float(np.nanmean(seconds)) if seconds else None,

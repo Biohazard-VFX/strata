@@ -45,12 +45,12 @@ def _frame_seconds(_shot: Path) -> list[float]:
 
 
 class HuskTest(unittest.TestCase):
-    def test_gpu_failure_retries_with_the_cpu_device_and_says_so(self) -> None:
+    def test_renders_only_on_the_gpu_and_never_retries_with_the_cpu_device(self) -> None:
         calls: list[dict[str, str]] = []
 
         def launch(_shot: Path, _frames: range, _husk: str, env: dict[str, str], _lock: int) -> int:
             calls.append(env)
-            return 1 if env else 0
+            return 1
 
         with (
             mock.patch.object(husk, "_husk", launch),
@@ -59,11 +59,8 @@ class HuskTest(unittest.TestCase):
             mock.patch.object(husk.time, "sleep"),
         ):
             record = husk.run(Path("/nonexistent"), range(1, 3), "husk", -1)
-        self.assertEqual(calls, [husk.GPU_ONLY, {}])
-        self.assertEqual(
-            (record["device"], record["exit_code"], record["mean_frame_seconds"]), ("gpu+cpu", 0, 3.0)
-        )
-
+        self.assertEqual(calls, [{"KARMA_XPU_DISABLE_EMBREE_DEVICE": "1"}])
+        self.assertEqual((record["device"], record["exit_code"]), ("gpu", 1))
 
 if __name__ == "__main__":
     unittest.main()

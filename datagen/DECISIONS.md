@@ -35,7 +35,7 @@
 - Banned identifiers are checked as SHA-256 digests so the public repo never spells them.
 - Randomness comes from named streams `sha256(seed:labels)`; fixed choices still consume their draws, so a seed gives byte-identical USD.
 - Terrain is a 300 m, 0.5 m-cell heightfield with a flattened centre; beyond the scattered 60 m it flattens and sinks, so bare ground never rises into the HDRI horizon.
-- Renders are Karma XPU GPU-only and abort without a GPU; the driver retries once with the CPU device and records which ran.
+- Renders are Karma XPU GPU-only and abort without a GPU; never the Embree CPU device, which drops hair samples and puts ZBack before Z.
 - Job lists (`jobs.json`, `jobs.sh`) hold one `strata-datagen render-task` per task, never bare husk, with paths relative to the build root.
 - render-task holds the shot lock across husk, pack, accept and prune; husk inherits the lock descriptor, so the shot stays locked while it runs.
 - Farm nodes never write a local shot: downloaded output enters only via `ingest`, staged in the shot and renamed in under the lock.
