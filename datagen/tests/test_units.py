@@ -12,7 +12,7 @@ from strata_datagen.exr import Deep, read_deep
 from strata_datagen.generators import groom
 from strata_datagen.library import hdri
 from strata_datagen.qa import checks
-from strata_datagen.qa.deep import flatten, instance_ids
+from strata_datagen.qa.deep import blended_ids, flatten, instance_ids
 from strata_datagen.render import settings
 from strata_datagen.rng import stream
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-def _deep(samples: list[list[tuple[float, float, float, float, float, int]]]) -> Deep:
+def _deep(samples: list[list[tuple[float, float, float, float, float, float]]]) -> Deep:
     """Pixels of (r, g, b, a, z, id) samples, unpremultiplied; stored the way Karma writes them."""
     counts = np.array([len(p) for p in samples])
     flat = [s for p in samples for s in p]
@@ -90,6 +90,21 @@ class QaTest(unittest.TestCase):
             self.assertEqual(checks.deep_metrics(read_deep(path), beauty, ranges)["uncovered"], 0.5)
             write_deep(path, [[(0.5, 1.0, 0)], [(0.2, 0.5, 2), (0.6, 1.0, 0, 3000.0)]])
             self.assertGreater(checks.deep_metrics(read_deep(path), beauty, ranges)["sky_id_in_front"], 0.0)
+
+    def test_ids_blending_two_surfaces_fail_even_when_they_round_to_a_declared_id(self) -> None:
+        blended = _deep(
+            [
+                [(0, 1, 0, 0.5, 5.0, 588.5), (0, 1, 0, 1.0, 5.0, 1)],
+                [(0, 1, 0, 0.25, 9.0, 1006.3), (0, 1, 0, 1.0, 9.0, 1176)],
+                [(0, 1, 0, 1.0, 9.0, 18153.09)],
+            ]
+        )
+        self.assertEqual(blended_ids(blended).tolist(), [True, False, True, False, False])
+        beauty = {c: flatten(blended).rgba[..., i].astype(np.float32) for i, c in enumerate("RGB")}
+        metrics = checks.deep_metrics(blended, beauty, [(0, 2), (500, 20000)])
+        self.assertEqual(metrics["valid_id_fraction"], 1.0)
+        self.assertEqual(metrics["blended_id_fraction"], 0.4)
+        self.assertGreater(metrics["blended_id_fraction"], checks.LIMITS["blended_id_fraction"][1])
 
 
 class GroomTest(unittest.TestCase):
@@ -168,7 +183,9 @@ class SettingsTest(unittest.TestCase):
 
     def test_deep_never_merges_samples_across_depths(self) -> None:
         stage = Usd.Stage.CreateInMemory()
-        settings.author(stage, "/cam", settings.RenderConfig(64, 36, 8, (1,), motion_blur=False, depth_of_field=False))
+        settings.author(
+            stage, "/cam", settings.RenderConfig(64, 36, 8, (1,), motion_blur=False, depth_of_field=False)
+        )
         deep = stage.GetPrimAtPath("/Render/products/deep")
         self.assertEqual(deep.GetAttribute("karma:product:dcmzbias").Get(), 0.0)
         self.assertEqual(deep.GetAttribute("karma:product:dcmcompression").Get(), 5)

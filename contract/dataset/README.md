@@ -117,9 +117,10 @@ Single-part deep scanline EXR with channels `R G B A` (half), `Z ZBack instance_
 `instance_id` and `coverage` (a constant 1 on every surface, sky included) are premultiplied by the
 sample's alpha at float precision, so `coverage` is the sample's float alpha and the integer id of a
 sample is `round(instance_id / coverage)`; do not divide by the half `A`, which is off by up to
-id x 2^-11 and rounds alpha above 0.99976 to 1. Karma merges samples of the same surface that lie
-within 1 mm in depth (deep compression 5), so a sample can stand for several pixel samples, and a
-merge across two surfaces gives a non-integer id. ZBack - Z stays at most about 1 mm for surfaces.
+id x 2^-11 and rounds alpha above 0.99976 to 1. Karma merges samples only at equal depth (deep
+compression 5, depth bias 0), so a sample can stand for several pixel samples of one surface; a merge
+across two surfaces would average their ids, and raw QA rejects frames that hold such blends.
+ZBack - Z stays at most about 1 mm for surfaces.
 Fully occluded surfaces are not stored. Beauty and deep share a one-pixel box filter: compositing
 the samples front to back reproduces the beauty `C` part.
 

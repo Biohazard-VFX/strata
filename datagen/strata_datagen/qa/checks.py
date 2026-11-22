@@ -20,11 +20,11 @@ from numpy.typing import NDArray
 from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M, SKY_ID
-from strata_datagen.qa.deep import flatten, instance_ids
+from strata_datagen.qa.deep import blended_ids, flatten, instance_ids
 from strata_datagen.render import pack
 from strata_dataset import samples as contract_samples
 
-VALIDATION = "raw-qa-1"
+VALIDATION = "raw-qa-2"
 LUMA = (0.2126, 0.7152, 0.0722)
 LIMITS = {
     "median_luma": (0.02, 1.5),
@@ -36,6 +36,7 @@ LIMITS = {
     "flatten_excess": (0.0, 0.005),
     "uncovered": (0.0, 0.0),
     "valid_id_fraction": (0.99995, 1.0),
+    "blended_id_fraction": (0.0, 2e-4),
     "coverage_channel": (1.0, 1.0),
     "coverage_alpha_error": (0.0, 2.0**-11),
     "sky_id_in_front": (0.0, 1e-5),
@@ -60,6 +61,7 @@ DEEP_KEYS = (
     "uncovered",
     "flatten_excess",
     "valid_id_fraction",
+    "blended_id_fraction",
     "coverage_channel",
     "coverage_alpha_error",
     "sky_id_in_front",
@@ -95,13 +97,15 @@ def deep_metrics(
     flat = flatten(deep)
     z, zback = deep.channels["Z"], deep.channels["ZBack"]
     valid = np.zeros(int(deep.counts.sum()), bool)
+    blended = np.ones(valid.size, bool)
     near_sky = 0.0
     alpha_error = 1.0
     if "coverage" in deep.channels:
-        ids = instance_ids(deep)
+        decoded = instance_ids(deep)
         for low, high in ranges:
-            valid |= (ids >= low) & (ids < high)
-        near_sky = float(((ids == SKY_ID) & (z < SKY_MIN_Z_M)).mean())
+            valid |= (decoded >= low) & (decoded < high)
+        blended = blended_ids(deep)
+        near_sky = float(((decoded == SKY_ID) & (z < SKY_MIN_Z_M)).mean())
         difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
         alpha_error = float(np.abs(difference).max(initial=0.0))
     residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
@@ -114,6 +118,7 @@ def deep_metrics(
         "uncovered": float((flat.alpha < COVERED).mean()),
         "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
         "valid_id_fraction": float(valid.mean()) if valid.size else 1.0,
+        "blended_id_fraction": float(blended.mean()) if blended.size else 0.0,
         "coverage_channel": float("coverage" in deep.channels),
         "coverage_alpha_error": alpha_error,
         "sky_id_in_front": near_sky,
