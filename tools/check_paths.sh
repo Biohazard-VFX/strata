@@ -13,6 +13,7 @@ patterns = (
     (re.compile(anchor + r'(?:usr/(?:local/)?)?s?bin/(?!env\b)[\w.+-]+'), 'absolute interpreter path'),
     (re.compile(anchor + r'(?:home|mnt|media|Users|root|opt)/'), 'machine-specific absolute path'),
 )
+root = os.path.realpath('.')
 errors = []
 checked = 0
 for name in sorted(set(subprocess.check_output(['git', 'ls-files', '--cached', '--others',
@@ -22,8 +23,10 @@ for name in sorted(set(subprocess.check_output(['git', 'ls-files', '--cached', '
         target = os.readlink(path)
         if os.path.isabs(target):
             errors.append(f'{path}: symlink target is absolute: {target}')
-        elif os.path.normpath(os.path.join(path.parent, target)).split(os.sep)[0] == '..':
+        elif os.path.commonpath([root, os.path.realpath(path)]) != root:
             errors.append(f'{path}: symlink target leaves the repository: {target}')
+        elif not os.path.exists(path):
+            errors.append(f'{path}: symlink target is missing or loops: {target}')
         continue
     if not path.is_file():
         continue

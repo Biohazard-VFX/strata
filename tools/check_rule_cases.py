@@ -193,6 +193,10 @@ PATH_CASES = [
                         'runtime/tests/unit.py':'import sys\nURL = "https://example.com/home/page"\nrun([sys.executable])\n'}, None),
     ('absolute symlink', {'docs/notes.md':Link(absolute('etc','hostname'))}, 'docs/notes.md: symlink target is absolute'),
     ('escaping symlink', {'training/data':Link('../../outside/data')}, 'training/data: symlink target leaves the repository'),
+    ('symlink escaping through another symlink', {'docs/root':Link('..'),'indirect':Link('docs/root/../outside')},
+     'indirect: symlink target leaves the repository'),
+    ('dangling symlink', {'docs/notes.md':Link('missing.md')}, 'docs/notes.md: symlink target is missing or loops'),
+    ('symlink loop', {'docs/a':Link('b'),'docs/b':Link('a')}, 'symlink target is missing or loops'),
     ('symlinks inside the repository', {'AGENTS.md':'rules\n','CLAUDE.md':Link('AGENTS.md'),
                                         'datagen/tests/data/rules.md':Link('../../../AGENTS.md')}, None),
 ]
