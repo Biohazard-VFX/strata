@@ -75,6 +75,28 @@ def run_case(args, case, data, prefix):
     return report
 
 
+def overflow_field(path):
+    spec = json.loads(path.read_text())
+    grid = np.asarray(spec['rgb8'], np.float64)
+    height, width = spec['size']
+    rows, columns = np.linspace(0, grid.shape[0] - 1, height), np.linspace(0, grid.shape[1] - 1, width)
+    top, left = np.minimum(rows.astype(int), grid.shape[0] - 2), np.minimum(columns.astype(int), grid.shape[1] - 2)
+    dy, dx = (rows - top)[:, None, None], (columns - left)[None, :, None]
+    upper = grid[top][:, left]*(1 - dx) + grid[top][:, left + 1]*dx
+    lower = grid[top + 1][:, left]*(1 - dx) + grid[top + 1][:, left + 1]*dx
+    return np.round(upper*(1 - dy) + lower*dy).astype(np.uint8)
+
+
+def check_overflow(args):
+    image = args.out/'fp16_overflow.png'
+    Image.fromarray(overflow_field(args.overflow_field)).save(image)
+    prefix = args.out/'fp16_overflow'
+    run_case(args, {'id': 'fp16_overflow', 'input': str(image), 'focal_px': 1000}, image.parent, prefix)
+    with OpenEXR.File(str(prefix.with_suffix('.depth.exr')), separate_channels=True) as file:
+        native = file.channels()['network_inverse_depth'].pixels
+    assert np.isfinite(native).all() and (native > 0).all()
+
+
 def statistics(native, reference):
     error = errors(native, reference)
     interior = ~discontinuities(reference, EDGE_LOG_STEP, EDGE_RADIUS)[reference > 0]
@@ -135,6 +157,7 @@ def main():
     parser.add_argument('--model', type=Path, required=True)
     parser.add_argument('--cases', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--overflow-field', type=Path, required=True)
     parser.add_argument('--lsan-suppression')
     args = parser.parse_args()
     variables = {'data': 'STRATA_PARITY_DATA', 'fp16': 'STRATA_PARITY_REFERENCE', 'fp32': 'STRATA_PARITY_REFERENCE_FP32'}
@@ -151,6 +174,7 @@ def main():
     for case in cases:
         assert set(case) <= CASE_KEYS, (case['id'], set(case) - CASE_KEYS)
     args.out.mkdir(parents=True, exist_ok=True)
+    check_overflow(args)
     rows, failed, all_errors = [], [], []
     for index, case in enumerate(cases):
         row, magnitude, z = check_case(args, case, data, references)
