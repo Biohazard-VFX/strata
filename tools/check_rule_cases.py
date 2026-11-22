@@ -32,6 +32,20 @@ def project(name, dependencies=(), sources=None):
     return text
 
 
+OWN_DIRECTORY_SCRIPT = '''import importlib
+import sys
+from importlib import import_module
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+creature = importlib.import_module(f"infinigen.assets.creatures.{sys.argv[1]}")
+jit = import_module("numba").njit
+spec = importlib.util.find_spec(name="strata_dataset.layers")
+files = importlib.resources.files("strata_dataset")
+clean = {k: v for k, v in {}.items() if k != "PYTHONPATH"}
+'''
+
+
 BASE.update({
     'contract/pyproject.toml': project('strata-contract'),
     'contract/dataset/pyproject.toml': project('strata-dataset',['numpy>=2.0']),
@@ -68,6 +82,30 @@ CASES = [
     ('datagen sources model contract', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset'],{'strata-dataset':'../contract'})}, 'local sources must be exactly'),
     ('training requires datagen', {'training/pyproject.toml':project('strata-train',['strata-contract','strata-datagen'],{'strata-contract':'../contract'})}, 'may not depend on strata-datagen'),
     ('dataset distribution collides', {'contract/dataset/pyproject.toml':project('strata-contract')}, 'distribution must be strata-dataset'),
+    ('datagen conftest keyword import_module', {'datagen/conftest.py':'"""Fixtures."""\nimport importlib\nimportlib.import_module(name="strata_contract")\n'}, 'datagen may depend only'),
+    ('datagen aliased import_module', {'datagen/tools/unit.py':'from importlib import import_module as load\nload("strata_contract")\n'}, 'datagen may depend only'),
+    ('datagen relative dynamic name', {'datagen/strata_datagen/unit.py':'import importlib\nimportlib.import_module(".strata_contract", "contract")\n'}, 'datagen may depend only'),
+    ('datagen dotted dynamic prefix', {'datagen/tests/unit.py':'import importlib as il\nname = "x"\nil.import_module(f"strata_train.{name}")\n'}, 'datagen may depend only'),
+    ('datagen keyword __import__', {'datagen/tests/unit.py':'__import__(name="strata_train")\n'}, 'datagen may depend only'),
+    ('training keyword find_spec', {'training/tests/unit.py':'import importlib.util\nimportlib.util.find_spec(name="strata_datagen")\n'}, 'cross-side imports'),
+    ('datagen non-literal dynamic import', {'datagen/strata_datagen/unit.py':'import importlib\nimportlib.import_module("strata_" + "x".upper())\n'}, 'literal top-level package'),
+    ('datagen undotted dynamic prefix', {'datagen/strata_datagen/unit.py':'from importlib import import_module\nname = "x"\nimport_module(f"strata_contract{name}")\n'}, 'literal top-level package'),
+    ('datagen relative dynamic without package', {'datagen/strata_datagen/unit.py':'import importlib\nimportlib.import_module(".x")\n'}, 'literal name and package'),
+    ('datagen importer by reference', {'datagen/strata_datagen/unit.py':'import importlib\nload = importlib.import_module\nload("strata_contract")\n'}, 'without a direct call'),
+    ('datagen importlib by getattr', {'datagen/strata_datagen/unit.py':'import importlib\ngetattr(importlib, "import_module")("strata_contract")\n'}, 'importlib used indirectly'),
+    ('datagen path loader', {'datagen/tests/unit.py':'from importlib.util import spec_from_file_location\n'}, 'unsupported import machinery importlib.util.spec_from_file_location'),
+    ('datagen runpy', {'datagen/tests/unit.py':'import runpy\nrunpy.run_path("x.py")\n'}, 'unsupported import machinery runpy'),
+    ('datagen site', {'datagen/conftest.py':'import site\nsite.addsitedir("x")\n'}, 'unsupported import machinery site'),
+    ('datagen sys.path append', {'datagen/tests/unit.py':'import sys\nsys.path.append("x")\n'}, 'sys.path changes where imports resolve'),
+    ('datagen imported sys.path', {'datagen/tests/unit.py':'from sys import path\npath.insert(0, "x")\n'}, 'sys.path changes where imports resolve'),
+    ('training meta_path', {'training/strata_train/unit.py':'import sys\nsys.meta_path.clear()\n'}, 'sys.meta_path changes'),
+    ('datagen PYTHONPATH environment', {'datagen/tests/unit.py':'import os\nenv = {**os.environ, "PYTHONPATH": "x"}\n'}, 'PYTHONPATH changes'),
+    ('datagen PYTHONPATH keyword', {'datagen/tests/unit.py':'env = dict(PYTHONPATH="x")\n'}, 'PYTHONPATH changes'),
+    ('relative import outside a package', {'datagen/conftest.py':'from . import strata_datagen\n'}, 'relative import leaves its package'),
+    ('relative import above its package', {'datagen/strata_datagen/unit.py':'from .. import training\n'}, 'relative import leaves its package'),
+    ('own directory and rooted dynamic imports', {'datagen/blender/unit.py':OWN_DIRECTORY_SCRIPT,
+                                                  'datagen/strata_datagen/unit.py':'from . import other\nfrom .other import x\n'}, None),
+    ('other directory on sys.path', {'datagen/blender/unit.py':OWN_DIRECTORY_SCRIPT.replace('.parent))','.parents[2]))')}, 'sys.path changes'),
     ('tracked EXR', {'models/forbidden.exr':''}, 'generated artifact is tracked'),
     ('long K&R function', {'runtime/src/core/unit.c':'int f(void) {\n' + 'f();\n' * 100 + '}\n'}, 'function f exceeds 100 lines'),
     ('long function, braces in literals', {'runtime/tests/unit.c':'int g(void)\n{\n\tconst char *s = "}";\n' + '\tg(); /* } */\n' * 99 + '}\n'}, 'function g exceeds 100 lines'),
@@ -110,7 +148,7 @@ def run(name, files, error, script):
             path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text(text)
         (directory/'tools').mkdir(exist_ok=True)
-        for tool in (script,'source_scan.py'):
+        for tool in (script,'source_scan.py','boundaries.py'):
             shutil.copy2(ROOT/'tools'/tool,directory/'tools'/tool)
         if name == 'tracked EXR':
             subprocess.run(['git','add','--force','models/forbidden.exr'],cwd=directory,check=True)

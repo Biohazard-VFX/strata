@@ -2,7 +2,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 - <<'PY'
-import ast
 from pathlib import Path
 import re
 import sys
@@ -10,20 +9,10 @@ import subprocess
 import tomllib
 
 sys.path.insert(0, 'tools')
+from boundaries import LAYERS, import_violations, python_files
 from source_scan import c_functions
 
 errors = []
-def imported_modules(node):
-    if isinstance(node,ast.Import):
-        return [alias.name for alias in node.names]
-    if isinstance(node,ast.ImportFrom):
-        return [node.module] if node.module else [alias.name for alias in node.names]
-    if isinstance(node,ast.Call) and node.args and isinstance(node.args[0],ast.Constant) and isinstance(node.args[0].value,str):
-        function = node.func
-        if (isinstance(function,ast.Name) and function.id == '__import__') or (isinstance(function,ast.Attribute) and function.attr == 'import_module'):
-            return [node.args[0].value]
-    return []
-
 tracked = subprocess.check_output(['git','ls-files'],text=True).splitlines()
 for name in tracked:
     path = Path(name)
@@ -67,29 +56,16 @@ for path in Path('runtime').rglob('*'):
     for name,first,last in c_functions(text):
         if last-first+1 > 100:
             errors.append(f'{path}:{first}: function {name} exceeds 100 lines')
-python_layers = (
-    ('training', ('runtime','datagen','strata_datagen'),
-     r'(?:\.\./runtime|\.\./datagen|runtime/|datagen/)', 'cross-side imports must use contract'),
-    ('contract/strata_contract', ('runtime','training','datagen','strata_train','strata_datagen','strata_dataset'),
-     r'(?:\.\./runtime|\.\./datagen|runtime/|datagen/)', 'cross-side imports must use contract'),
-    ('contract/dataset', ('runtime','training','datagen','contract','strata_train','strata_datagen','strata_contract'),
-     r'(?:\.\./runtime|\.\./training|\.\./datagen|runtime/|training/|datagen/)',
-     'the dataset contract imports no Strata layer'),
-    ('datagen', ('runtime','training','contract','strata_train','strata_contract'),
-     r'(?:\.\./runtime|\.\./training|runtime/|training/|strata_train)',
-     'datagen may depend only on the dataset contract'),
-)
-for directory,forbidden,paths,message in python_layers:
-    for path in Path(directory).rglob('*.py'):
-        if 'typings' in path.parts or '.venv' in path.parts:
-            continue
-        text = path.read_text()
-        if re.search(paths,text):
+for directory,paths in (('training',r'(?:\.\./runtime|\.\./datagen|runtime/|datagen/)'),
+                        ('contract/strata_contract',r'(?:\.\./runtime|\.\./datagen|runtime/|datagen/)'),
+                        ('contract/dataset',r'(?:\.\./runtime|\.\./training|\.\./datagen|runtime/|training/|datagen/)'),
+                        ('datagen',r'(?:\.\./runtime|\.\./training|runtime/|training/|strata_train)')):
+    for path in python_files(directory):
+        if re.search(paths,path.read_text()):
             errors.append(f'{path}: forbidden cross-side path')
-        for node in ast.walk(ast.parse(text)):
-            modules = imported_modules(node)
-            if any(m.split('.')[0] in forbidden for m in modules):
-                errors.append(f'{path}:{node.lineno}: {message}')
+for directory,forbidden,message in LAYERS:
+    for path in python_files(directory):
+        errors += import_violations(path,forbidden,message)
 def project(path):
     data = tomllib.loads(Path(path).read_text())
     requirements = [re.split(r'[\s<>=!~;\[]',r,maxsplit=1)[0].lower() for r in data['project'].get('dependencies',[])]
@@ -122,11 +98,6 @@ for path in Path('hosts').rglob('*'):
         private = any(part in ('runtime','core','backend','cli','training','datagen','contract') for part in Path(header).parts)
         if (kind == '"' or private or 'strata' in header.lower() or 'onnxruntime' in header.lower()) and header != 'strata.h':
             errors.append(f'{path}: the only Strata include permitted in hosts is strata.h: {header}')
-    if path.suffix == '.py':
-        for node in ast.walk(ast.parse(text)):
-            modules = imported_modules(node)
-            if any(m.split('.')[0] in ('runtime','training','datagen','strata_train','strata_datagen','contract','strata_contract','strata_dataset') for m in modules):
-                errors.append(f'{path}:{node.lineno}: hosts may not import implementation layers')
 if errors:
     sys.exit('\n'.join(errors))
 print('architecture directories, dependency layers, opaque handles and function sizes passed')
