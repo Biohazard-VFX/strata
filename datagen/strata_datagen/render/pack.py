@@ -1,10 +1,11 @@
 """After rendering: sky-inclusive K-layer targets for every frame, raw-sample sidecars on the deep stride.
 
-Packing only adds files. Raw deep is QA evidence; only `qa.checks.prune` removes it, after the frame
-has passed raw QA.
+Packing never removes raw deep: it is QA evidence, and only `qa.checks.prune` removes it, after the
+frame has passed raw QA. Sidecars are published as immutable versions behind a symlink pointer.
 """
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,7 @@ from strata_datagen.generators.lighting import SKY_ID
 from strata_datagen.qa.deep import instance_ids
 
 DEEP_STRIDE = 24
+VERSIONS = ".samples"
 
 
 @dataclass(frozen=True)
@@ -122,26 +124,62 @@ def images(beauty_path: Path) -> dict[str, NDArray[np.float32]]:
     }
 
 
-def write_samples(frame: Samples, beauty_path: Path, directory: Path) -> None:
-    """Publish a frame's sidecar directory atomically: written beside it, then renamed into place."""
-    temporary = directory.with_name(directory.name + ".tmp")
-    shutil.rmtree(temporary, ignore_errors=True)
-    (temporary / "deep").mkdir(parents=True)
+def versions(published: Path) -> Path:
+    """Where the immutable versions behind `samples/<frame_id>` live: `.samples/<frame_id>/<n>`."""
+    return published.parent.parent / VERSIONS / published.name
+
+
+def _current(published: Path) -> str | None:
+    if not published.is_symlink():
+        if published.exists():
+            raise ValueError(f"{published} is not a version pointer; remove it and pack again")
+        return None
+    target = published.readlink()
+    if target.parent != Path(os.path.relpath(versions(published), published.parent)):
+        raise ValueError(f"{published} points outside its versions: {target}")
+    return target.name
+
+
+def _collect(published: Path) -> None:
+    """Remove every version, staging directory and pointer an earlier publish left unreferenced."""
+    current = _current(published)
+    _pointer_staging(published).unlink(missing_ok=True)
+    folder = versions(published)
+    for entry in sorted(folder.iterdir()) if folder.is_dir() else []:
+        if entry.name != current:
+            shutil.rmtree(entry)
+
+
+def _pointer_staging(published: Path) -> Path:
+    return published.with_name(f".{published.name}.pointer")
+
+
+def write_samples(frame: Samples, beauty_path: Path, published: Path) -> None:
+    """Publish a frame's sidecars as a new immutable version, then atomically repoint `published` to it.
+
+    `published` is a relative symlink; at every step it names a complete version (or nothing before
+    the first publish), and the next publish clears whatever an interrupted one left behind.
+    """
+    _collect(published)
+    folder = versions(published)
+    current = _current(published)
+    version = folder / str(1 if current is None else int(current) + 1)
+    staging = version.with_name(version.name + ".partial")
+    (staging / "deep").mkdir(parents=True)
     for name, value in images(beauty_path).items():
-        np.save(temporary / f"{name}.npy", np.ascontiguousarray(value), allow_pickle=False)
+        np.save(staging / f"{name}.npy", np.ascontiguousarray(value), allow_pickle=False)
     for name, value in frame.arrays().items():
-        np.save(temporary / "deep" / f"{name}.npy", np.ascontiguousarray(value), allow_pickle=False)
-    if directory.exists():
-        stale = directory.with_name(directory.name + ".old")
-        directory.replace(stale)
-        temporary.replace(directory)
-        shutil.rmtree(stale)
-    else:
-        temporary.replace(directory)
+        np.save(staging / "deep" / f"{name}.npy", np.ascontiguousarray(value), allow_pickle=False)
+    staging.rename(version)
+    pointer = _pointer_staging(published)
+    published.parent.mkdir(parents=True, exist_ok=True)
+    pointer.symlink_to(os.path.relpath(version, published.parent), target_is_directory=True)
+    pointer.replace(published)
+    _collect(published)
 
 
 def pack(shot: Path, frames: range) -> None:
-    """Write targets for `frames` and sidecars for their recomposition frames; deletes nothing."""
+    """Write targets for `frames` and sidecars for their recomposition frames; never removes raw deep."""
     plan = ShotFrames.load(shot)
     for frame in frames:
         name = f"{frame:04d}.exr"

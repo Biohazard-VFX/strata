@@ -73,3 +73,4 @@
 - `coverage` stays in the beauty product as well: Karma's deep product writes only AOVs that a raster product renders (husk: "Unable to find AOV coverage").
 - The camera's vertical aperture follows the output aspect (36 mm x H/W), so square pixels need no aperture conform and fy = fx.
 - Creature raw exports are reused only when job, frames, scripts, sources with every file they reference, and the probed tool build all match.
+- Sidecars are immutable versions in .samples/<frame_id>/<n>; samples/<frame_id> is a symlink replaced atomically, so readers never see a gap.

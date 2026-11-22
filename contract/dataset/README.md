@@ -20,6 +20,7 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   deep/0001.exr ... 0024.exr     raw deep, kept on the frame stride (`manifest.render.deep_stride`)
   layers/0001.exr ... 0024.exr   K = 4 sky-inclusive layer targets for every frame
   samples/<shot_id>_NNNN/        raw-sample sidecars of every recomposition frame (the deep stride)
+  .samples/<shot_id>_NNNN/<n>/   the immutable sidecar version each `samples/` entry points to
   qa/NNNN.json      raw QA acceptance of each frame (identity of every input it validated)
   scene/            optional: the USD the shot was rendered from (reproducibility, not training input)
   qa.json           optional: the generator's acceptance report
@@ -90,7 +91,9 @@ alpha 1, the sky colour and inverse depth 0. Training reads these for every fram
 ## samples/<shot_id>_NNNN/
 
 The raw samples of a recomposition frame (every frame on the deep stride from the first frame),
-published atomically as uncompressed C-order NPY (`strata_contract.samples`):
+as uncompressed C-order NPY (`strata_contract.samples`). `samples/<shot_id>_NNNN` is a relative
+symlink to an immutable version directory `.samples/<shot_id>_NNNN/<n>`; a new version is written in
+full, then the symlink is replaced atomically. Open the files through the `samples/` name:
 
 | file | dtype, shape | meaning |
 | --- | --- | --- |

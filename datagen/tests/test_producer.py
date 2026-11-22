@@ -2,6 +2,8 @@ import json
 import shutil
 import tempfile
 import unittest
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 from unittest import mock
@@ -201,6 +203,54 @@ class SidecarTest(unittest.TestCase):
             self.assertTrue(any(f.startswith("frame 1: samples_mismatch") for f in failures), failures)
             shutil.rmtree(shot / "samples")
             self.assertTrue(any("frame 1: s_0001: missing" in f for f in shot_failures(shot)))
+
+    def test_an_interrupted_republish_leaves_a_complete_version_published_and_a_retry_recovers(self) -> None:
+        for step in ("write", "version", "pointer", "switch", "collect"):
+            with self.subTest(step), tempfile.TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "s"
+                write_shot(shot, [CLEAN], stride=1)
+                pack.pack(shot, range(1, 2))
+                published = shot / "samples" / "s_0001"
+                beauty = shot / "beauty" / "0001.exr"
+                sky = pack.samples(_sky_everywhere(shot))
+                with _failing(step, published), self.assertRaises(OSError):
+                    pack.write_samples(sky, beauty, published)
+                self.assertEqual(contract_samples.errors(published, (1, 3)), [])
+                expected = [0, 0, 0] if step == "collect" else [2, 0, 1, 0, 0]
+                self.assertEqual(contract_samples.load(published)["ids"].tolist(), expected)
+                pack.write_samples(sky, beauty, published)
+                self.assertEqual(contract_samples.load(published)["ids"].tolist(), [0, 0, 0])
+                self.assertEqual([p.name for p in (shot / "samples").iterdir()], ["s_0001"])
+                self.assertEqual(len(list((shot / ".samples" / "s_0001").iterdir())), 1)
+
+    def test_a_published_path_that_is_not_a_version_pointer_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "s"
+            write_shot(shot, [CLEAN], stride=1)
+            (shot / "samples" / "s_0001").mkdir(parents=True)
+            with self.assertRaises(ValueError):
+                pack.pack(shot, range(1, 2))
+
+
+@contextmanager
+def _failing(step: str, published: Path) -> Generator[None]:
+    """Make one step of a sidecar publish raise, the way a crash or full disk would stop it there."""
+    replace = Path.replace
+
+    def switch(path: Path, target: Path) -> Path:
+        if Path(target) == published:
+            raise OSError("injected")
+        return replace(path, target)
+
+    patches = {
+        "write": mock.patch.object(np, "save", side_effect=OSError("injected")),
+        "version": mock.patch.object(Path, "rename", side_effect=OSError("injected")),
+        "pointer": mock.patch.object(Path, "symlink_to", side_effect=OSError("injected")),
+        "switch": mock.patch.object(Path, "replace", switch),
+        "collect": mock.patch.object(shutil, "rmtree", side_effect=OSError("injected")),
+    }
+    with patches[step]:
+        yield
 
 
 class SchemaTest(unittest.TestCase):
