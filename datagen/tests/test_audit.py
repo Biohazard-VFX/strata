@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np
-from pxr import Sdf, Usd, UsdGeom
+from pxr import Sdf, Usd, UsdGeom, Vt
 
 from strata_datagen.scene import audit, compose, export
 from strata_datagen.scene.spec import ShotSpec
@@ -78,7 +78,10 @@ class TagAuditTest(unittest.TestCase):
 
     def test_an_untagged_surface_fails_instead_of_rendering_as_sky(self) -> None:
         _mesh(self.stage, "/World/rock")
-        self.assertEqual(self.errors(), ["/World/rock: no authored instance_id, foreground, hero, fur"])
+        self.assertEqual(
+            self.errors(),
+            ["/World/rock: no authored instance_id, instance_check, instance_check2, foreground, hero, fur"],
+        )
 
     def test_role_values_must_match_the_membership_of_the_id_range(self) -> None:
         primvar = UsdGeom.PrimvarsAPI(self.stage.GetPrimAtPath("/World/hero")).GetPrimvar("hero")
@@ -116,6 +119,137 @@ class TagAuditTest(unittest.TestCase):
         self.assertEqual(self.errors(), [])
 
 
+def _primvar(stage: Usd.Stage, path: str, name: str) -> UsdGeom.Primvar:
+    return UsdGeom.PrimvarsAPI(stage.GetPrimAtPath(path)).GetPrimvar(name)
+
+
+def _sample(primvar: UsdGeom.Primvar) -> None:
+    primvar.Set(primvar.Get(), 1.0)
+
+
+def _connect(primvar: UsdGeom.Primvar) -> None:
+    primvar.GetAttr().AddConnection("/World/terrain.points")
+
+
+def _index(primvar: UsdGeom.Primvar) -> None:
+    primvar.GetAttr().GetPrim().CreateAttribute(
+        f"primvars:{primvar.GetPrimvarName()}:indices", Sdf.ValueTypeNames.IntArray
+    ).Set(Vt.IntArray([0]))
+
+
+def _element_size(primvar: UsdGeom.Primvar) -> None:
+    primvar.SetElementSize(2)
+
+
+def _interpolate(primvar: UsdGeom.Primvar) -> None:
+    primvar.SetInterpolation(UsdGeom.Tokens.uniform)
+
+
+FAULTS = {
+    "has time samples": _sample,
+    "has attribute connections": _connect,
+    "is indexed": _index,
+    "has an element size other than 1": _element_size,
+    "has uniform interpolation": _interpolate,
+}
+SURFACES = {
+    "/World/terrain": "/World/terrain",
+    "/World/sky": "/World/sky",
+    "/World/hair": "/World/hair",
+    "/World/hero": "/World/hero/body",
+}
+
+
+class StaticTagTest(unittest.TestCase):
+    def test_every_semantic_primvar_fault_is_rejected_on_every_kind_of_surface(self) -> None:
+        for owner, rendered in SURFACES.items():
+            for name in audit.TAGS:
+                for why, fault in FAULTS.items():
+                    with self.subTest(owner=owner, name=name, fault=why):
+                        stage = _scene()
+                        fault(_primvar(stage, owner, name))
+                        inherits = owner != "/World/hero" or why != "has uniform interpolation"
+                        expected = (
+                            f"{rendered}: {name} {why}" if inherits else f"{rendered}: no authored {name}"
+                        )
+                        self.assertIn(expected, audit.tag_errors(stage, RANGES))
+
+    def test_time_samples_that_disagree_with_the_default_are_rejected(self) -> None:
+        stage = _scene()
+        primvar = _primvar(stage, "/World/hero", "hero")
+        primvar.Set(0.0, 1.0)
+        self.assertEqual(primvar.Get(), 1.0)
+        self.assertIn("/World/hero/body: hero has time samples", audit.tag_errors(stage, RANGES))
+
+    def test_instancer_arrays_reject_the_same_faults(self) -> None:
+        for name in audit.TAGS:
+            for why, fault in FAULTS.items():
+                if why == "has uniform interpolation":
+                    continue
+                with self.subTest(name=name, fault=why):
+                    stage = _scene()
+                    fault(_primvar(stage, "/World/grass", name))
+                    self.assertIn(f"/World/grass: {name} {why}", audit.tag_errors(stage, RANGES))
+
+    def test_instancer_arrays_reject_interpolations_other_than_vertex_and_constant(self) -> None:
+        stage = _scene()
+        _interpolate(_primvar(stage, "/World/grass", "hero"))
+        self.assertIn("/World/grass: hero has uniform interpolation", audit.tag_errors(stage, RANGES))
+
+    def test_prototype_geometry_with_time_sampled_tags_is_rejected(self) -> None:
+        stage = _scene()
+        path = "/World/grass/prototypes/p0"
+        primvar = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath(path)).CreatePrimvar(
+            "hero", Sdf.ValueTypeNames.Float, UsdGeom.Tokens.constant
+        )
+        primvar.Set(1.0, 1.0)
+        self.assertEqual(
+            audit.tag_errors(stage, RANGES), [f"{path}: prototype geometry overrides its instancer's hero"]
+        )
+
+    def test_value_clips_that_override_a_referenced_tag_are_rejected_and_unrelated_clips_pass(self) -> None:
+        with TemporaryDirectory() as tmp:
+            for supplied, expected in (("primvars:hero", True), ("points", False)):
+                with self.subTest(supplied=supplied):
+                    case = Path(tmp, supplied.replace(":", "_"))
+                    case.mkdir()
+                    asset = Usd.Stage.CreateNew(f"{case}/part.usda")
+                    tag_instances(_mesh(asset, "/part"), np.array([1]), "terrain")
+                    asset.GetRootLayer().Save()
+                    clip = Usd.Stage.CreateNew(f"{case}/clip.usda")
+                    mesh = clip.DefinePrim("/clip", "Mesh")
+                    if supplied == "points":
+                        mesh.CreateAttribute(supplied, Sdf.ValueTypeNames.Point3fArray).Set(
+                            vec3f(np.eye(3)), 1.0
+                        )
+                    else:
+                        mesh.CreateAttribute(supplied, Sdf.ValueTypeNames.Float).Set(1.0, 1.0)
+                    clip.GetRootLayer().Save()
+                    scene = _scene()
+                    prim = scene.GetPrimAtPath("/World/terrain")
+                    for name in [n for n in prim.GetPropertyNames() if n.startswith("primvars:")]:
+                        prim.RemoveProperty(name)
+                    prim.GetReferences().AddReference(f"{case}/part.usda", "/part")
+                    api = Usd.ClipsAPI(prim)
+                    api.SetClipAssetPaths([Sdf.AssetPath(f"{case}/clip.usda")])
+                    api.SetClipManifestAssetPath(Sdf.AssetPath(f"{case}/clip.usda"))
+                    api.SetClipPrimPath("/clip")
+                    api.SetClipActive([(0.0, 0)])
+                    api.SetClipTimes([(0.0, 0.0)])
+                    errors = audit.tag_errors(scene, RANGES)
+                    self.assertEqual("/World/terrain: foreground is under value clips" in errors, False)
+                    self.assertEqual("/World/terrain: hero is under value clips" in errors, expected)
+                    self.assertEqual(any("has time samples" in error for error in errors), expected)
+
+    def test_non_binary_roles_are_rejected(self) -> None:
+        stage = _scene()
+        _primvar(stage, "/World/terrain", "foreground").Set(0.5)
+        self.assertEqual(
+            audit.tag_errors(stage, RANGES),
+            ["/World/terrain: foreground differ from the roles of their id range"],
+        )
+
+
 class BuildAuditTest(unittest.TestCase):
     def test_a_built_scene_with_a_missing_role_primvar_gets_no_manifest(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -128,6 +262,21 @@ class BuildAuditTest(unittest.TestCase):
             stage.GetPrimAtPath("/World/hero/skin").RemoveProperty("primvars:hero")
             stage.GetRootLayer().Save()
             with self.assertRaisesRegex(ValueError, "/World/hero/skin: no authored hero"):
+                export.write(shot, lib, RENDER)
+            self.assertFalse((shot.directory / "manifest.json").exists())
+            self.assertFalse((shot.directory / "camera.json").exists())
+
+    def test_a_built_scene_with_a_time_sampled_hero_role_gets_no_manifest(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lib = library()
+            hero_files(root, lib)
+            shot = compose.plan(ShotSpec(seed=7), lib, root)
+            path = compose.write(shot, lib, root, RENDER)
+            stage = Usd.Stage.Open(str(path))
+            _primvar(stage, "/World/hero/skin", "hero").Set(0.0, 1.0)
+            stage.GetRootLayer().Save()
+            with self.assertRaisesRegex(ValueError, "/World/hero/skin: hero has time samples"):
                 export.write(shot, lib, RENDER)
             self.assertFalse((shot.directory / "manifest.json").exists())
             self.assertFalse((shot.directory / "camera.json").exists())
