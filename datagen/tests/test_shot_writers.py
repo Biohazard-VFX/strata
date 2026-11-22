@@ -14,7 +14,7 @@ from unittest import mock
 from strata_datagen import cli, files, shotlock
 from strata_datagen.render import husk
 from tests.concurrency import free
-from tests.fixtures import SKY, Sample, write_shot
+from tests.fixtures import SKY, Sample, write_deep, write_shot
 from tests.shotwrites import watching
 
 SHOT_WRITERS = {"build", "render", "render-task", "ingest", "pack", "accept", "prune", "remove-samples", "qa"}
@@ -96,13 +96,13 @@ class ShotWriterTest(unittest.TestCase):
             for name in ("pack", "accept", "prune", "remove-samples"):
                 self.run_command(frame_args(name, shot))
         self.assertGreater(watch.writes, 0)
-        self.assertEqual(watch.unlocked, [])
+        self.assertEqual((watch.unlocked, watch.unexplained), ([], []))
 
     def test_build_writes_only_under_the_lock(self) -> None:
         with watching(self.root) as watch:
             build_fixture(self.root)
         self.assertGreater(watch.writes, 0)
-        self.assertEqual(watch.unlocked, [])
+        self.assertEqual((watch.unlocked, watch.unexplained), ([], []))
 
     def test_render_writes_only_under_one_hold_that_husk_inherits(self) -> None:
         shot = self.root / "shots" / "r"
@@ -111,13 +111,13 @@ class ShotWriterTest(unittest.TestCase):
         with watching(self.root) as watch, mock.patch.object(cli.husk, "run", fake_render):
             cli.main(["render", "--root", str(self.root)])
         self.assertGreater(watch.writes, 0)
-        self.assertEqual(watch.unlocked, [])
+        self.assertEqual((watch.unlocked, watch.unexplained), ([], []))
         self.assertTrue(json.loads((shot / "manifest.json").read_text())["timings"]["post_passed"])
         self.assertTrue((shot / "layers" / "0001.exr").exists())
         with watching(self.root) as watch, mock.patch.object(cli.husk, "run", fake_render):
             cli.main(["render-task", "--shot", str(shot), "--first", "1", "--count", "1"])
         self.assertGreater(watch.writes, 0)
-        self.assertEqual(watch.unlocked, [])
+        self.assertEqual((watch.unlocked, watch.unexplained), ([], []))
 
     def test_qa_writes_and_moves_only_under_the_lock(self) -> None:
         write_shot(self.root / "shots" / "good", [PIXELS], stride=1)
@@ -127,10 +127,57 @@ class ShotWriterTest(unittest.TestCase):
         with watching(self.root) as watch:
             cli.main(["qa", "--root", str(self.root)])
         self.assertGreater(watch.writes, 0)
-        self.assertEqual(watch.unlocked, [])
+        self.assertEqual((watch.unlocked, watch.unexplained), ([], []))
         self.assertTrue((self.root / "rejected" / "bad" / "qa.json").exists())
         self.assertFalse((self.root / "shots" / "bad").exists())
         self.assertTrue(free(self.root / "shots" / "good"))
+
+
+class AuditTest(unittest.TestCase):
+    """The audit itself: writes it used to miss are reported, and locked Python writes are not."""
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        self.shot = self.root / "shots" / "s"
+        write_shot(self.shot, [PIXELS], stride=1)
+
+    def tearDown(self) -> None:
+        self.directory.cleanup()
+
+    def write_around_python(self) -> None:
+        folder = os.open(self.shot, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.close(os.open("at.txt", os.O_WRONLY | os.O_CREAT, 0o644, dir_fd=folder))
+            os.symlink("camera.json", "symlink.json", dir_fd=folder)
+            os.link("camera.json", "hardlink.json", src_dir_fd=folder, dst_dir_fd=folder)
+            os.rename("hardlink.json", "renamed.json", src_dir_fd=folder, dst_dir_fd=folder)
+        finally:
+            os.close(folder)
+
+    def test_descriptor_relative_writes_and_links_without_the_lock_are_reported(self) -> None:
+        with watching(self.root) as watch:
+            self.write_around_python()
+        self.assertEqual(
+            [entry.split()[-1] for entry in watch.unlocked],
+            [
+                f"shots/s/{name}"
+                for name in ("at.txt", "symlink.json", "hardlink.json", "hardlink.json", "renamed.json")
+            ],
+        )
+        self.assertEqual(watch.unexplained, [])
+
+    def test_the_same_writes_under_the_lock_are_not(self) -> None:
+        with watching(self.root) as watch, shotlock.held(self.shot):
+            self.write_around_python()
+        self.assertEqual((watch.unlocked, watch.unexplained), ([], []))
+        self.assertGreater(watch.writes, 0)
+
+    def test_a_native_write_python_never_sees_is_reported_by_the_snapshot(self) -> None:
+        with watching(self.root) as watch, shotlock.held(self.shot):
+            write_deep(self.shot / "deep" / "0001.exr", [SKY, SKY, SKY])
+            write_deep(self.shot / "deep" / "0002.exr", [SKY, SKY, SKY])
+        self.assertEqual(watch.unexplained, ["shots/s/deep/0001.exr", "shots/s/deep/0002.exr"])
 
 
 if __name__ == "__main__":
