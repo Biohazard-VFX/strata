@@ -45,4 +45,9 @@ class DeepHead(nn.Module):
         )
         alpha = raw[:, :, 1].sigmoid()
         color = image[:, None] + raw[:, :, 2:]
-        return {"inverse_depth": inverse, "alpha": alpha, "rgb": alpha[:, :, None] * color}
+        return {
+            "inverse_depth": inverse,
+            "alpha": alpha,
+            "alpha_logits": raw[:, :, 1],
+            "rgb": alpha[:, :, None] * color,
+        }

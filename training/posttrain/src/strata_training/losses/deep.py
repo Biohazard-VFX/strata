@@ -1,4 +1,5 @@
 import torch
+from torch.nn import functional as functional
 
 
 def composite_tensor(alpha: torch.Tensor, rgb: torch.Tensor) -> torch.Tensor:
@@ -19,7 +20,10 @@ def deep_loss(
     ).abs()
     depth = (depth_error * valid).sum() / valid.sum().clamp_min(1)
     gradient = gradient_loss(prediction["inverse_depth"], target["inverse_depth"], valid)
-    alpha = ((prediction["alpha"] - target["alpha"]).abs() * weight[:, None]).sum() / (
+    coverage = functional.binary_cross_entropy_with_logits(
+        prediction["alpha_logits"].float(), target["alpha"].float(), reduction="none"
+    )
+    alpha = (coverage * weight[:, None]).sum() / (
         weight.sum() * target["alpha"].shape[1]
     ).clamp_min(1)
     rgb = ((prediction["rgb"] - target["rgb"]).abs() * weight[:, None, None]).sum() / (

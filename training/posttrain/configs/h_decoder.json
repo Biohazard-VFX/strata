@@ -10,8 +10,10 @@
   "crop": 64,
   "halo": 48,
   "batch_size": 1,
-  "steps": 1500,
-  "learning_rate": 5e-05,
-  "log_every": 250,
-  "output": "/data/strata_v0/runs/h_decoder"
+  "steps": 40000,
+  "learning_rate": 0.0004,
+  "log_every": 1000,
+  "output": "/data/strata_v0/runs/h_decoder",
+  "decoder_learning_rate": 5e-06,
+  "warmup_steps": 2000
 }

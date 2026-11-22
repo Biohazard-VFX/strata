@@ -22,3 +22,5 @@
 - Post-training lives in training/posttrain so model export remains independently owned.
 - Native role masks decode round(instance_id/A) from deep samples and composite visible role coverage, rather than labeling only the nearest surface.
 - OOD baselines reuse frozen training-only calibration; oracle-conditioned predictions retain checkpoint training-scale provenance.
+- Supervise coverage with float32 soft-target BCE logits so sigmoid saturation cannot erase mixed-pixel correction gradients.
+- Warm up new-head and pretrained-decoder optimizer groups at separate learning rates; reject resume across objective or schedule changes.

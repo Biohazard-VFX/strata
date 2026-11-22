@@ -1,5 +1,4 @@
 import json
-import math
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -17,11 +16,13 @@ from strata_training.losses.deep import deep_loss
 from strata_training.model.checkpoint import save_checkpoint
 from strata_training.model.dp2 import DeepDepthPro
 from strata_training.model.head import DeepHead
+from strata_training.optim import gradient_norm, learning_rate_multiplier, parameter_groups
 from strata_training.torch_api import api
 
 
 def train(config_path: Path) -> dict[str, Any]:
     config: dict[str, Any] = json.loads(config_path.read_text())
+    config["objective"] = "coverage-bce-logits-v1"
     validate_config(config)
     device = config.get("device", "cuda")
     api.manual_seed(config["seed"])
@@ -50,13 +51,26 @@ def train(config_path: Path) -> dict[str, Any]:
     head.input_mean.copy_(torch.as_tensor(mean).to(device))
     head.input_std.copy_(torch.as_tensor(std).to(device))
     parameters = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(parameters, lr=config["learning_rate"], weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(parameter_groups(model, config), weight_decay=1e-4)
     start_step = 0
     previous_seconds = 0.0
     if config.get("resume"):
         state: dict[str, Any] = torch.load(config["resume"], map_location="cpu", weights_only=True)
-        keys = ("preset", "mode", "layers", "scale_mode", "index", "protocol", "features")
-        if any(state["config"][key] != config[key] for key in keys):
+        keys = (
+            "preset",
+            "mode",
+            "layers",
+            "scale_mode",
+            "index",
+            "protocol",
+            "features",
+            "objective",
+            "learning_rate",
+            "decoder_learning_rate",
+            "warmup_steps",
+            "steps",
+        )
+        if any(state["config"].get(key) != config.get(key) for key in keys):
             raise ValueError("Resume model/data/scale does not match config")
         missing, unexpected = cast(
             tuple[list[str], list[str]], model.load_state_dict(state["model"], strict=False)
@@ -87,11 +101,9 @@ def train(config_path: Path) -> dict[str, Any]:
             frames, selections, crop, halo, device=device, decoder=decoder
         )
         optimizer.zero_grad(set_to_none=True)
-        learning_rate = config["learning_rate"] * (
-            0.01 + 0.99 * 0.5 * (1 + math.cos(math.pi * step / config["steps"]))
-        )
+        multiplier = learning_rate_multiplier(step, config["steps"], config.get("warmup_steps", 0))
         for group in optimizer.param_groups:
-            group["lr"] = learning_rate
+            group["lr"] = group["initial_lr"] * multiplier
         model.train()
         with torch.autocast(device, dtype=torch.bfloat16):
             if decoder:
@@ -110,6 +122,9 @@ def train(config_path: Path) -> dict[str, Any]:
         if not torch.isfinite(loss):
             raise FloatingPointError(f"Nonfinite loss at step {step}")
         api.autograd.backward(loss)
+        norms = {str(g["name"]): gradient_norm(g["params"]) for g in optimizer.param_groups}
+        if not all(np.isfinite(value) for value in norms.values()):
+            raise FloatingPointError(f"Nonfinite gradients at step {step}")
         torch.nn.utils.clip_grad_norm_(parameters, 5)
         api.optim.AdamW.step(optimizer)
         running.append(loss.item())
@@ -119,6 +134,18 @@ def train(config_path: Path) -> dict[str, Any]:
                 "seconds": previous_seconds + time.monotonic() - start,
                 "train_loss": float(np.mean(running)),
                 "last_terms": {k: v.item() for k, v in terms.items()},
+                "gradient_norms": norms,
+                "learning_rates": {str(g["name"]): g["lr"] for g in optimizer.param_groups},
+                "alpha_logit_abs_max": central["alpha_logits"].detach().abs().max().item(),
+                "alpha_mae": (central["alpha"].detach() - target["alpha"]).abs().mean().item(),
+                "mixed_alpha_mae": (
+                    (central["alpha"][:, 0].detach() - target["alpha"][:, 0])
+                    .abs()[target["mixed"].bool()]
+                    .mean()
+                    .item()
+                    if target["mixed"].bool().any().item()
+                    else None
+                ),
                 "peak_vram_bytes": torch.cuda.max_memory_allocated() if device == "cuda" else 0,
             }
             history.append(row)

@@ -86,7 +86,8 @@ def predict(model: nn.Module, config: dict[str, Any], frame: Frame) -> Layers:
                     ]
                     output = cast(dict[str, torch.Tensor], model(features, image, base))
             h, w = min(core, height - y), min(core, width - x)
-            for key, value in output.items():
+            for key in arrays:
+                value = output[key]
                 arrays[key][..., y : y + h, x : x + w] = (
                     value[0, ..., y - y0 : y - y0 + h, x - x0 : x - x0 + w].float().cpu().numpy()
                 )
