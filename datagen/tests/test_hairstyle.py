@@ -304,24 +304,24 @@ def hair_library(root: Path) -> Library:
 
 class ComposeTest(unittest.TestCase):
     def test_shots_grow_a_seeded_hairstyle_on_the_hero(self) -> None:
-        with TemporaryDirectory() as tmp:
-            shots: list[Path] = []
-            for name in ("a", "b"):
-                root = Path(tmp) / name
-                lib = hair_library(root)
-                shot = compose.plan(ShotSpec(seed=11), lib, root)
-                compose.write(shot, lib, root, RENDER)
-                export.write(shot, lib, RENDER)
-                shots.append(shot.directory)
-            names = ["scene/shot.usda", "scene/hair.usdc", "manifest.json"]
-            _, mismatch, errors = filecmp.cmpfiles(shots[0], shots[1], names, shallow=False)
-            self.assertEqual((mismatch, errors), ([], []))
-            record = json.loads((shots[0] / "manifest.json").read_text())
-            self.assertIsNotNone(record["scene"]["hero"]["hairstyle"])
-            self.assertIn({"name": "hero_hair", "first_id": 4, "count": 1}, record["instance_ids"])
-            self.assertNotIn("hero_groom", {r["name"] for r in record["instance_ids"]})
-            stage = Usd.Stage.Open(str(shots[0] / "scene" / "shot.usda"))
-            self.assertEqual(stage.GetPrimAtPath("/World/hero/hair/scalp").GetTypeName(), "BasisCurves")
+        tmp = self.enterContext(TemporaryDirectory())
+        shots: list[Path] = []
+        for name in ("a", "b"):
+            root = Path(tmp) / name
+            lib = hair_library(root)
+            shot = compose.plan(ShotSpec(seed=11), lib, root)
+            compose.write(shot, lib, root, RENDER)
+            export.write(shot, lib, RENDER)
+            shots.append(shot.directory)
+        names = ["scene/shot.usda", "scene/hair.usdc", "manifest.json"]
+        _, mismatch, errors = filecmp.cmpfiles(shots[0], shots[1], names, shallow=False)
+        self.assertEqual((mismatch, errors), ([], []))
+        record = json.loads((shots[0] / "manifest.json").read_text())
+        self.assertIsNotNone(record["scene"]["hero"]["hairstyle"])
+        self.assertIn({"name": "hero_hair", "first_id": 4, "count": 1}, record["instance_ids"])
+        self.assertNotIn("hero_groom", {r["name"] for r in record["instance_ids"]})
+        stage = Usd.Stage.Open(str(shots[0] / "scene" / "shot.usda"))
+        self.assertEqual(stage.GetPrimAtPath("/World/hero/hair/scalp").GetTypeName(), "BasisCurves")
 
 
 if __name__ == "__main__":

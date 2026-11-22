@@ -223,26 +223,26 @@ class MotionTest(unittest.TestCase):
 class ComposeTest(unittest.TestCase):
     def test_shots_author_thin_structures_with_instance_ids_in_the_manifest(self) -> None:
         lib = library()
-        with TemporaryDirectory() as tmp:
-            hero_files(Path(tmp), lib)
-            spec = ShotSpec(
-                seed=6, thin=(thin.Choice("chain_link", "between"), thin.Choice("wires", "background"))
-            )
-            shot = compose.plan(spec, lib, Path(tmp))
-            compose.write(shot, lib, Path(tmp), RENDER)
-            manifest = export.manifest(shot, lib, RENDER)
-            stage = Usd.Stage.Open(str(shot.scene_dir / "shot.usda"))
-            ranges = cast("list[dict[str, object]]", manifest["instance_ids"])
-            ids = {r["name"]: r["first_id"] for r in ranges}
-            records = cast("list[dict[str, object]]", cast("dict[str, object]", manifest["scene"])["thin"])
-            for index, s in enumerate(shot.thin):
-                group = stage.GetPrimAtPath(f"/World/thin/thin_{index}_{s.kind}/strands")
-                prim = cast("list[Usd.Prim]", group.GetChildren())[0]  # pyright: ignore[reportUnknownMemberType]
-                self.assertTrue(UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()[0])
-                value = UsdGeom.PrimvarsAPI(prim).GetPrimvar("instance_id").Get()
-                self.assertEqual(value, ids[f"thin_{index}_{s.kind}_strands"])
-            self.assertEqual([r["kind"] for r in records], [s.kind for s in shot.thin])
-            self.assertTrue(shot.thin)
+        tmp = self.enterContext(TemporaryDirectory())
+        hero_files(Path(tmp), lib)
+        spec = ShotSpec(
+            seed=6, thin=(thin.Choice("chain_link", "between"), thin.Choice("wires", "background"))
+        )
+        shot = compose.plan(spec, lib, Path(tmp))
+        compose.write(shot, lib, Path(tmp), RENDER)
+        manifest = export.manifest(shot, lib, RENDER)
+        stage = Usd.Stage.Open(str(shot.scene_dir / "shot.usda"))
+        ranges = cast("list[dict[str, object]]", manifest["instance_ids"])
+        ids = {r["name"]: r["first_id"] for r in ranges}
+        records = cast("list[dict[str, object]]", cast("dict[str, object]", manifest["scene"])["thin"])
+        for index, s in enumerate(shot.thin):
+            group = stage.GetPrimAtPath(f"/World/thin/thin_{index}_{s.kind}/strands")
+            prim = cast("list[Usd.Prim]", group.GetChildren())[0]  # pyright: ignore[reportUnknownMemberType]
+            self.assertTrue(UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()[0])
+            value = UsdGeom.PrimvarsAPI(prim).GetPrimvar("instance_id").Get()
+            self.assertEqual(value, ids[f"thin_{index}_{s.kind}_strands"])
+        self.assertEqual([r["kind"] for r in records], [s.kind for s in shot.thin])
+        self.assertTrue(shot.thin)
 
     def test_a_seed_gives_byte_identical_thin_layers(self) -> None:
         lib = library()

@@ -61,31 +61,31 @@ class DeformationBlurTest(unittest.TestCase):
         self.assertEqual(geometry_samples(stage.GetPrimAtPath("/World/terrain")), 1)
 
     def test_animated_creature_skin_and_groom_get_geometry_samples(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            lib = library()
-            for pose in lib.heroes[0].poses:
-                write_animated_hero(root / pose.file, 6)
-            stage = composed(lib, root, ShotSpec(seed=3, frame_count=24))
-            self.assert_sampled(stage, {"/World/hero/skin", "/World/hero/groom"})
+        tmp = self.enterContext(TemporaryDirectory())
+        root = Path(tmp)
+        lib = library()
+        for pose in lib.heroes[0].poses:
+            write_animated_hero(root / pose.file, 6)
+        stage = composed(lib, root, ShotSpec(seed=3, frame_count=24))
+        self.assert_sampled(stage, {"/World/hero/skin", "/World/hero/groom"})
 
     def test_animated_human_clip_gets_geometry_samples(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            lib = clip_library()
-            for pose in lib.heroes[0].poses:
-                write_animated_hero(root / pose.file, 42)
-            stage = composed(lib, root, ShotSpec(seed=11, pose="walk_x", frame_count=24))
-            self.assert_sampled(stage, {"/World/hero/skin", "/World/hero/groom"})
+        tmp = self.enterContext(TemporaryDirectory())
+        root = Path(tmp)
+        lib = clip_library()
+        for pose in lib.heroes[0].poses:
+            write_animated_hero(root / pose.file, 42)
+        stage = composed(lib, root, ShotSpec(seed=11, pose="walk_x", frame_count=24))
+        self.assert_sampled(stage, {"/World/hero/skin", "/World/hero/groom"})
 
     def test_morphing_hairstyle_on_a_static_hero_gets_geometry_samples(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            lib = hair_library(root)
-            stage = composed(lib, root, ShotSpec(seed=11))
-            hair = {p for p in deforming(stage) if p.startswith("/World/hero/hair/")}
-            self.assertTrue(hair)
-            self.assert_sampled(stage, hair)
+        tmp = self.enterContext(TemporaryDirectory())
+        root = Path(tmp)
+        lib = hair_library(root)
+        stage = composed(lib, root, ShotSpec(seed=11))
+        hair = {p for p in deforming(stage) if p.startswith("/World/hero/hair/")}
+        self.assertTrue(hair)
+        self.assert_sampled(stage, hair)
 
 
 if __name__ == "__main__":

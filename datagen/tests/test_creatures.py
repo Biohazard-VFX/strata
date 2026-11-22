@@ -129,27 +129,27 @@ class CreatureTest(unittest.TestCase):
     def test_bare_creature_prepares_without_groom(self) -> None:
         raw = box_raw(1)
         rest = creatures.orient(raw, None, 1.0)[0]
-        with TemporaryDirectory() as tmp:
-            folder = Path(tmp) / "bare"
-            creatures.write_pose(folder / "poses" / "rest.usdc", raw, rest[None])
-            skin = groom.Skin(rest, raw.triangles, raw.corner_st)
-            front = creatures.front_vertex(raw, rest)
-            field = coat.field(skin, creatures.region_weights(raw), front)
-            hero = {
-                "key": "bare",
-                "poses": {"rest": "poses/rest.usdc"},
-                "skin_prim": creatures.SKIN_PRIM,
-                "albedo": "a.png",
-                "coat": creatures.sample_coat(["bare"], field, rest, front, "bare"),
-                "source": "test",
-                "license": "test",
-            }
-            (folder / "hero.json").write_text(json.dumps(hero))
-            prepared = coat.prepare_pose(heroes.load(folder), "rest", Path(tmp) / "rest.usdc")
-            stage = Usd.Stage.Open(str(prepared.file))
-            self.assertEqual(prepared.hairs, 0)
-            self.assertTrue(stage.GetPrimAtPath("/hero/skin"))
-            self.assertFalse(stage.GetPrimAtPath("/hero/groom"))
+        tmp = self.enterContext(TemporaryDirectory())
+        folder = Path(tmp) / "bare"
+        creatures.write_pose(folder / "poses" / "rest.usdc", raw, rest[None])
+        skin = groom.Skin(rest, raw.triangles, raw.corner_st)
+        front = creatures.front_vertex(raw, rest)
+        field = coat.field(skin, creatures.region_weights(raw), front)
+        hero = {
+            "key": "bare",
+            "poses": {"rest": "poses/rest.usdc"},
+            "skin_prim": creatures.SKIN_PRIM,
+            "albedo": "a.png",
+            "coat": creatures.sample_coat(["bare"], field, rest, front, "bare"),
+            "source": "test",
+            "license": "test",
+        }
+        (folder / "hero.json").write_text(json.dumps(hero))
+        prepared = coat.prepare_pose(heroes.load(folder), "rest", Path(tmp) / "rest.usdc")
+        stage = Usd.Stage.Open(str(prepared.file))
+        self.assertEqual(prepared.hairs, 0)
+        self.assertTrue(stage.GetPrimAtPath("/hero/skin"))
+        self.assertFalse(stage.GetPrimAtPath("/hero/groom"))
 
     def test_pose_skins_carry_soft_region_weights_that_recover_their_faces(self) -> None:
         raw = box_raw(1)
@@ -188,33 +188,33 @@ class CreatureTest(unittest.TestCase):
     def test_animated_coat_pose_round_trip_is_deterministic(self) -> None:
         raw = box_raw(3)
         oriented = creatures.orient(raw, None, 1.0)
-        with TemporaryDirectory() as tmp:
-            folder = Path(tmp) / "box"
-            creatures.write_pose(folder / "poses" / "walk.usdc", raw, creatures.in_place(oriented))
-            skin = groom.Skin(oriented[0], raw.triangles, raw.corner_st)
-            front = creatures.front_vertex(raw, oriented[0])
-            field = coat.field(skin, creatures.region_weights(raw), front)
-            layers = creatures.sample_coat(["short_coat", "whiskers"], field, oriented[0], front, "box")
-            hero = {
-                "key": "box",
-                "poses": {"walk": "poses/walk.usdc"},
-                "skin_prim": creatures.SKIN_PRIM,
-                "albedo": "a.png",
-                "coat": layers,
-                "source": "test",
-                "license": "test",
-            }
-            (folder / "hero.json").write_text(json.dumps(hero))
-            manifest = heroes.load(folder)
-            first = coat.prepare_pose(manifest, "walk", Path(tmp) / "a.usdc")
-            second = coat.prepare_pose(manifest, "walk", Path(tmp) / "b.usdc")
-            self.assertEqual((Path(tmp) / "a.usdc").read_bytes(), (Path(tmp) / "b.usdc").read_bytes())
-            stage = Usd.Stage.Open(str(first.file))
-            hair = UsdGeom.BasisCurves(stage.GetPrimAtPath("/hero/groom")).GetPointsAttr()
-            self.assertEqual(list(hair.GetTimeSamples()), [0.0, 1.0, 2.0])
-            self.assertEqual(first.hairs, second.hairs)
-            lifted = np.asarray(hair.Get(2.0)) - np.asarray(hair.Get(0.0))
-            self.assertGreater(float(lifted[:, 1].mean()), 0.0)
+        tmp = self.enterContext(TemporaryDirectory())
+        folder = Path(tmp) / "box"
+        creatures.write_pose(folder / "poses" / "walk.usdc", raw, creatures.in_place(oriented))
+        skin = groom.Skin(oriented[0], raw.triangles, raw.corner_st)
+        front = creatures.front_vertex(raw, oriented[0])
+        field = coat.field(skin, creatures.region_weights(raw), front)
+        layers = creatures.sample_coat(["short_coat", "whiskers"], field, oriented[0], front, "box")
+        hero = {
+            "key": "box",
+            "poses": {"walk": "poses/walk.usdc"},
+            "skin_prim": creatures.SKIN_PRIM,
+            "albedo": "a.png",
+            "coat": layers,
+            "source": "test",
+            "license": "test",
+        }
+        (folder / "hero.json").write_text(json.dumps(hero))
+        manifest = heroes.load(folder)
+        first = coat.prepare_pose(manifest, "walk", Path(tmp) / "a.usdc")
+        second = coat.prepare_pose(manifest, "walk", Path(tmp) / "b.usdc")
+        self.assertEqual((Path(tmp) / "a.usdc").read_bytes(), (Path(tmp) / "b.usdc").read_bytes())
+        stage = Usd.Stage.Open(str(first.file))
+        hair = UsdGeom.BasisCurves(stage.GetPrimAtPath("/hero/groom")).GetPointsAttr()
+        self.assertEqual(list(hair.GetTimeSamples()), [0.0, 1.0, 2.0])
+        self.assertEqual(first.hairs, second.hairs)
+        lifted = np.asarray(hair.Get(2.0)) - np.asarray(hair.Get(0.0))
+        self.assertGreater(float(lifted[:, 1].mean()), 0.0)
 
 
 class FakeBlender:

@@ -96,13 +96,13 @@ class DeterminismTest(unittest.TestCase):
             self.assertIn({"name": "hero_groom", "first_id": 3, "count": 1}, record["instance_ids"])
 
     def test_every_tagged_surface_carries_the_roles_of_its_manifest_id_range(self) -> None:
-        with TemporaryDirectory() as tmp:
-            directory = build(Path(tmp), ShotSpec(seed=7))
-            record = json.loads((directory / "manifest.json").read_text())
-            stage = Usd.Stage.Open(str(directory / "scene" / "shot.usda"))
-            self.assertEqual(audit.tag_errors(stage, record["instance_ids"]), [])
-            names = {r["name"] for r in record["instance_ids"]}
-            self.assertLessEqual({"sky", "terrain", "hero_skin", "hero_groom"}, names)
+        tmp = self.enterContext(TemporaryDirectory())
+        directory = build(Path(tmp), ShotSpec(seed=7))
+        record = json.loads((directory / "manifest.json").read_text())
+        stage = Usd.Stage.Open(str(directory / "scene" / "shot.usda"))
+        self.assertEqual(audit.tag_errors(stage, record["instance_ids"]), [])
+        names = {r["name"] for r in record["instance_ids"]}
+        self.assertLessEqual({"sky", "terrain", "hero_skin", "hero_groom"}, names)
 
     def test_different_seeds_differ(self) -> None:
         with TemporaryDirectory() as tmp:

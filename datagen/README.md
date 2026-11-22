@@ -61,6 +61,13 @@ python ../contract/dataset/validate.py BUILD/shots/*
 ./check.sh                                                       # ruff, pyright, layer and identifier checks, tests
 ```
 
+Set `TMPDIR` to the scratch filesystem when checking filesystem-specific behavior.
+USD test stages and their layer/value references must be released before deleting
+binary layer files: USD can retain memory mappings after closing file descriptors.
+Tests retaining these objects as method locals use
+`self.enterContext(TemporaryDirectory())`, so cleanup runs after the method returns.
+This avoids FUSE hidden-unlink files without retrying or suppressing cleanup failures.
+
 `creatures.json` lists creature recipes (Infinigen factory and seed, or a glTF model and animation,
 poses, body length, coat classes, provenance); see `strata_datagen/library/creatures.py`. Install
 Infinigen in its own Python 3.11 environment (`INFINIGEN_MINIMAL_INSTALL=True uv pip install -e

@@ -252,31 +252,31 @@ class StaticTagTest(unittest.TestCase):
 
 class BuildAuditTest(unittest.TestCase):
     def test_a_built_scene_with_a_missing_role_primvar_gets_no_manifest(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            lib = library()
-            hero_files(root, lib)
-            shot = compose.plan(ShotSpec(seed=7), lib, root)
-            path = compose.write(shot, lib, root, RENDER)
-            stage = Usd.Stage.Open(str(path))
-            stage.GetPrimAtPath("/World/hero/skin").RemoveProperty("primvars:hero")
-            stage.GetRootLayer().Save()
-            with self.assertRaisesRegex(ValueError, "/World/hero/skin: no authored hero"):
-                export.write(shot, lib, RENDER)
-            self.assertFalse((shot.directory / "manifest.json").exists())
-            self.assertFalse((shot.directory / "camera.json").exists())
+        tmp = self.enterContext(TemporaryDirectory())
+        root = Path(tmp)
+        lib = library()
+        hero_files(root, lib)
+        shot = compose.plan(ShotSpec(seed=7), lib, root)
+        path = compose.write(shot, lib, root, RENDER)
+        stage = Usd.Stage.Open(str(path))
+        stage.GetPrimAtPath("/World/hero/skin").RemoveProperty("primvars:hero")
+        stage.GetRootLayer().Save()
+        with self.assertRaisesRegex(ValueError, "/World/hero/skin: no authored hero"):
+            export.write(shot, lib, RENDER)
+        self.assertFalse((shot.directory / "manifest.json").exists())
+        self.assertFalse((shot.directory / "camera.json").exists())
 
     def test_a_built_scene_with_a_time_sampled_hero_role_gets_no_manifest(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            lib = library()
-            hero_files(root, lib)
-            shot = compose.plan(ShotSpec(seed=7), lib, root)
-            path = compose.write(shot, lib, root, RENDER)
-            stage = Usd.Stage.Open(str(path))
-            _primvar(stage, "/World/hero/skin", "hero").Set(0.0, 1.0)
-            stage.GetRootLayer().Save()
-            with self.assertRaisesRegex(ValueError, "/World/hero/skin: hero has time samples"):
-                export.write(shot, lib, RENDER)
-            self.assertFalse((shot.directory / "manifest.json").exists())
-            self.assertFalse((shot.directory / "camera.json").exists())
+        tmp = self.enterContext(TemporaryDirectory())
+        root = Path(tmp)
+        lib = library()
+        hero_files(root, lib)
+        shot = compose.plan(ShotSpec(seed=7), lib, root)
+        path = compose.write(shot, lib, root, RENDER)
+        stage = Usd.Stage.Open(str(path))
+        _primvar(stage, "/World/hero/skin", "hero").Set(0.0, 1.0)
+        stage.GetRootLayer().Save()
+        with self.assertRaisesRegex(ValueError, "/World/hero/skin: hero has time samples"):
+            export.write(shot, lib, RENDER)
+        self.assertFalse((shot.directory / "manifest.json").exists())
+        self.assertFalse((shot.directory / "camera.json").exists())

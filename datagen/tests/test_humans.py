@@ -210,31 +210,29 @@ class HumanUsdTest(unittest.TestCase):
         times = np.array([-0.25, 0.0, 0.25, 0.75, 1.0])
         samples = {"body": part.rest[None] + times[:, None, None] * np.array([1.0, 0.0, 0.0])}
         look = materials.Look(materials.Textures("albedo.jpg"), subsurface=0.3, subsurface_scale_m=0.01)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "clip.usdc"
-            human_usd.write(
-                path,
-                parts=[part],
-                samples=samples,
-                times=times,
-                looks={"body": look},
-                regions={"scalp": np.array([1.0, 0.5, 0.5, 0.0])},
-            )
-            stage = Usd.Stage.Open(str(path))
-            mesh = UsdGeom.Mesh(stage.GetPrimAtPath("/hero/body"))
-            self.assertEqual(mesh.GetPointsAttr().GetTimeSamples(), list(times))
-            np.testing.assert_allclose(
-                np.asarray(mesh.GetPointsAttr().Get(0.25))[:, 0], part.rest[:, 0] + 0.25
-            )
-            rest = UsdGeom.PrimvarsAPI(mesh).GetPrimvar(human_usd.REST_PRIMVAR).Get()
-            np.testing.assert_allclose(np.asarray(rest), part.rest)
-            self.assertEqual(regions.names(mesh), ("scalp",))
-            np.testing.assert_allclose(regions.read(mesh, ("scalp",))["scalp"], [1.0, 0.5, 0.5, 0.0])
-            self.assertFalse(UsdGeom.Subset.GetAllGeomSubsets(mesh))
-            bound = UsdShade.MaterialBindingAPI(mesh.GetPrim()).ComputeBoundMaterial()[0]
-            surface = bound.GetPrim().GetChild("surface")
-            self.assertAlmostEqual(surface.GetAttribute("inputs:subsurface").Get(), 0.3, places=6)
-            self.assertTrue(surface.GetAttribute("inputs:subsurface_color").HasAuthoredConnections())
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        path = Path(tmp) / "clip.usdc"
+        human_usd.write(
+            path,
+            parts=[part],
+            samples=samples,
+            times=times,
+            looks={"body": look},
+            regions={"scalp": np.array([1.0, 0.5, 0.5, 0.0])},
+        )
+        stage = Usd.Stage.Open(str(path))
+        mesh = UsdGeom.Mesh(stage.GetPrimAtPath("/hero/body"))
+        self.assertEqual(mesh.GetPointsAttr().GetTimeSamples(), list(times))
+        np.testing.assert_allclose(np.asarray(mesh.GetPointsAttr().Get(0.25))[:, 0], part.rest[:, 0] + 0.25)
+        rest = UsdGeom.PrimvarsAPI(mesh).GetPrimvar(human_usd.REST_PRIMVAR).Get()
+        np.testing.assert_allclose(np.asarray(rest), part.rest)
+        self.assertEqual(regions.names(mesh), ("scalp",))
+        np.testing.assert_allclose(regions.read(mesh, ("scalp",))["scalp"], [1.0, 0.5, 0.5, 0.0])
+        self.assertFalse(UsdGeom.Subset.GetAllGeomSubsets(mesh))
+        bound = UsdShade.MaterialBindingAPI(mesh.GetPrim()).ComputeBoundMaterial()[0]
+        surface = bound.GetPrim().GetChild("surface")
+        self.assertAlmostEqual(surface.GetAttribute("inputs:subsurface").Get(), 0.3, places=6)
+        self.assertTrue(surface.GetAttribute("inputs:subsurface_color").HasAuthoredConnections())
 
 
 if __name__ == "__main__":
