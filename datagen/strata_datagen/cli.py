@@ -2,12 +2,11 @@
 
 import argparse
 import json
-import shutil
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
-from strata_datagen import files
+from strata_datagen import files, shotlock
 from strata_datagen.library import build as library_build
 from strata_datagen.library import catalogue, creatures, fetch, humans, morph
 from strata_datagen.presets import PRESETS
@@ -73,8 +72,10 @@ def cmd_build(args: argparse.Namespace) -> None:
     jobs: list[husk.Job] = []
     for spec in _specs(args):
         shot = compose.plan(spec, library, args.root, args.frames)
-        compose.write(shot, library, args.root, render)
-        export.write(shot, library, render)
+        shot.directory.mkdir(parents=True, exist_ok=True)
+        with shotlock.held(shot.directory):
+            compose.write(shot, library, args.root, render)
+            export.write(shot, library, render)
         jobs += husk.jobs(shot.directory, args.root, shot.frames, args.chunk)
         print("built", spec.shot_id, shot.track.move, shot.light.hdri.key, flush=True)
     husk.write_job_list(args.root, jobs)
@@ -96,13 +97,16 @@ def cmd_render(args: argparse.Namespace) -> None:
     for job in jobs:
         if args.shots and job.shot_id not in args.shots:
             continue
-        timings = husk.run(args.root, job, args.husk)
+        directory = args.root / job.workdir
+        with shotlock.held(directory):
+            timings = husk.run(args.root, job, args.husk)
         if timings["exit_code"] == 0:
             timings["post_passed"] = _post(args.root, job)
-        manifest_path = args.root / job.workdir / "manifest.json"
-        manifest = export.load_json(manifest_path)
-        manifest["timings"] = timings
-        files.write_text(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+        with shotlock.held(directory):
+            manifest_path = directory / "manifest.json"
+            manifest = export.load_json(manifest_path)
+            manifest["timings"] = timings
+            files.write_text(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
         print("rendered", job.shot_id, timings["device"], timings["mean_frame_seconds"], flush=True)
 
 
@@ -140,19 +144,26 @@ def _label(shot: Path) -> str:
     return f"{shot.name}  {cam['move']}  {cam['focal_length_mm']:.0f}mm  {flags}"
 
 
-def cmd_qa(args: argparse.Namespace) -> None:
-    shots = sorted(p for p in (args.root / "shots").iterdir() if (p / "manifest.json").exists())
-    results = [checks.check_shot(shot) for shot in shots]
-    for shot, result in zip(shots, results, strict=True):
+def _review(shot: Path, rejected: Path) -> tuple[Path, dict[str, object], str]:
+    with shotlock.held(shot) as hold:
+        result = checks.check_shot(shot)
         files.write_text(shot / "qa.json", json.dumps(result, indent=1) + "\n")
-    contact.build([(s, _label(s)) for s in shots], args.root / "contact_sheet.jpg")
-    report = [{k: r[k] for k in ("shot_id", "passed", "failures", "mean_metrics")} for r in results]
-    files.write_text(args.root / "qa_report.json", json.dumps(report, indent=1) + "\n")
-    rejected = args.root / "rejected"
-    for shot, result in zip(shots, results, strict=True):
+        label = _label(shot)
         if not result["passed"]:
             rejected.mkdir(exist_ok=True)
-            shutil.move(shot, rejected / shot.name)
+            hold.move(rejected / shot.name)
+        return hold.location, result, label
+
+
+def cmd_qa(args: argparse.Namespace) -> None:
+    shots = sorted(p for p in (args.root / "shots").iterdir() if (p / "manifest.json").exists())
+    rejected = args.root / "rejected"
+    reviews = [_review(shot, rejected) for shot in shots]
+    contact.build([(location, label) for location, _, label in reviews], args.root / "contact_sheet.jpg")
+    results = [result for _, result, _ in reviews]
+    report = [{k: r[k] for k in ("shot_id", "passed", "failures", "mean_metrics")} for r in results]
+    files.write_text(args.root / "qa_report.json", json.dumps(report, indent=1) + "\n")
+    for shot, result in zip(shots, results, strict=True):
         failures = cast("list[str]", result["failures"])
         print(shot.name, "PASS" if result["passed"] else "FAIL", failures[:3], flush=True)
 

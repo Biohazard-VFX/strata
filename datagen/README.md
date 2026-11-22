@@ -24,8 +24,8 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   frame (`strata_contract.layers`, in `../contract/dataset`) and raw-sample sidecars on the deep
   stride. It never deletes: `accept` runs raw QA per frame and records it, then `prune` drops
   off-stride raw deep of accepted, unchanged frames only. Sidecars are write-once; to repack a
-  changed frame, stop every reader and run `remove-samples` first. One process writes a shot at a
-  time (`<shot>/.lock`).
+  changed frame, stop every reader and run `remove-samples` first. Every command that changes a shot (build, render, pack,
+  accept, prune, remove-samples, qa) holds `<shot>/.lock`; a locked shot is refused, not waited for.
 - `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).
 - `blender/`: FBX to USD conversion, MPFB human export and creature export, run inside Blender.
 

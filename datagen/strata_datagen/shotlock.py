@@ -3,7 +3,8 @@
 The lock file is created whole and exclusively (a hard link of a written temporary, which fails if
 it exists). A lock is broken only when its owner is verifiably dead: same host, and another boot or
 no live process with the recorded pid and start time. Breaking is serialized by `flock` on the shot
-directory, so no two processes break the same lock.
+directory, so no two processes break the same lock. The lock file lives inside the shot, so a shot
+moved while held takes its lock along and releases it at the new place.
 """
 
 import fcntl
@@ -102,8 +103,20 @@ def _acquire(shot: Path, temporary: Path) -> None:
             raise _refusal(shot, cast("dict[str, object]", json.loads(lock.read_text())))
 
 
+class Hold:
+    """A held shot lock; `location` follows the shot when `move` renames it."""
+
+    def __init__(self, shot: Path) -> None:
+        self.location = shot
+
+    def move(self, destination: Path) -> None:
+        """Rename the shot, lock file inside, to the absent `destination` on the same filesystem."""
+        self.location.rename(destination)
+        self.location = destination
+
+
 @contextmanager
-def held(shot: Path) -> Generator[None]:
+def held(shot: Path) -> Generator[Hold]:
     """Hold the shot's writer lock for the block; raise ShotLockedError when another owner has it."""
     temporary = shot / f"{LOCK}.{os.getpid()}.{secrets.token_hex(4)}"
     temporary.write_text(json.dumps(owner(), sort_keys=True) + "\n")
@@ -111,7 +124,8 @@ def held(shot: Path) -> Generator[None]:
         _acquire(shot, temporary)
     finally:
         temporary.unlink()
+    hold = Hold(shot)
     try:
-        yield
+        yield hold
     finally:
-        (shot / LOCK).unlink()
+        (hold.location / LOCK).unlink()
