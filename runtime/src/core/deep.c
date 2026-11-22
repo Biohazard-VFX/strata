@@ -67,7 +67,7 @@ int strata_depth_to_deep(const struct strata_image *image,
 
 	if (!deep)
 		return strata_fail(err, "missing deep output");
-	memset(deep, 0, sizeof(*deep));
+	strata_deep_free(deep);
 	if (!image || !image->rgba || !depth || !depth->network_inverse_depth ||
 	    image->width != depth->width || image->height != depth->height)
 		return strata_fail(err, "colour/depth dimensions differ");
@@ -139,7 +139,7 @@ int strata_deep_to_layers(const struct strata_deep_result *deep, int count,
 
 	if (!layers)
 		return strata_fail(err, "missing layer output");
-	memset(layers, 0, sizeof(*layers));
+	strata_layers_free(layers);
 	if (count < 1)
 		return strata_fail(err, "layer count must be positive");
 	if (strata_deep_validate(deep, err))

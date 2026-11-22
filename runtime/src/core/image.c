@@ -132,9 +132,11 @@ int strata_image_read(const char *path, struct strata_image *image,
 	FILE *file;
 	size_t count;
 
-	if (!path || !image)
-		return strata_fail(err, "null image path/output");
-	memset(image, 0, sizeof(*image));
+	if (!image)
+		return strata_fail(err, "missing image output");
+	strata_image_free(image);
+	if (!path)
+		return strata_fail(err, "missing image path");
 	file = fopen(path, "rb");
 	if (!file)
 		return strata_fail(err, "cannot open image: %s", path);

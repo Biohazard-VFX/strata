@@ -50,15 +50,15 @@ static void layers_test(void)
 		}
 	}
 	EXPECT(layers.frame.index == 42 && layers.frame.linear == 1);
-	strata_layers_free(&layers);
 	z[2] = 1;
 	if (!EXPECT(strata_deep_to_layers(&deep, 3, &layers, &err) == 0))
 		goto out;
 	EXPECT(layers.rgba[4] == rgba[4] && layers.rgba[28] == rgba[8]);
-	strata_layers_free(&layers);
 	z[2] = 2;
 	counts[1] = 4;
 	EXPECT(strata_deep_to_layers(&deep, 1, &layers, &err) == -1);
+	EXPECT(!layers.present && !layers.rgba && !layers.z &&
+	       !layers.layer_count);
 	counts[1] = 3;
 	EXPECT(strata_deep_to_layers(&deep, 0, &layers, &err) == -1);
 	EXPECT(strata_deep_to_layers(NULL, 1, &layers, &err) == -1);
@@ -106,11 +106,14 @@ static void conversion_test(void)
 	EXPECT(deep.rgba[7] == 1 && deep.z[1] == INFINITY);
 	EXPECT(deep.z[0] == 2 && deep.zback[0] == 2 &&
 	       deep.zback[1] == INFINITY);
-	strata_deep_free(&deep);
-	strata_deep_free(&deep);
+	z[0] = 500;
+	if (EXPECT(strata_depth_to_deep(&image, &depth, &deep, &err) == 0))
+		EXPECT(deep.z[0] == 1 && deep.rgba[0] == -1);
 	z[0] = NAN;
 	EXPECT(strata_depth_to_deep(&image, &depth, &deep, &err) == -1);
-	EXPECT(!deep.counts && !deep.rgba && !deep.z && !deep.zback);
+	EXPECT(!deep.counts && !deep.rgba && !deep.z && !deep.zback &&
+	       !deep.sample_count);
+	strata_deep_free(&deep);
 	depth.width = 1;
 	EXPECT(strata_depth_to_deep(&image, &depth, &deep, &err) == -1);
 out:

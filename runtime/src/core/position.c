@@ -137,7 +137,7 @@ int strata_unproject_depth(const struct strata_result *depth,
 
 	if (!positions)
 		return strata_fail(err, "missing position output");
-	memset(positions, 0, sizeof(*positions));
+	strata_positions_free(positions);
 	if (!depth || !depth->network_inverse_depth)
 		return strata_fail(err, "missing network inverse depth");
 	if (strata_dimensions(depth->width, depth->height, err))
@@ -164,7 +164,7 @@ int strata_unproject_layers(const struct strata_layers *layers,
 
 	if (!positions)
 		return strata_fail(err, "missing position output");
-	memset(positions, 0, sizeof(*positions));
+	strata_positions_free(positions);
 	if (!layers || !layers->z || !layers->present ||
 	    layers->layer_count < 1)
 		return strata_fail(err, "missing layer depth/presence input");
@@ -196,7 +196,7 @@ int strata_unproject_deep(const struct strata_deep_result *deep,
 
 	if (!positions)
 		return strata_fail(err, "missing position output");
-	memset(positions, 0, sizeof(*positions));
+	strata_positions_free(positions);
 	if (strata_deep_validate(deep, err))
 		return -1;
 	if (allocate_positions(deep->width, deep->height, deep->sample_count,

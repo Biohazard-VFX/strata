@@ -14,6 +14,7 @@
 - Non-finite input samples clamp after exposure (+inf to 1, NaN and -inf to 0); each result reports how many pixels were affected.
 - Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
 - `strata_run` infers one frame; temporal inference will be a separate stream API rather than a frame count on this call.
+- Filled outputs take a zeroed or previously filled object, free its old contents first and hold nothing on failure, so hosts reuse them per frame.
 - Results keep only the network output; camera-Z and inverse metres are derived from it and the resolved camera by accessors and writers.
 - Focal source is explicit: provided needs positive fx/fy, estimated takes zero intrinsics and is resolved by the model; unset is rejected.
 - Exports bake ORT basic-level transforms, stride==kernel ConvTranspose as 1x1 Conv+DepthToSpace and fused RotaryEmbedding.

@@ -48,10 +48,10 @@ static int read_inputs(const char *directory, const float *expected)
 				}
 			}
 		}
-		strata_image_free(&image);
 	}
 	snprintf(path, sizeof(path), "%s/missing.exr", directory);
-	if (strata_image_read(path, &image, &err) != -1 || image.rgba)
+	if (strata_image_read(path, &image, &err) != -1 || image.rgba ||
+	    image.width)
 		goto out;
 	ret = 0;
 out:

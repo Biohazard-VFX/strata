@@ -75,6 +75,14 @@ static void provided(strata_context *ctx, float *network)
 	EXPECT(camera->sensor_width_mm == 36 && camera->sensor_height_mm == 24);
 	EXPECT(camera->focal_source == STRATA_FOCAL_PROVIDED);
 	EXPECT(result.nonfinite_input_pixels == 0);
+	frame.camera.fx_px = 200;
+	if (EXPECT(!strata_run(ctx, &frame, &result, &err)))
+		EXPECT(camera->fx_px == 200 &&
+		       result.network_inverse_depth[0] == *network);
+	frame.camera.focal_source = STRATA_FOCAL_UNSET;
+	EXPECT(strata_run(ctx, &frame, &result, &err) == -1);
+	EXPECT(!result.network_inverse_depth && !result.width &&
+	       !result.frame.camera.fx_px);
 	strata_result_free(&result);
 }
 

@@ -599,9 +599,11 @@ static int infer(strata_context *ctx, const struct strata_frame *frame,
 int strata_run(strata_context *ctx, const struct strata_frame *frame,
 	       struct strata_result *result, struct strata_error *err)
 {
-	if (!ctx || !frame || !result)
+	if (!result)
+		return strata_fail(err, "missing result output");
+	strata_result_free(result);
+	if (!ctx || !frame)
 		return strata_fail(err, "invalid run arguments");
-	memset(result, 0, sizeof(*result));
 	if (!frame->image || !frame->image->rgba ||
 	    !isfinite(frame->exposure_stops) ||
 	    !isfinite(frame->timestamp_seconds))

@@ -44,12 +44,10 @@ static void plane_test(void)
 		for (size_t i = 0; i < 4; ++i)
 			EXPECT(positions.valid[i] == 1);
 	}
-	strata_positions_free(&positions);
 	if (EXPECT(!strata_unproject_depth(&depth, NULL, &pose, &positions,
 					   &err)))
 		EXPECT(positions.space == STRATA_SPACE_WORLD &&
 		       !memcmp(positions.xyz, world, sizeof(world)));
-	strata_positions_free(&positions);
 	if (EXPECT(!strata_unproject_depth(&depth, &wider, NULL, &positions,
 					   &err)))
 		EXPECT(!memcmp(positions.xyz, scaled, sizeof(scaled)) &&
@@ -78,7 +76,6 @@ static void deep_layers_test(void)
 		EXPECT(positions.layout == STRATA_POSITION_DEEP &&
 		       positions.point_count == 2 &&
 		       !memcmp(positions.xyz, expected, sizeof(expected)));
-	strata_positions_free(&positions);
 	if (!EXPECT(!strata_deep_to_layers(&deep, 3, &layers, &err)))
 		return;
 	layers.z[1] = 2;
@@ -112,10 +109,10 @@ static void invalid_test(void)
 			       !positions.xyz[i * 3 + 1] &&
 			       !positions.xyz[i * 3 + 2]);
 	}
-	strata_positions_free(&positions);
 	depth.frame.camera.fx_px = 0;
 	EXPECT(strata_unproject_depth(&depth, NULL, NULL, &positions, &err) ==
 	       -1);
+	EXPECT(!positions.xyz && !positions.valid && !positions.point_count);
 	depth.frame.camera.fx_px = 2;
 	depth.frame.camera.focal_source = STRATA_FOCAL_UNSET;
 	EXPECT(strata_unproject_depth(&depth, NULL, NULL, &positions, &err) ==

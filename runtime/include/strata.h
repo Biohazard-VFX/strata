@@ -10,6 +10,8 @@ extern "C" {
 
 /* Calls without a context are reentrant on distinct output objects. */
 
+/* Filled outputs: zeroed or a prior output (freed first); empty on failure. */
+
 /* Owns sessions and scratch; serialize calls, contexts are independent. */
 typedef struct strata_context strata_context;
 
@@ -150,7 +152,7 @@ void strata_close(strata_context *ctx);
 const char *strata_provider(const strata_context *ctx);
 /* Why auto fell back to CPU, or ""; borrowed until strata_close. */
 const char *strata_fallback_reason(const strata_context *ctx);
-/* Fills a zero-initialized result; it holds nothing after a failure. */
+/* Fills result; see the filled-output rule above. */
 int strata_run(strata_context *ctx, const struct strata_frame *frame,
 	       struct strata_result *result, struct strata_error *err);
 /* Metric values derived from one pixel of the network output. */
@@ -166,7 +168,7 @@ void strata_image_free(struct strata_image *image);
 int strata_camera_read(const char *path, struct strata_camera *camera,
 		       struct strata_pose *pose, int *has_pose,
 		       struct strata_error *err);
-/* Overwrite positions; a NULL camera uses the input's resolved camera. */
+/* Fill positions; a NULL camera uses the input's resolved camera. */
 int strata_unproject_depth(const struct strata_result *depth,
 			   const struct strata_camera *camera,
 			   const struct strata_pose *pose,
@@ -183,13 +185,13 @@ int strata_unproject_deep(const struct strata_deep_result *deep,
 			  struct strata_positions *positions,
 			  struct strata_error *err);
 void strata_positions_free(struct strata_positions *positions);
-/* Overwrites deep with copies of the image RGB and derived camera-Z. */
+/* Fills deep with copies of the image RGB and derived camera-Z. */
 int strata_depth_to_deep(const struct strata_image *image,
 			 const struct strata_result *depth,
 			 struct strata_deep_result *deep,
 			 struct strata_error *err);
 void strata_deep_free(struct strata_deep_result *deep);
-/* Overwrites layers with the nearest count samples of each pixel. */
+/* Fills layers with the nearest count samples of each pixel. */
 int strata_deep_to_layers(const struct strata_deep_result *deep, int count,
 			  struct strata_layers *layers,
 			  struct strata_error *err);
