@@ -10,7 +10,7 @@ from strata_datagen import files
 from strata_datagen.generators import camera, groom, hero, lighting, materials, scatter, terrain
 from strata_datagen.library.catalogue import Library, Provenance
 from strata_datagen.render import settings
-from strata_datagen.scene.compose import FIRST_SCATTER_ID, TERRAIN_ID, RenderParams, Shot
+from strata_datagen.scene.compose import FIRST_SCATTER_ID, TERRAIN_ID, RenderParams, Shot, samples_for
 from strata_datagen.scene.spec import RECIPE_VERSION
 
 CONTRACT_VERSION = "strata-dataset-0.1.0"
@@ -131,7 +131,7 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
             "renderer": "Karma XPU",
             "width": render.width,
             "height": render.height,
-            "path_traced_samples": render.path_traced_samples,
+            "path_traced_samples": samples_for(render.path_traced_samples, shot.track),
             "frames": [shot.frames[0], shot.frames[-1]],
             "aovs": [a.name for a in settings.BEAUTY_AOVS],
             "deep_aovs": list(settings.DEEP_AOVS),

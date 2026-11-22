@@ -4,10 +4,11 @@
 - Materials are MaterialX standard_surface UsdShade networks on `outputs:mtlx:surface`; node ids and inputs are validated against the MaterialX library.
 - Roughness and metallic AOVs are `inputs:aov:<name>` on the surface shader, rendered as raw render vars.
 - Camera-space normals come from Karma's `ray:hitN_camera`: x right, y up, +Z towards the viewer.
-- Deep carries `C` and `instance_id`; ids are alpha-premultiplied like colour, so a sample's id is `round(id / A)`.
-- Deep uses Karma's default compression (level 5); uncompressed deep is too large for datasets at 1280x720.
+- Deep carries `C`, `instance_id` and a float `coverage` (constant 1, premultiplied like the id); id = round(instance_id / coverage), since Karma stores A as half.
+- Deep uses Karma compression 5: against 0 it moves K=4 layer alpha by 3e-4 on partial pixels and saves 20% (measured; ids are decoded via coverage).
+- Beauty carries a raw `C` (the deep flattens to it, targets stay raw) and an OIDN-denoised `denoised` copy (albedo and normal guides) as the model input.
 - Beauty, AOVs and deep share a one-pixel box filter so the flattened deep reproduces the beauty.
-- Beauty EXRs are multi-part, one part per AOV, ZIPS-compressed.
+- Beauty EXRs are multi-part, one part per AOV, ZIPS-compressed; no LPE lighting splits (unused by training, 43% of beauty size).
 - Every product name is time-sampled per frame; outputs never rely on `$F` expansion.
 - Camera focal length and apertures are authored in tenths of a scene unit (mm / 100 at metres), per UsdGeomCamera.
 - Dome lights set `inputs:karma:light:renderlightgeo` so the HDRI is visible to camera rays.
@@ -15,7 +16,7 @@
 - Each HDRI's sun is cut into a distant light whose intensity is the measured irradiance (Karma's distant-light unit).
 - Shots are normalised to a fixed horizontal irradiance (sky plus sun) so exposure is comparable across HDRIs.
 - Camera-visible skies use 8K outdoor HDRIs resampled to 4K.
-- Path-traced samples default to 64 per pixel.
+- Path-traced samples: 64, doubled when a shot has depth of field or motion blur, so per-layer alpha and RGB error match a still shot.
 - FBX models are converted in Blender, then merged into one Y-up metre mesh per variation, footprint-centred on y = 0.
 - Megascans maps are stored at most 2K, 8-bit: sRGB albedo, raw normal, roughness and opacity; EXR albedo is linear.
 - Ground surfaces are natural Megascans surfaces only; asphalt, concrete, metal and wood are excluded.

@@ -1,10 +1,11 @@
 """UsdRender settings for Karma: beauty with AOVs and a deep (DCM) product, one file per frame."""
 
+import json
 from dataclasses import dataclass
 
 from pxr import Gf, Sdf, Usd, UsdRender
 
-VERSION = "render-settings-0.1.0"
+VERSION = "render-settings-0.2.0"
 SETTINGS_PATH = "/Render/settings"
 
 
@@ -21,17 +22,18 @@ class Aov:
 BEAUTY_AOVS = (
     Aov("C", "lpe", "C.*[LO]", "color4f", "color4h"),
     Aov("albedo", "lpe", "CDA", "color3f", "color3h"),
-    Aov("N", "raw", "ray:hitN_camera", "normal3f", "float3"),
+    Aov("N", "raw", "ray:hitN_camera", "normal3f", "half3"),
     Aov("roughness", "raw", "roughness", "float", "half"),
     Aov("metallic", "raw", "metallic", "float", "half"),
-    Aov("diffuse_direct", "lpe", "C<RD>L", "color3f", "color3h"),
-    Aov("diffuse_indirect", "lpe", "C<RD>.+L", "color3f", "color3h"),
-    Aov("specular_direct", "lpe", "C<R[GS]>L", "color3f", "color3h"),
-    Aov("specular_indirect", "lpe", "C<R[GS]>.+L", "color3f", "color3h"),
     Aov("Z", "raw", "ray:hitPz", "float", "float", '["minmax",{"mode":"zmin"}]'),
     Aov("instance_id", "primvar", "instance_id", "int", "float", '["minmax",{"mode":"zmin"}]'),
+    Aov("denoised", "lpe", "C.*[LO]", "color4f", "color4h"),
+    Aov("coverage", "primvar", "coverage", "float", "float"),
 )
-DEEP_AOVS = ("C", "instance_id")
+DENOISER = json.dumps(
+    [["denoise", {"engine": "oidn", "use_albedo_input": True, "use_n_input": True, "aovs": ["denoised"]}]]
+)
+DEEP_AOVS = ("C", "instance_id", "coverage")
 DEEP_COMPRESSION = 5
 
 
@@ -97,6 +99,7 @@ def _karma(settings: UsdRender.Settings, config: RenderConfig) -> None:
         ("karma:global:pathtracedsamples", Sdf.ValueTypeNames.Int, config.path_traced_samples),
         ("karma:global:abortnogpudevice", Sdf.ValueTypeNames.Bool, True),
         ("karma:global:pixelfilter", Sdf.ValueTypeNames.String, "box"),
+        ("karma:global:imagefilter", Sdf.ValueTypeNames.String, DENOISER),
         ("karma:global:pixelfilterscale", Sdf.ValueTypeNames.Float, 1.0),
         ("karma:object:xformsamples", Sdf.ValueTypeNames.Int, 3),
         ("karma:object:geosamples", Sdf.ValueTypeNames.Int, 1),

@@ -7,6 +7,7 @@ from strata_datagen.fields import Ground
 from strata_datagen.generators import camera
 from strata_datagen.qa import checks
 from strata_datagen.rng import stream
+from strata_datagen.scene import compose
 
 
 class CurveTest(unittest.TestCase):
@@ -48,6 +49,16 @@ class CameraPathTest(unittest.TestCase):
             self.assertGreater(float(np.ptp(track.frame_lenses()[:, 1])), 1.0)
             records[300]["fstop"] = 40.0
             self.assertGreater(checks.camera_steps(records)["fstop"], checks.STEP_LIMITS["fstop"])
+
+
+class SamplesTest(unittest.TestCase):
+    def test_depth_of_field_or_motion_blur_doubles_the_samples(self) -> None:
+        ground = Ground(np.zeros((41, 41)), 0.5, {})
+        target = np.array([0.0, 0.4, 0.0])
+        for dof, blur, expected in ((False, False, 64), (True, False, 128), (False, True, 128)):
+            choices = camera.CameraChoices(move="locked", depth_of_field=dof, motion_blur=blur)
+            track = camera.sample(stream(1, "c"), ground, target, 1.6, frames=(1, 2), choices=choices)
+            self.assertEqual(compose.samples_for(64, track), expected)
 
 
 if __name__ == "__main__":

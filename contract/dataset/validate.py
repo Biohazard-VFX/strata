@@ -18,13 +18,10 @@ BEAUTY = {
     "N": {"N.x", "N.y", "N.z"},
     "roughness": {"roughness.roughness"},
     "metallic": {"metallic.metallic"},
-    "diffuse_direct": {"diffuse_direct.R", "diffuse_direct.G", "diffuse_direct.B"},
-    "diffuse_indirect": {"diffuse_indirect.R", "diffuse_indirect.G", "diffuse_indirect.B"},
-    "specular_direct": {"specular_direct.R", "specular_direct.G", "specular_direct.B"},
-    "specular_indirect": {"specular_indirect.R", "specular_indirect.G", "specular_indirect.B"},
     "Z": {"Z.Z"},
     "instance_id": {"instance_id.instance_id"},
     "denoised": {"denoised.R", "denoised.G", "denoised.B", "denoised.A"},
+    "coverage": {"coverage.coverage"},
 }
 DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id", "coverage"}
 LAYERS = {f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B")}

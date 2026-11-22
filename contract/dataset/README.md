@@ -63,11 +63,10 @@ Multi-part scanline EXR, one part per AOV, all at the camera resolution:
 | `N` | `N.x/y/z` | shading normal in camera space (half) |
 | `roughness` | `roughness.roughness` | specular roughness of the front surface |
 | `metallic` | `metallic.metallic` | metalness of the front surface |
-| `diffuse_direct`, `diffuse_indirect` | `<part>.R/G/B` | diffuse lighting split (LPE `C<RD>L`, `C<RD>.+L`) |
-| `specular_direct`, `specular_indirect` | `<part>.R/G/B` | glossy/specular reflection split |
 | `Z` | `Z.Z` | camera-plane depth of the nearest surface (float, min filter) |
 | `instance_id` | `instance_id.instance_id` | id of the nearest surface (float holding an integer) |
 | `denoised` | `denoised.R/G/B/A` | `C` denoised by OIDN with albedo and normal guides: the model input; targets stay raw |
+| `coverage` | `coverage.coverage` | geometry coverage of the pixel (float; 0 where only the sky is seen) |
 
 ## layers/NNNN.exr
 
@@ -81,13 +80,16 @@ temporal training.
 
 ## deep/NNNN.exr
 
-Single-part deep scanline EXR with channels `R G B A Z ZBack instance_id`, float, one sample list
-per pixel, samples unsorted. `R G B` are premultiplied by `A`. `instance_id` is premultiplied by
-`A` as well: the integer id of a sample is `round(instance_id / A)`. Karma merges samples of the
-same surface that lie within 1 mm in depth (deep compression 5), so a sample can stand for several
-pixel samples; ZBack - Z stays at most about 1 mm for surfaces. Fully occluded surfaces are not
-stored. Beauty and deep share a one-pixel box filter: compositing the samples front to back
-reproduces the beauty `C` part (mean absolute difference about 4e-5).
+Single-part deep scanline EXR with channels `R G B A` (half), `Z ZBack instance_id coverage`
+(float), one sample list per pixel, samples unsorted. `R G B` are premultiplied by `A`.
+`instance_id` and `coverage` (a constant 1 per surface) are premultiplied by the sample's alpha at
+float precision, so the integer id of a sample is `round(instance_id / coverage)`; do not divide by
+the half `A`, which is off by up to id x 2^-11. Karma merges samples of the same surface that lie
+within 1 mm in depth (deep compression 5), so a sample can stand for several pixel samples, and a
+merge across two surfaces gives a non-integer id. ZBack - Z stays at most about 1 mm for surfaces.
+Fully occluded surfaces are not stored. Beauty and deep share a one-pixel box filter: compositing
+the samples front to back reproduces the beauty `C` part where the deep covers the pixel (mean
+absolute difference about 2e-5); where the sky shows, the beauty adds it behind the deep.
 
 Instance ids: 0 is sky (no deep sample), 1 terrain, 2 hero skin, 3 hero groom (hair or fur),
 1000 and up are scattered instances; `manifest.instance_ids` maps every id to its layer.

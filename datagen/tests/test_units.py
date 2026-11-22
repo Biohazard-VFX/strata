@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -150,6 +151,12 @@ class SettingsTest(unittest.TestCase):
             [p.name for p in deep.GetRelationship("orderedVars").GetTargets()], list(settings.DEEP_AOVS)
         )
         self.assertEqual(deep.GetAttribute("productName").Get(2), "deep/0002.exr")
+        filters = json.loads(prim.GetAttribute("karma:global:imagefilter").Get())
+        self.assertEqual(filters[0][1]["aovs"], ["denoised"])
+        names = {aov.name: aov for aov in settings.BEAUTY_AOVS}
+        self.assertEqual(names["denoised"].source_name, names["C"].source_name)
+        self.assertTrue({"albedo", "N"} <= names.keys())
+        self.assertEqual(names["coverage"].file_format, "float")
         for aov in settings.BEAUTY_AOVS:
             var = stage.GetPrimAtPath(f"/Render/vars/{aov.name}")
             self.assertIn(

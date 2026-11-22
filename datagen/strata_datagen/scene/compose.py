@@ -54,6 +54,11 @@ class Shot:
         return self.directory / "scene"
 
 
+def samples_for(base: int, track: camera.CameraTrack) -> int:
+    """Depth of field or motion blur doubles the samples, measured to match a still shot's error."""
+    return base * 2 if track.depth_of_field or track.motion_blur else base
+
+
 def _choice(rng: np.random.Generator, options: list[str], fixed: str | None) -> str:
     drawn = options[int(rng.integers(0, len(options)))]
     return drawn if fixed is None else fixed
@@ -218,7 +223,7 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
         settings.RenderConfig(
             render.width,
             render.height,
-            render.path_traced_samples,
+            samples_for(render.path_traced_samples, shot.track),
             shot.frames,
             shot.track.motion_blur,
             shot.track.depth_of_field,
