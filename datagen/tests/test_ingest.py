@@ -3,7 +3,10 @@
 import shutil
 import tempfile
 import unittest
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 from strata_datagen import cli, shotlock
 from strata_datagen.render import husk, ingest, pack
@@ -81,6 +84,56 @@ class IngestTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different published frame"):
             self.ingest()
         self.assertEqual(contents(self.shot), kept)
+
+    def test_a_failed_commit_leaves_whole_units_and_a_retry_completes_it(self) -> None:
+        self.farm(OTHER)
+        downloaded = contents(self.download)
+        units = {
+            Path(*Path(key).parts[:2]) if key.startswith(ingest.SAMPLES) else Path(key) for key in downloaded
+        }
+        self.assertGreater(len(units), 2)
+        for failing_move in range(1, len(downloaded) + 2):
+            shot = self.root / "shots" / f"retry{failing_move}"
+            write_shot(shot, [FIRST], stride=1)
+            before = contents(shot)
+            try:
+                with self.failing_move(failing_move):
+                    ingest.ingest(shot, self.download)
+            except OSError as error:
+                self.assertEqual(str(error), "disk full")
+            else:
+                self.assertGreater(failing_move, len(units))
+                break
+            after = contents(shot)
+            for unit in units:
+                keys = {key for key in downloaded if Path(key).is_relative_to(unit)}
+                landed = {key: after.get(key) for key in keys} == {key: downloaded[key] for key in keys}
+                kept = {key: after.get(key) for key in keys} == {key: before.get(key) for key in keys}
+                self.assertTrue(landed or kept, (failing_move, unit))
+            self.assertEqual(list((shot / pack.STAGING).iterdir()), [])
+            self.assertTrue(free(shot))
+            ingest.ingest(shot, self.download)
+            final = contents(shot)
+            self.assertEqual({key: final.get(key) for key in downloaded}, downloaded)
+        else:
+            self.fail("ingest never completed without a failing move")
+
+    @staticmethod
+    @contextmanager
+    def failing_move(failing: int) -> Generator[None]:
+        """Fail the `failing`-th rename out of staging, as a full disk or vanished mount would."""
+        replace = Path.replace
+        moves: list[Path] = []
+
+        def move(path: Path, target: Path) -> Path:
+            if pack.STAGING in path.parts:
+                moves.append(path)
+                if len(moves) == failing:
+                    raise OSError("disk full")
+            return replace(path, target)
+
+        with mock.patch.object(Path, "replace", move):
+            yield
 
     def test_anything_but_output_folders_of_regular_files_is_refused(self) -> None:
         self.farm(OTHER)

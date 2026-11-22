@@ -34,6 +34,15 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
 - `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).
 - `blender/`: FBX to USD conversion, MPFB human export and creature export, run inside Blender.
 
+## Ingest contract
+
+`strata-datagen ingest` moves a download in unit by unit under the shot lock. A unit is one file
+outside `samples/`, or one whole published sidecar frame (`samples/<frame>`), and lands by a single
+rename, so a reader sees the old unit or the new one, never part of either. The ingest as a whole is
+not atomic: if a rename fails, units already moved stay, the rest keep their old contents, staging is
+removed and the lock is released. Re-running the same ingest completes it: identical published
+frames are skipped and every other file is replaced.
+
 ## Use
 
 ```sh
