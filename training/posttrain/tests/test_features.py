@@ -86,7 +86,7 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
     assert_allclose(observed[0][0].numpy(), expected, atol=1e-6)
     frame = Frame(entry, root)
     assert_allclose(frame.arrays["beauty"], denoised)
-    assert_allclose(frame.arrays["target_beauty"], denoised * 2)
+    assert "target_beauty" not in frame.arrays
     inputs, targets, _ = batch([frame], [(0, 0, 0)], 32, 0, "cpu")
     assert_allclose(inputs["image"][0].numpy(), denoised)
     assert_allclose(targets["beauty"][0].numpy(), np.zeros_like(denoised))

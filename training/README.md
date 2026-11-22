@@ -127,7 +127,7 @@ an actual denoiser output. Missing denoised images/IDs are errors, never noisy o
 invented fallbacks. Pass `None` as the denoised array to read the published `denoised`
 beauty part directly. Feature extraction also uses native target-cache denoises by
 default; it stores and hashes the exact model-input image for matching evaluation.
-Raw C beauty stays separate as the reconstruction target.
+Beauty supervision composites the final K layers; raw C beauty remains an input.
 
 Build the clean cache from those same images:
 
@@ -274,14 +274,18 @@ against the dataset contract's NumPy reducer, including real packed frames.
 ## Target cache maintenance
 
 `targets DATASET OUTPUT` memoizes source EXR digests in `OUTPUT/digests.json` using
-size, nanosecond mtime and inode. Warm preparation reuses those digests, while
-changed source metadata forces hashing again. Target archives remain content-addressed;
+size, nanosecond mtime/ctime, inode and device. Warm preparation reuses stable digests;
+changed source metadata or timestamps within two seconds of the last hash force rehashing.
+Target archives remain content-addressed;
 preparation never overwrites arrays held by an existing frame mapping.
 
 Run `strata-train cache-prune OUTPUT` offline to remove target NPZ archives and NPY
 mapping directories not referenced by `OUTPUT/index.json`. Both preparation and pruning
-require an exclusive file lock. Training holds shared locks on its training and validation
-target caches for the whole run, so offline maintenance refuses while either is in use.
+require an exclusive file lock. Training, feature extraction, prediction, baseline preparation
+and evaluation hold shared locks in every referenced target-cache directory for the whole run.
+Locks are acquired in sorted directory order, including validation caches. Index directories
+may be read-only and stored separately; no lock file is written beside the index.
+Offline maintenance refuses while any reader holds the cache.
 
 Loader startup logs the fraction of producer-published, recomposition-eligible views.
 `eligibility_warning_fraction` sets the warning threshold (default `0.25`, in `[0, 1]`).

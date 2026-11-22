@@ -2,10 +2,13 @@ import fcntl
 import hashlib
 import json
 import shutil
-from collections.abc import Generator
-from contextlib import contextmanager
+import time
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, contextmanager
+from functools import wraps
+from os import stat_result
 from pathlib import Path
-from typing import Any
+from typing import Any, Concatenate
 
 import numpy as np
 from strata_dataset.samples import recorded_identity
@@ -36,6 +39,34 @@ def cache_lock(output: Path, *, shared: bool) -> Generator[None]:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+@contextmanager
+def cache_readers(*indexes: Path) -> Generator[None]:
+    directories = {
+        Path(entry["cache"]).resolve().parent
+        for index in indexes
+        for entry in json.loads(index.read_text())
+    }
+    with ExitStack() as leases:
+        for directory in sorted(directories):
+            leases.enter_context(cache_lock(directory, shared=True))
+        yield
+
+
+def cache_reader[**P, R](
+    function: Callable[Concatenate[Path, P], R],
+) -> Callable[Concatenate[Path, P], R]:
+    @wraps(function)
+    def locked(index: Path, *args: P.args, **kwargs: P.kwargs) -> R:
+        with cache_readers(index):
+            return function(index, *args, **kwargs)
+
+    return locked
+
+
+def digest_stat(stat: stat_result) -> list[int]:
+    return [stat.st_size, stat.st_mtime_ns, stat.st_ino, stat.st_ctime_ns, stat.st_dev]
+
+
 class Digests:
     def __init__(self, output: Path) -> None:
         self.path = output / "digests.json"
@@ -45,17 +76,25 @@ class Digests:
 
     def digest(self, path: Path) -> str:
         stat = path.stat()
-        key = [stat.st_size, stat.st_mtime_ns, stat.st_ino]
+        key = digest_stat(stat)
         name = str(path.resolve())
         record = self.records.get(name)
-        if record is not None and record["stat"] == key:
+        if (
+            record is not None
+            and record["stat"] == key
+            and all(
+                abs(timestamp - record["hashed_ns"]) > 2_000_000_000
+                for timestamp in (stat.st_mtime_ns, stat.st_ctime_ns)
+            )
+        ):
             return str(record["sha256"])
+        hashed_ns = time.time_ns()
         with path.open("rb") as source:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
         after = path.stat()
-        if [after.st_size, after.st_mtime_ns, after.st_ino] != key:
+        if digest_stat(after) != key:
             raise ValueError("Source changed while hashing target cache input")
-        self.records[name] = {"stat": key, "sha256": digest}
+        self.records[name] = {"stat": key, "sha256": digest, "hashed_ns": hashed_ns}
         return digest
 
     def save(self) -> None:

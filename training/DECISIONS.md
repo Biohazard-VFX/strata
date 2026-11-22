@@ -46,4 +46,5 @@
 - Index sample eligibility routes off-stride frames through cached targets and photometric-only augmentation; donor selection uses eligible frames only.
 - Target cache names include a digest of manifest, camera, packed beauty/layers, published sample identity, K and cache version; source changes never overwrite live mappings.
 - Beauty supervision always composites the view's final K-layer alpha/RGB through one NumPy/Torch arithmetic rule, including clean and off-stride views.
-- Warm target preparation memoizes EXR digests by size, nanosecond mtime and inode; offline cache writers exclude shared training/validation leases with file locks.
+- EXR digest memos bind size, mtime/ctime, inode and device; timestamps within two seconds of the last hash force rehashing.
+- Target readers lock all referenced cache directories in sorted order, never index directories; offline writers take exclusive leases.

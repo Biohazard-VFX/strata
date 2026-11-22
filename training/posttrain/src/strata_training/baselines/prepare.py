@@ -6,11 +6,13 @@ import numpy as np
 from strata_training.baselines.curves import fit_curve
 from strata_training.baselines.deep import analytic
 from strata_training.baselines.probe import predict_probe
+from strata_training.data.cache import cache_reader
 from strata_training.eval.protocol import entries_for
 from strata_training.io import save_arrays, write_json
 from strata_training.types import Array
 
 
+@cache_reader
 def prepare_baselines(
     index: Path,
     protocol: Path,

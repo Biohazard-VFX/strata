@@ -9,7 +9,7 @@ from scipy import ndimage
 
 from strata_training.baselines.cached import cached_baselines
 from strata_training.baselines.deep import fake_deep
-from strata_training.data.cache import load_layers
+from strata_training.data.cache import cache_reader, load_layers
 from strata_training.data.dataset import Frame
 from strata_training.data.exr import write_deep
 from strata_training.data.targets import composite, visible_inverse
@@ -221,6 +221,7 @@ def collect(
             result.silhouettes.append(recall)
 
 
+@cache_reader
 def evaluate(
     index: Path,
     protocol: Path,

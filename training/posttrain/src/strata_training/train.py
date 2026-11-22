@@ -1,7 +1,6 @@
 import hashlib
 import json
 import time
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,7 +9,7 @@ import torch
 from torch import nn
 
 from strata_training.config import training_defaults, validate_config
-from strata_training.data.cache import cache_lock
+from strata_training.data.cache import cache_readers
 from strata_training.data.dataset import Frame, normalization
 from strata_training.data.online import OnlineLoader
 from strata_training.data.policy import require_supervision
@@ -30,12 +29,10 @@ from strata_training.validation import evaluate_validation, validation_frames
 
 def train(config_path: Path) -> dict[str, Any]:
     config = json.loads(config_path.read_text())
-    directories = {Path(config["index"]).resolve().parent}
+    indexes = [Path(config["index"])]
     if config.get("validation_index"):
-        directories.add(Path(config["validation_index"]).resolve().parent)
-    with ExitStack() as leases:
-        for directory in sorted(directories):
-            leases.enter_context(cache_lock(directory, shared=True))
+        indexes.append(Path(config["validation_index"]))
+    with cache_readers(*indexes):
         return _train(config_path)
 
 

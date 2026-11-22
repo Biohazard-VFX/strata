@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from strata_training.data.cache import display_rgb
+from strata_training.data.cache import cache_reader, display_rgb
 from strata_training.data.metadata import camera_frames
 from strata_training.data.online import image_digest
 from strata_training.data.scale import oracle_metric_scale
@@ -77,6 +77,7 @@ def _denoised(entry: dict[str, Any], samples: Path | None) -> Array | None:
         return data["denoised"].astype(np.float32) if "denoised" in data else None
 
 
+@cache_reader
 def extract(
     index: Path,
     output: Path,

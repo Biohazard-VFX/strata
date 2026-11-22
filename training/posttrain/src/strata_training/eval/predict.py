@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from strata_training.data.cache import cache_reader
 from strata_training.data.dataset import Frame
 from strata_training.data.exr import write_deep
 from strata_training.data.scale import oracle_metric_scale
@@ -139,6 +140,7 @@ def predict(model: nn.Module, config: dict[str, Any], frame: Frame) -> Layers:
     return result
 
 
+@cache_reader
 def cache_predictions(
     index: Path,
     protocol: Path,

@@ -89,6 +89,8 @@ def test_warm_prepare_memoizes_exr_digests(
         return original(source, digest)
 
     monkeypatch.setattr(cache.hashlib, "file_digest", counted)
+    hashed_ns = cache.time.time_ns() + 10_000_000_000
+    monkeypatch.setattr(cache.time, "time_ns", lambda: hashed_ns)
     entries = cache.prepare(packed_shot.parent, output)
     assert len(calls) == 4
     calls.clear()
@@ -98,13 +100,13 @@ def test_warm_prepare_memoizes_exr_digests(
     import os
 
     stat = source.stat()
-    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
     assert cache.prepare(packed_shot.parent, output) == entries
     assert calls == [str(source)]
     calls.clear()
     replacement = source.with_suffix(".new.exr")
     replacement.write_bytes(source.read_bytes())
-    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
     replacement.replace(source)
     assert cache.prepare(packed_shot.parent, output) == entries
     assert calls == [str(source)]
@@ -150,7 +152,7 @@ def test_train_holds_target_cache_lock(tmp_path: Path, monkeypatch: pytest.Monke
 
     output = tmp_path / "targets"
     output.mkdir()
-    write_json(output / "index.json", [])
+    write_json(output / "index.json", [{"cache": str(output / "live.npz")}])
     config = tmp_path / "config.json"
     write_json(config, {"index": str(output / "index.json")})
     calls: list[bool] = []
