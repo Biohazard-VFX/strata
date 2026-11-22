@@ -109,6 +109,7 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
                 "pose": shot.pose.pose,
                 "speed_mps": shot.motion.speed_mps,
                 "hairs": shot.pose.hairs,
+                "animation": shot.hero_animation,
             },
             "lighting": {
                 "hdri": shot.light.hdri.key,

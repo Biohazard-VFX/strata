@@ -26,6 +26,8 @@
 - Infinigen bodies are generated hairless (its animated fur is unsupported); all fur and feathers are grown downstream by our generators.
 - Creature coats are fur layers and feather curves on skin regions, combed down the geodesic distance from the nose, merged into one groom prim.
 - Animated creature poses time-sample skin points; each hair is bound to its root triangle and carried rigidly with it per frame.
+- Coats vary over a shot on fixed strands: length and density taper widths to zero, keyed at seeded smooth functions of time.
+- Cyclic creature clips are stored as one closed cycle and looped across a shot with USD value clips.
 - Groom clumping pulls each hair towards its nearest leader hair, linearly from none at the root to full strength at the tip.
 - Presets are the only code that names library asset ids; generators take assets as parameters.
 - Banned identifiers are checked as SHA-256 digests so the public repo never spells them.

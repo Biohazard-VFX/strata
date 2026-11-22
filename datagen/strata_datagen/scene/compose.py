@@ -13,7 +13,7 @@ from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
 from strata_datagen.render.pack import DEEP_STRIDE
 from strata_datagen.rng import stream
-from strata_datagen.scene import layers, looks
+from strata_datagen.scene import creature, layers, looks
 from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec, frames
 from strata_datagen.usdutil import new_stage, relative_asset, tag_instances
 
@@ -48,6 +48,7 @@ class Shot:
     light: lighting.Lighting
     layers: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     assets: dict[str, Model] = field(default_factory=dict[str, Model])
+    hero_animation: dict[str, object] = field(default_factory=dict[str, object])
 
     @property
     def scene_dir(self) -> Path:
@@ -208,6 +209,14 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
         first_frame=shot.frames[0],
         skin=skin,
         groom=groom,
+    )
+    shot.hero_animation = creature.animate(
+        stage,
+        "/World/hero",
+        root / shot.pose.file,
+        asset_path=relative_asset(root / shot.pose.file, shot.scene_dir),
+        frames=shot.frames,
+        seed=shot.spec.seed,
     )
     _author_scatter(shot, library, stage, root)
     camera.author(stage, "/World/camera", shot.track)

@@ -3,10 +3,14 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import numpy as np
+from pxr import UsdGeom
+
 from strata_datagen.library.catalogue import Hdri, Hero, HeroPose, Library, Model, Provenance, Surface
 from strata_datagen.presets import PRESETS
 from strata_datagen.scene import compose, export
 from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec, frames
+from strata_datagen.usdutil import ints, new_stage, vec3f
 
 PROVENANCE = Provenance("test", "test", "test")
 TEXTURES = {
@@ -46,8 +50,23 @@ def library() -> Library:
     return Library(models, surfaces, hdris, (Hero("creature", "assets/hero/albedo.jpg", poses, PROVENANCE),))
 
 
+def _hero_files(root: Path, lib: Library) -> None:
+    """Static hero pose files with a one-triangle skin, so the scene can inspect them."""
+    for pose in lib.heroes[0].poses:
+        path = root / pose.file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stage = new_stage(path)
+        stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/hero").GetPrim())
+        mesh = UsdGeom.Mesh.Define(stage, "/hero/skin")
+        mesh.CreatePointsAttr(vec3f(np.eye(3)))
+        mesh.CreateFaceVertexCountsAttr(ints(np.array([3])))
+        mesh.CreateFaceVertexIndicesAttr(ints(np.arange(3)))
+        stage.GetRootLayer().Save()
+
+
 def build(root: Path, spec: ShotSpec) -> Path:
     lib = library()
+    _hero_files(root, lib)
     shot = compose.plan(spec, lib, root)
     compose.write(shot, lib, root, RENDER)
     export.write(shot, lib, RENDER)
