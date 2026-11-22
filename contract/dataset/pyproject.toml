@@ -3,7 +3,7 @@ name = "strata-contract"
 version = "0.1.0"
 description = "Strata dataset contract: schema, validator and the K-layer target rule"
 requires-python = ">=3.12"
-dependencies = ["numpy>=2.0"]
+dependencies = ["numpy>=2.0", "numba>=0.61"]
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]
