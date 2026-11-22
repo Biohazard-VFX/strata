@@ -7,8 +7,8 @@
 - Export opset 23 Attention and tensor-valued RoPE dimensions to preserve memory-efficient attention and arbitrary portrait/landscape inputs.
 - Learned operations run in FP16 with a float32 final projection and float32 public tensors to bound activation memory at native resolution.
 - Compare export parity at matching PyTorch precision; report stock bfloat16 differences separately because changing precision is not export error.
-- Parity gates per image: p99.9 relative error 1%, max 5% beyond 2 px of a log inverse-depth step >0.3, median 0.1%, signed bias 0.1%; focal 0.1%; raw max reported.
-- A parity gate is quarantined per image and gate only when PyTorch FP16 itself moves that metric as far under 1-ulp input flips.
+- Parity gates every image alike vs FP16 PyTorch: p99.9 1%, max 5% beyond 2 px of a log step >0.3, median and signed bias 0.25%, focal 0.1%; no per-image exemptions.
+- Against an FP32 oracle, native median and |signed bias| may exceed PyTorch FP16's own by 0.2 pp, the most PyTorch moves under 1-fp16-ulp input perturbations.
 - Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; deep RGB preserves source values and alpha is always one.
 - sRGB encoding is computed in double precision and rounded once to float32 in C and in the oracle, so both feed identical tensors.
 - Non-finite input samples clamp after exposure (+inf to 1, NaN and -inf to 0); each result reports how many pixels were affected.
@@ -23,5 +23,5 @@
 - Flat output uses lossless ZIP with `Z` and `network_inverse_depth`; fake deep has exactly `R G B A Z ZBack`, one sample/pixel and `ZBack == Z`.
 - Writers create a sibling temporary file and rename it over the target, so readers never see partial output.
 - Explicit providers fail when unavailable; `auto` falls back to CPU and reports why through `strata_fallback_reason`; the library never prints.
-- CUDA disables TF32 so float32 operations keep IEEE precision; allocator, arena and thread settings stay at ONNX Runtime defaults.
+- CUDA and the PyTorch oracles disable TF32 so float32 operations keep IEEE precision; allocator, arena and threads stay at ONNX Runtime defaults.
 - TensorRT, CoreML and DirectML are out of scope until each lands with a test and a measurement.

@@ -102,14 +102,19 @@ GPU jobs are serialized: hold the shared GPU lock, admit a job only with its mea
 gpu_run env TORCH_HOME=/path/to/torch-cache \
   training/.venv/bin/python -m strata_train.reference \
   --cases runtime/tests/parity_cases.json --data-root /path/to/data \
-  --out /path/to/reference
+  --out /path/to/reference/fp16 --precision fp16
+gpu_run env TORCH_HOME=/path/to/torch-cache \
+  training/.venv/bin/python -m strata_train.reference \
+  --cases runtime/tests/parity_cases.json --data-root /path/to/data \
+  --out /path/to/reference/fp32 --precision fp32
 
 gpu_run env STRATA_MODEL="$PWD/models/runtime-p0/depthpro2-h.onnx" \
-  STRATA_PARITY_DATA=/path/to/data STRATA_PARITY_REFERENCE=/path/to/reference \
+  STRATA_PARITY_DATA=/path/to/data STRATA_PARITY_REFERENCE=/path/to/reference/fp16 \
+  STRATA_PARITY_REFERENCE_FP32=/path/to/reference/fp32 \
   tools/check_all.sh
 ```
 
-Without arguments, `check_all.sh` runs the commit, layer, comment, decision and format checks, their rule cases, Ruff, strict Pyright, Python tests, contract checks and both normal and ASan/UBSan CTest suites; it verifies the cached sanitizer setting so a CMake cache reset cannot silently produce an ordinary build. The parity test reads the committed case list, inputs under `STRATA_PARITY_DATA` and oracles under `STRATA_PARITY_REFERENCE`, and skips cleanly when they are unset. Per image it gates the network inverse depth's relative error at 1% for the 99.9th percentile, 0.1% median and 0.1% signed mean, and at 5% maximum on pixels more than 2 px from a depth discontinuity (an oracle log inverse-depth step above 0.3 between neighbouring pixels, or a zero boundary); the raw maximum is reported but not gated, because a sub-pixel shift of an occlusion edge gives arbitrary relative error there. It requires identical zero masks and checks focal within 0.1%. The oracle is FP16 with the same float32 final projection, fed bit-identical input tensors. A case may quarantine single gates (`quarantine` in the case list) only with a measured reason: PyTorch FP16 itself moves that metric as far when one mantissa bit of 5% of the input values is flipped.
+Without arguments, `check_all.sh` runs the commit, layer, comment, decision and format checks, their rule cases, Ruff, strict Pyright, Python tests, contract checks and both normal and ASan/UBSan CTest suites; it verifies the cached sanitizer setting so a CMake cache reset cannot silently produce an ordinary build. The parity test reads the committed case list, inputs under `STRATA_PARITY_DATA`, FP16 oracles under `STRATA_PARITY_REFERENCE` and FP32 oracles under `STRATA_PARITY_REFERENCE_FP32`; it skips cleanly when all three are unset and fails when only some are set. Every image gets the same gates on the network inverse depth's relative error, with no per-image exemptions. Against the matching-precision FP16 oracle: 1% at the 99.9th percentile, 0.25% median and 0.25% signed mean, and 5% maximum on pixels more than 2 px from a depth discontinuity (an oracle log inverse-depth step above 0.3 between neighbouring pixels, or a zero boundary); the raw maximum is reported but not gated, because a sub-pixel shift of an occlusion edge gives arbitrary relative error there. Against the FP32 oracle as ground truth: native's median and absolute signed mean may exceed PyTorch FP16's own by at most 0.2 percentage points. Both bounds come from the FP16 noise floor, measured by perturbing 5% of PyTorch FP16's input values by one FP16 ulp; the measurements live with the project results. It requires identical zero masks and checks focal within 0.1%. Both oracles come from `strata_train.reference` (`--precision fp16` keeps the float32 final projection, `--precision fp32`) with TF32 disabled and are fed bit-identical input tensors.
 
 On Linux only the GPU sanitizer tests set `protect_shadow_gap=0` so CUDA can reserve its address space. `runtime/tests/lsan.supp` suppresses leaks only inside `libcuda.so`, and every sanitized parity run must report exactly that one suppression. The `leak_canary` test runs under the same options and must report a leak allocated by Strata. These sanitizers qualify Strata's host code, not GPU kernels or uninstrumented ORT/NVIDIA internals.
 

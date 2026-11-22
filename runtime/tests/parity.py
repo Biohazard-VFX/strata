@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate native CUDA network output against PyTorch oracles; never rescale predictions."""
+"""Gate native CUDA network output against PyTorch FP16 and FP32 oracles; never rescale predictions."""
 import argparse
 import hashlib
 import json
@@ -16,6 +16,11 @@ from PIL import Image
 from deep_readback import verify_deep
 
 SKIP = 77
+EDGE_LOG_STEP = .3
+EDGE_RADIUS = 2
+FOCAL_RELATIVE = .001
+LIMITS = {'interior_max': .05, 'p999': .01, 'median': .0025, 'signed_bias': .0025, 'fp32_margin': .002}
+CASE_KEYS = {'id', 'input', 'focal_px', 'auto_focal', 'exposure'}
 
 
 def errors(native, reference):
@@ -70,45 +75,58 @@ def run_case(args, case, data, prefix):
     return report
 
 
-def check_case(args, case, data, reference_dir):
-    prefix = args.out/case['id']
-    plate = data/case['input']
-    with plate.open('rb') as source:
-        digest = hashlib.file_digest(source, 'sha256').hexdigest()
-    with np.load(reference_dir/(case['id']+'.npz')) as archive:
+def statistics(native, reference):
+    error = errors(native, reference)
+    interior = ~discontinuities(reference, EDGE_LOG_STEP, EDGE_RADIUS)[reference > 0]
+    assert interior.any()
+    magnitude = np.abs(error)
+    return {'max_relative': float(magnitude.max()), 'interior_max_relative': float(magnitude[interior].max()),
+            'p999_relative': float(np.quantile(magnitude, .999)), 'median_relative': float(np.median(magnitude)),
+            'p99_relative': float(np.quantile(magnitude, .99)), 'signed_bias': float(error.mean()),
+            'positive_fraction': float((error > 0).mean()), 'edge_fraction': float(1 - interior.mean()),
+            'pixels': int(error.size)}, magnitude
+
+
+def load_reference(directory, case, digest, precision):
+    with np.load(directory/(case['id']+'.npz')) as archive:
         reference = {key: archive[key] for key in archive.files}
     assert str(reference['input_sha256']) == digest, 'stale PyTorch oracle'
+    assert str(reference['precision']) == precision, (case['id'], str(reference['precision']), precision)
     assert float(reference['exposure']) == case.get('exposure', 0)
     assert bool(reference['auto_focal']) == case.get('auto_focal', False)
+    return reference
+
+
+def check_case(args, case, data, references):
+    prefix = args.out/case['id']
+    with (data/case['input']).open('rb') as source:
+        digest = hashlib.file_digest(source, 'sha256').hexdigest()
+    reference = load_reference(references['fp16'], case, digest, 'fp16')
+    truth = load_reference(references['fp32'], case, digest, 'fp32')['network_inverse_depth']
     report = run_case(args, case, data, prefix)
     focal = float(reference['focal_px'])
-    assert abs(report['focal_px']-focal)/focal <= args.focal_relative, (report['focal_px'], focal)
+    assert abs(report['focal_px']-focal)/focal <= FOCAL_RELATIVE, (report['focal_px'], focal)
     with OpenEXR.File(str(prefix.with_suffix('.depth.exr')), separate_channels=True) as file:
         assert set(file.channels()) == {'Z', 'network_inverse_depth'}
         native = file.channels()['network_inverse_depth'].pixels.copy()
         z = file.channels()['Z'].pixels.copy()
     oracle = reference['network_inverse_depth']
-    error = errors(native, oracle)
-    interior = ~discontinuities(oracle, args.edge_log_step, args.edge_radius)[oracle > 0]
-    assert interior.any()
-    stats = {'max_relative': float(np.abs(error).max()), 'interior_max_relative': float(np.abs(error[interior]).max()),
-             'p999_relative': float(np.quantile(np.abs(error), .999)),
-             'median_relative': float(np.median(np.abs(error))),
-             'p99_relative': float(np.quantile(np.abs(error), .99)), 'signed_bias': float(error.mean()),
-             'positive_fraction': float((error > 0).mean()), 'edge_fraction': float(1 - interior.mean()),
-             'pixels': int(error.size)}
-    return {'id': case['id'], 'timing': report, 'network_inverse_depth': stats}, error, z
+    matching, magnitude = statistics(native, oracle)
+    native_fp32, _ = statistics(native, truth)
+    torch_fp32, _ = statistics(oracle, truth)
+    return {'id': case['id'], 'timing': report, 'network_inverse_depth': matching,
+            'fp32': {'native': native_fp32, 'torch_fp16': torch_fp32}}, magnitude, z
 
 
-def gate(row, case, args):
-    stats = row['network_inverse_depth']
-    limits = {'interior_max': (stats['interior_max_relative'], args.interior_max_relative),
-              'p999': (stats['p999_relative'], args.p999_relative),
-              'median': (stats['median_relative'], args.median_relative),
-              'signed_bias': (abs(stats['signed_bias']), args.signed_bias)}
-    quarantined = case.get('quarantine', {})
-    assert set(quarantined) <= set(limits), quarantined
-    return [name for name, (value, limit) in limits.items() if name not in quarantined and value > limit]
+def gate(matching, native_fp32, torch_fp32):
+    margin = LIMITS['fp32_margin']
+    measured = {'interior_max': (matching['interior_max_relative'], LIMITS['interior_max']),
+                'p999': (matching['p999_relative'], LIMITS['p999']),
+                'median': (matching['median_relative'], LIMITS['median']),
+                'signed_bias': (abs(matching['signed_bias']), LIMITS['signed_bias']),
+                'fp32_median': (native_fp32['median_relative'], torch_fp32['median_relative'] + margin),
+                'fp32_signed_bias': (abs(native_fp32['signed_bias']), abs(torch_fp32['signed_bias']) + margin)}
+    return [name for name, (value, limit) in measured.items() if not value <= limit]
 
 
 def main():
@@ -118,46 +136,42 @@ def main():
     parser.add_argument('--cases', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--lsan-suppression')
-    parser.add_argument('--interior-max-relative', type=float, default=.05)
-    parser.add_argument('--p999-relative', type=float, default=.01)
-    parser.add_argument('--edge-log-step', type=float, default=.3)
-    parser.add_argument('--edge-radius', type=int, default=2)
-    parser.add_argument('--median-relative', type=float, default=.001)
-    parser.add_argument('--signed-bias', type=float, default=.001)
-    parser.add_argument('--focal-relative', type=float, default=.001)
     args = parser.parse_args()
-    if not os.environ.get('STRATA_PARITY_DATA') or not os.environ.get('STRATA_PARITY_REFERENCE'):
-        print('skipped: set STRATA_PARITY_DATA and STRATA_PARITY_REFERENCE to run CUDA parity')
+    variables = {'data': 'STRATA_PARITY_DATA', 'fp16': 'STRATA_PARITY_REFERENCE', 'fp32': 'STRATA_PARITY_REFERENCE_FP32'}
+    present = {key: os.environ.get(name) for key, name in variables.items()}
+    if not any(present.values()):
+        print('skipped: set ' + ', '.join(variables.values()) + ' to run CUDA parity')
         sys.exit(SKIP)
-    data = Path(os.environ['STRATA_PARITY_DATA'])
-    reference_dir = Path(os.environ['STRATA_PARITY_REFERENCE'])
+    missing = [variables[key] for key, value in present.items() if not value]
+    assert not missing, f'parity needs every oracle: {missing} unset'
+    data = Path(present['data'])
+    references = {key: Path(present[key]) for key in ('fp16', 'fp32')}
     cases = json.loads(args.cases.read_text())
     assert cases and len({case['id'] for case in cases}) == len(cases)
+    for case in cases:
+        assert set(case) <= CASE_KEYS, (case['id'], set(case) - CASE_KEYS)
     args.out.mkdir(parents=True, exist_ok=True)
     rows, failed, all_errors = [], [], []
     for index, case in enumerate(cases):
-        row, error, z = check_case(args, case, data, reference_dir)
+        row, magnitude, z = check_case(args, case, data, references)
         if index == 0:
             rgb = np.asarray(Image.open(data/case['input']).convert('RGB'), dtype=np.float32)/255
             verify_deep(args.out/(case['id']+'.deep.exr'), rgb, z)
-        row['failed'] = gate(row, case, args)
-        row['quarantine'] = sorted(case.get('quarantine', {}))
+        row['failed'] = gate(row['network_inverse_depth'], row['fp32']['native'], row['fp32']['torch_fp16'])
         failed += [(case['id'], row['failed'])] if row['failed'] else []
         rows.append(row)
-        all_errors.append(np.abs(error))
+        all_errors.append(magnitude)
         (args.out/'results.json').write_text(json.dumps(rows, indent=2)+'\n')
-        print(json.dumps({'id': row['id'], **row['network_inverse_depth'], 'failed': row['failed'],
-                          'quarantined': bool(row['quarantine'])}), flush=True)
+        print(json.dumps({'id': row['id'], **row['network_inverse_depth'], 'fp32': row['fp32'], 'failed': row['failed']}),
+              flush=True)
     pooled = np.concatenate(all_errors)
-    summary = {'cases': len(rows), 'failed': failed,
-               'quarantined': [row['id'] for row in rows if row['quarantine']],
+    summary = {'cases': len(rows), 'failed': failed, 'limits': LIMITS,
                'aggregate': {'max_relative': float(pooled.max()), 'median_relative': float(np.median(pooled)),
                              'p99_relative': float(np.quantile(pooled, .99)),
                              'p999_relative': float(np.quantile(pooled, .999)), 'pixels': int(pooled.size)},
                'worst_interior_max_relative': max(row['network_inverse_depth']['interior_max_relative'] for row in rows),
                'worst_p999_relative': max(row['network_inverse_depth']['p999_relative'] for row in rows),
-               'worst_gated_signed_bias': max((row['network_inverse_depth']['signed_bias'] for row in rows
-                                               if 'signed_bias' not in row['quarantine']), key=abs)}
+               'worst_signed_bias': max((row['network_inverse_depth']['signed_bias'] for row in rows), key=abs)}
     (args.out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
     print(json.dumps(summary), flush=True)
     assert not failed, failed
