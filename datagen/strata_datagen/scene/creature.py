@@ -42,7 +42,7 @@ def animate(
     params = morph.CoatMorph(
         morph.Range(length[0], length[1]),
         morph.Range(density[0], density[1]),
-        float(cast("float", raw["min_period_s"])),
+        float(cast("float", raw["period_s"])),
         int(cast("int", raw["key_step"])),
     )
     path = Path(stage.GetRootLayer().realPath).parent / COAT_LAYER

@@ -2,7 +2,7 @@
 
 Strand topology never changes: length and density vary by tapering curve widths to zero (a strand
 beyond the current length fraction, or above the current density rank, has zero width). Parameters
-are seeded smooth functions of time sampled at keys; USD interpolates widths linearly between keys.
+are timeline curves sampled at keys; USD interpolates widths linearly between keys.
 """
 
 from dataclasses import dataclass
@@ -10,10 +10,10 @@ from dataclasses import dataclass
 import numpy as np
 from pxr import Sdf, Usd, UsdGeom
 
+from strata_datagen import timeline
 from strata_datagen.usdutil import FloatArray, floats
 
-VERSION = "morph-0.1.0"
-FPS = 24.0
+VERSION = "morph-0.2.0"
 
 
 @dataclass(frozen=True)
@@ -24,24 +24,12 @@ class Range:
 
 @dataclass(frozen=True)
 class CoatMorph:
-    """Ranges the coat sweeps over a shot: visible length fraction and strand density fraction."""
+    """Coat sweep ranges (visible length, strand density), timeline curve period, frames per key."""
 
     length: Range
     density: Range
-    min_period_s: float
+    period_s: float
     key_step: int
-
-
-def smooth(rng: np.random.Generator, times_s: FloatArray, span: Range, min_period_s: float) -> FloatArray:
-    """A seeded smooth signal in [low, high]: three sinusoids with periods of at least min_period_s."""
-    periods = min_period_s * rng.uniform(1.0, 3.0, 3)
-    phases = rng.uniform(0.0, 2.0 * np.pi, 3)
-    weights = rng.uniform(0.5, 1.0, 3)
-    wave = np.sum(
-        weights[:, None] * np.sin(2.0 * np.pi * times_s[None] / periods[:, None] + phases[:, None]), 0
-    )
-    unit = 0.5 + 0.5 * wave / weights.sum()
-    return span.low + (span.high - span.low) * unit
 
 
 def strand_widths(
@@ -72,8 +60,10 @@ def author_coat(
     """Time-sampled widths on a groom prim; returns the length and density per key for the manifest."""
     rank: FloatArray = rng.uniform(0.0, 1.0, base.shape[0])
     at = np.asarray(keys(frames, morph.key_step), dtype=np.float64)
-    length = smooth(rng, at / FPS, morph.length, morph.min_period_s)
-    density = smooth(rng, at / FPS, morph.density, morph.min_period_s)
+    t = (at - at[0]) / timeline.FPS
+    duration = float(t[-1]) + 1.0
+    length = timeline.curve(rng, duration, morph.period_s, morph.length.low, morph.length.high)(t)
+    density = timeline.curve(rng, duration, morph.period_s, morph.density.low, morph.density.high)(t)
     attribute = UsdGeom.BasisCurves(stage.OverridePrim(groom_path)).CreateWidthsAttr()
     for frame, value_l, value_d in zip(at, length, density, strict=True):
         attribute.Set(floats(strand_widths(base, rank, value_l, value_d)), Usd.TimeCode(float(frame)))

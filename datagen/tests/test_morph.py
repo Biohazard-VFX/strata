@@ -13,14 +13,6 @@ from strata_datagen.usdutil import floats, ints, new_stage, vec3f
 
 
 class SignalTest(unittest.TestCase):
-    def test_smooth_stays_in_range_and_changes_slowly(self) -> None:
-        times = np.arange(0, 30 * 24) / 24.0
-        signal = morph.smooth(stream(1, "s"), times, morph.Range(0.4, 1.0), 8.0)
-        self.assertGreaterEqual(float(signal.min()), 0.4)
-        self.assertLessEqual(float(signal.max()), 1.0)
-        self.assertGreater(float(np.ptp(signal)), 0.1)
-        self.assertLess(float(np.abs(np.diff(signal)).max()), 0.6 * 2 * np.pi / (8.0 * 24.0))
-
     def test_widths_taper_length_and_gate_density_without_dropping_strands(self) -> None:
         base = np.full((1000, 9), 1e-4)
         rank = np.linspace(0.0, 1.0, 1000, endpoint=False)
@@ -86,7 +78,7 @@ class CreatureSceneTest(unittest.TestCase):
             curves.CreateCurveVertexCountsAttr(ints(np.array([4, 4])))
             curves.CreatePointsAttr(vec3f(np.zeros((8, 3))))
             curves.CreateWidthsAttr(floats(np.full(8, 1e-3)))
-            ranges = {"length": [0.5, 1.0], "density": [0.6, 1.0], "min_period_s": 8.0, "key_step": 48}
+            ranges = {"length": [0.5, 1.0], "density": [0.6, 1.0], "period_s": 8.0, "key_step": 48}
             curves.GetPrim().SetCustomDataByKey("morph", ranges)
             pose.GetRootLayer().Save()
             shot_path = Path(tmp) / "scene" / "shot.usda"

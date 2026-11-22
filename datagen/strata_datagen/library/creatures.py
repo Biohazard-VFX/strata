@@ -351,7 +351,7 @@ def sample_coat(classes: list[str], field: coat.Field, rest: FloatArray, front: 
     morph = {
         "length": [_u(rng, 0.55, 0.8), 1.0],
         "density": [_u(rng, 0.5, 0.8), 1.0],
-        "min_period_s": 8.0,
+        "period_s": 8.0,
         "key_step": 48,
     }
     return {

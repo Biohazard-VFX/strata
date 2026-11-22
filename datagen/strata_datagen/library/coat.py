@@ -6,7 +6,7 @@ A creature hero's hero.json may carry a "coat" block next to the plain hero fiel
   animated_density: hair and feather count factor for poses with per-frame skin points;
   fur: [{name, regions, zone, lift, droop, guides, groom: GroomParams fields}];
   feathers: [{name, regions, zone, params: FeatherParams fields except samples}];
-  morph (optional): {length: [lo, hi], density: [lo, hi], min_period_s, key_step}, copied onto the
+  morph (optional): {length: [lo, hi], density: [lo, hi], period_s, key_step}, copied onto the
   prepared groom prim's customData so shots can vary the coat over time (generators/morph.py).
 zone = {geodesic: [lo, hi] as fractions of the longest comb distance, min_up: lowest normal y}.
 Pose skins carry a uniform int primvar `region` whose names are the mesh's customData `regions`.
