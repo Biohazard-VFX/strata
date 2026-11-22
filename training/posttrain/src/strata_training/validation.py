@@ -1,0 +1,83 @@
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+from torch import nn
+
+from strata_training.data.dataset import Frame
+from strata_training.data.policy import require_supervision
+from strata_training.eval.predict import predict
+from strata_training.eval.protocol import entries_for
+from strata_training.losses.deep import deep_loss
+
+
+def validation_frames(config: dict[str, Any], training: list[dict[str, Any]]) -> list[Frame]:
+    """Own validation arrays/maps; callers serialize evaluation of shared model weights."""
+    keys = ("validation_index", "validation_protocol", "validation_features")
+    if any(not config.get(key) for key in keys):
+        raise ValueError(
+            "Early stopping requires an explicit OOD validation index/protocol/features"
+        )
+    if Path(config["validation_index"]).resolve() == Path(config["index"]).resolve():
+        raise ValueError("OOD validation requires a separate scene-distribution index")
+    entries = entries_for(
+        Path(config["validation_index"]),
+        Path(config["validation_protocol"]),
+        "test",
+        purpose="validation",
+    )
+    if not entries:
+        raise ValueError("OOD validation must contain frames")
+    for key in ("id", "shot", "cache", "manifest"):
+        seen = {str(e[key]) for e in training if e.get(key) is not None}
+        if any(str(e[key]) in seen for e in entries if e.get(key) is not None):
+            raise ValueError(
+                "OOD validation must be disjoint from training shots, frames and targets"
+            )
+    require_supervision(entries, purpose="validation", root=Path(config["validation_features"]))
+    frames = [Frame(e, Path(config["validation_features"]), config["scale_mode"]) for e in entries]
+    if not any(frame.arrays["mixed"].any() for frame in frames):
+        raise ValueError("OOD validation requires mixed pixels for checkpoint selection")
+    return frames
+
+
+def evaluate_validation(
+    model: nn.Module, config: dict[str, Any], frames: list[Frame]
+) -> dict[str, Any]:
+    """Borrow frames/weights, restore model mode, return pooled alpha MAE and mean frame loss.
+
+    Calls change model mode temporarily and must not overlap training or other evaluations.
+    Validation loss reconstructs logits from clipped inference probabilities on CPU.
+    """
+    require_supervision([frame.entry for frame in frames], purpose="validation")
+    was_training = model.training
+    error, pixels = 0.0, 0
+    losses: list[float] = []
+    model.eval()
+    try:
+        for frame in frames:
+            result = predict(model, config, frame)
+            mixed = frame.arrays["mixed"].astype(bool)
+            error += float(
+                np.abs(result.alpha[0] - frame.arrays["alpha"][0])[mixed].sum(dtype=np.float64)
+            )
+            pixels += int(mixed.sum())
+            prediction = {k: torch.as_tensor(v[None]).float() for k, v in result.arrays().items()}
+            prediction["alpha_logits"] = torch.logit(prediction["alpha"].clamp(1e-7, 1 - 1e-7))
+            target = {
+                k: torch.tensor(frame.arrays[k][None]).float()
+                for k in ("inverse_depth", "alpha", "rgb", "mixed")
+            }
+            beauty = frame.arrays.get("target_beauty", frame.arrays["beauty"])
+            target["beauty"] = torch.tensor(beauty[None]).float()
+            loss, _ = deep_loss(prediction, target)
+            losses.append(loss.item())
+    finally:
+        model.train(was_training)
+    if not pixels:
+        raise ValueError("OOD validation requires mixed pixels for checkpoint selection")
+    metric, loss = error / pixels, float(np.mean(losses))
+    if not np.isfinite(metric) or not np.isfinite(loss):
+        raise FloatingPointError("Nonfinite OOD validation metric or loss")
+    return {"mixed_alpha_mae": metric, "loss": loss, "mixed_pixels": pixels, "frames": len(frames)}

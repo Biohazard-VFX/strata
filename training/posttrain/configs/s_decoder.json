@@ -1,0 +1,23 @@
+{
+  "index": "/data/strata_v0/targets/index.json",
+  "protocol": "/data/protocol/v004_split.json",
+  "features": "/data/strata_v0/features_s",
+  "preset": "depthpro2-s",
+  "layers": 4,
+  "mode": "decoder",
+  "scale_mode": "raw",
+  "seed": 4004,
+  "crop": 128,
+  "halo": 64,
+  "batch_size": 2,
+  "steps": 1500,
+  "learning_rate": 0.0004,
+  "log_every": 250,
+  "output": "/data/strata_v0/runs/s_decoder",
+  "decoder_learning_rate": 5e-06,
+  "warmup_steps": 75,
+  "input_mode": "cached",
+  "validation_index": "/data/validation/targets/index.json",
+  "validation_protocol": "/data/validation/protocol.json",
+  "validation_features": "/data/validation/features_s"
+}

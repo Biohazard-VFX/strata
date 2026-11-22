@@ -20,7 +20,7 @@ print(json.dumps({
 
 def violations(directory, python):
     name, allowed = PROJECTS[directory]
-    forbidden = next(roots for layer, roots, _ in LAYERS if layer == directory)
+    forbidden = next(roots for layer, roots, _ in LAYERS if directory == layer or directory.startswith(layer + "/"))
     env = {key: value for key, value in os.environ.items() if key not in ('PYTHONPATH', 'VIRTUAL_ENV')}
     result = subprocess.run([str(python), '-I', '-c', PROBE, *forbidden], capture_output=True, text=True,
                             check=True, cwd=ROOT, env=env)
@@ -32,7 +32,9 @@ def violations(directory, python):
 
 
 def main():
-    errors = violations('training', Path(sys.executable)) + violations('datagen', ROOT/'datagen'/'.venv'/'bin'/'python')
+    errors = (violations('training', Path(sys.executable))
+              + violations('training/posttrain', ROOT/'training'/'posttrain'/'.venv'/'bin'/'python')
+              + violations('datagen', ROOT/'datagen'/'.venv'/'bin'/'python'))
     if errors:
         sys.exit('\n'.join(errors))
     print('training and datagen environments hold and find only the Strata packages their layers allow')

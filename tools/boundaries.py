@@ -21,6 +21,7 @@ PROJECTS = {
     'contract': ('strata-contract', {}),
     'contract/dataset': ('strata-dataset', {}),
     'training': ('strata-train', {'strata-contract': '../contract', 'strata-dataset': '../contract/dataset'}),
+    'training/posttrain': ('strata-training', {'strata-dataset': '../../contract/dataset'}),
     'datagen': ('strata-datagen', {'strata-dataset': '../contract/dataset'}),
 }
 IMPORTERS = {

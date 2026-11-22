@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -25,19 +26,34 @@ type Evaluate = Callable[[list[str], dict[str, NDArray[np.float16]]], list[NDArr
 
 
 class RopeFactory(Protocol):
-    def __call__(self, *, dim: int, normalize_coords: str) -> nn.Module: ...
+    def __call__(self, *, dim: int, normalize_coords: str, dtype: torch.dtype) -> nn.Module: ...
 
 
 class ExportTests(unittest.TestCase):
     def test_rope_matches_unmodified_timm_at_multiple_aspects(self) -> None:
         module = importlib.import_module("timm.layers.pos_embed_sincos")
         factory = cast("RopeFactory", resolve(module, "RotaryEmbeddingDinoV3"))
-        rope = factory(dim=64, normalize_coords="max")
-        original = cast("Callable[..., torch.Tensor]", resolve(rope, "get_embed"))
-        for shape in ((16, 24), (24, 16), (2, 48)):
-            torch.testing.assert_close(
-                dynamic_rope(rope, shape), original(shape=shape), atol=0, rtol=0
-            )
+        fork_rng = cast(
+            "Callable[..., AbstractContextManager[None]]", resolve(torch.random, "fork_rng")
+        )
+        seed = cast("Callable[[int], object]", resolve(torch, "manual_seed"))
+        threads = torch.get_num_threads()
+        try:
+            torch.set_num_threads(1)
+            with fork_rng(devices=[]):
+                seed(719)
+                rope = factory(dim=64, normalize_coords="max", dtype=torch.float32).eval()
+                original = cast("Callable[..., torch.Tensor]", resolve(rope, "get_embed"))
+                for shape in ((16, 24), (24, 16), (2, 48)):
+                    with self.subTest(shape=shape):
+                        torch.testing.assert_close(
+                            dynamic_rope(rope, shape, dtype=torch.float32),
+                            original(shape=shape, dtype=torch.float32),
+                            atol=0,
+                            rtol=0,
+                        )
+        finally:
+            torch.set_num_threads(threads)
 
     def test_constant_folding_preserves_onnx_results(self) -> None:
         weight = numpy_helper.from_array(np.array([1.125, -2.5, 4.75], dtype=np.float32), "weight")

@@ -1,0 +1,21 @@
+{
+  "index": "/data/strata_v0/targets/index.json",
+  "protocol": "/data/protocol/v004_split.json",
+  "features": "/data/strata_v0/features_h_fp32",
+  "preset": "depthpro2-h",
+  "layers": 4,
+  "mode": "head",
+  "scale_mode": "raw",
+  "seed": 4004,
+  "crop": 128,
+  "halo": 64,
+  "batch_size": 2,
+  "steps": 40000,
+  "learning_rate": 0.0004,
+  "log_every": 1000,
+  "output": "/data/strata_v0/runs/h_head",
+  "input_mode": "cached",
+  "validation_index": "/data/validation/targets/index.json",
+  "validation_protocol": "/data/validation/protocol.json",
+  "validation_features": "/data/validation/features_h"
+}
