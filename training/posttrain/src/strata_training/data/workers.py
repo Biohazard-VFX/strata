@@ -5,6 +5,10 @@ from collections.abc import Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from multiprocessing.util import get_temp_dir
+from pathlib import Path
+from socket import AF_UNIX, SOCK_STREAM, socket
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import numpy as np
@@ -174,10 +178,25 @@ def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[Lo
 def batches(dataset: NativeBatches) -> DataLoader[LoadedBatch]:
     """Own a bounded worker queue; caller releases the loader when training stops."""
     workers = int(dataset.config["loader_workers"])
+    if workers:
+        directory = get_temp_dir()
+        try:
+            with (
+                TemporaryDirectory(prefix="", dir=directory) as probe,
+                socket(AF_UNIX, SOCK_STREAM) as connection,
+            ):
+                connection.bind(str(Path(probe) / "s"))
+        except OSError as error:
+            raise RuntimeError(
+                f"Loader workers require Unix sockets in the multiprocessing temp directory "
+                f"{directory!r}; set TMPDIR to a local filesystem supporting Unix sockets "
+                "before starting Python (exFAT/FAT are unsupported), or set loader_workers=0"
+            ) from error
     return DataLoader(
         dataset,
         batch_size=None,
         num_workers=workers,
+        timeout=60 if workers else 0,
         persistent_workers=workers > 0,
         prefetch_factor=int(dataset.config["loader_prefetch"]) if workers else None,
         multiprocessing_context="spawn" if workers else None,

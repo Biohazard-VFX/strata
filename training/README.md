@@ -164,6 +164,14 @@ machine-specific thread counts. Peak image memory scales with workers × prefetc
 batch/crop size and raw sample density, not frame count. Metadata still scales
 linearly with the number of index records.
 
+With `loader_workers > 0`, set `TMPDIR` before starting Python to a local filesystem
+supporting Unix sockets, such as ext4 or tmpfs; exFAT/FAT cannot host worker IPC
+sockets. Dataset and cache files may remain on exFAT/FAT. Startup test-binds a socket
+in multiprocessing's actual temp directory and reports a `TMPDIR` error before
+starting workers if binding fails. Worker batch waits time out after 60 seconds
+instead of hanging indefinitely on a later IPC failure. Set `loader_workers: 0`
+to avoid multiprocessing IPC.
+
 NumPy sampling is intentionally versioned as `step-seed-v2`: each absolute training step
 uses `SeedSequence([seed, step])`. Crop selection and augmentation draws within a
 step remain sequential. Version 2 routes by published-sample eligibility before
@@ -275,8 +283,9 @@ against the dataset contract's NumPy reducer, including real packed frames.
 
 `targets DATASET OUTPUT` memoizes source EXR digests in `OUTPUT/digests.json` using
 size, nanosecond mtime/ctime, inode, device and the Linux boot ID. Warm preparation
-reuses stable digests only within the same boot; a missing or changed boot ID,
-changed source metadata or timestamps within two seconds of the last hash force rehashing.
+reuses stable digests only within the same boot; a memo record with a missing or
+different boot ID is rehashed; preparation requires Linux `/proc`. Changed source
+metadata or timestamps within two seconds of the last hash also force rehashing.
 The boot boundary prevents inode/ctime reuse on filesystems such as exFAT.
 Target archives remain content-addressed;
 preparation never overwrites arrays held by an existing frame mapping.
