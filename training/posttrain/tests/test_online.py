@@ -259,6 +259,19 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
         OnlineLoader([frame], samples)
 
 
+def test_device_normalization_matches_clean_cache_color_transform(math_device: str) -> None:
+    from strata_training.data.cache import display_rgb
+    from strata_training.data.torch_online import normalize
+
+    images = np.random.default_rng(719).uniform(-0.2, 3, (2, 3, 64, 96)).astype(np.float32)
+    display = np.stack([display_rgb(image, "ACEScg") for image in images]).astype(np.float32) / 255
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)[None, :, None, None]
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)[None, :, None, None]
+    expected = (display - mean) / std
+    actual = normalize(torch.tensor(images, device=math_device)).cpu().numpy()
+    np.testing.assert_allclose(actual, expected, atol=2e-6, rtol=2e-6)
+
+
 def test_hybrid_policy_defaults_and_unsupported_temporal_or_oracle_inputs() -> None:
     config = training_defaults(
         {
