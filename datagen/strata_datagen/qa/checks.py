@@ -20,12 +20,12 @@ from numpy.typing import NDArray
 from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M, SKY_ID
-from strata_datagen.qa.deep import blended_ids, flatten, instance_ids
+from strata_datagen.qa.deep import IDENTITY_CHANNELS, flatten
 from strata_datagen.render import pack
-from strata_dataset import roles
+from strata_dataset import identity, roles, segmented
 from strata_dataset import samples as contract_samples
 
-VALIDATION = "raw-qa-2"
+VALIDATION = "raw-qa-3"
 LUMA = (0.2126, 0.7152, 0.0722)
 LIMITS = {
     "median_luma": (0.02, 1.5),
@@ -37,8 +37,9 @@ LIMITS = {
     "flatten_excess": (0.0, 0.005),
     "uncovered": (0.0, 0.0),
     "valid_id_fraction": (0.99995, 1.0),
-    "blended_id_fraction": (0.0, 2e-4),
-    "coverage_channel": (1.0, 1.0),
+    "id_check_failure_fraction": (0.0, 2e-4),
+    "unlabelled_coverage": (0.0, 2e-4),
+    "identity_channels": (1.0, 1.0),
     "coverage_alpha_error": (0.0, 2.0**-11),
     "sky_id_in_front": (0.0, 1e-5),
     "camera_error": (0.0, 1e-3),
@@ -63,8 +64,9 @@ DEEP_KEYS = (
     "uncovered",
     "flatten_excess",
     "valid_id_fraction",
-    "blended_id_fraction",
-    "coverage_channel",
+    "id_check_failure_fraction",
+    "unlabelled_coverage",
+    "identity_channels",
     "coverage_alpha_error",
     "sky_id_in_front",
 )
@@ -93,25 +95,41 @@ def _id_ranges(manifest: dict[str, object]) -> list[tuple[int, int]]:
     return [(r["first_id"], r["first_id"] + r["count"]) for r in ranges]
 
 
+def _identity_metrics(deep: Deep, ranges: list[tuple[int, int]]) -> dict[str, float]:
+    """Identity check failures, undeclared ids among checked samples, and the coverage left unlabelled.
+
+    `unlabelled_coverage` is the mean over pixels of the visible coverage of failing samples: the
+    coverage no role receives, so it bounds what failing samples remove from every role.
+    """
+    frame = pack.samples(deep)
+    counts = np.diff(frame.offsets)
+    labelled = frame.ids != identity.UNLABELLED
+    declared = np.zeros(frame.ids.size, bool)
+    for low, high in ranges:
+        declared |= (frame.ids >= low) & (frame.ids < high)
+    visible = frame.alpha.astype(np.float64) * segmented.transmittance(frame.alpha, counts)
+    near_sky = (frame.ids == SKY_ID) & (frame.z < SKY_MIN_Z_M)
+    return {
+        "id_check_failure_fraction": float((~labelled).mean()) if labelled.size else 0.0,
+        "valid_id_fraction": float(declared[labelled].mean()) if labelled.any() else 1.0,
+        "unlabelled_coverage": float(visible[~labelled].sum() / counts.size),
+        "sky_id_in_front": float(near_sky.mean()) if near_sky.size else 0.0,
+    }
+
+
 def deep_metrics(
     deep: Deep, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
 ) -> dict[str, float]:
     flat = flatten(deep)
     z, zback = deep.channels["Z"], deep.channels["ZBack"]
-    valid = np.zeros(int(deep.counts.sum()), bool)
-    blended = np.ones(valid.size, bool)
-    near_sky = 0.0
-    alpha_error = 1.0
-    if "coverage" in deep.channels:
-        decoded = instance_ids(deep)
-        for low, high in ranges:
-            valid |= (decoded >= low) & (decoded < high)
-        blended = blended_ids(deep)
-        near_sky = float(((decoded == SKY_ID) & (z < SKY_MIN_Z_M)).mean())
+    present = all(name in deep.channels for name in IDENTITY_CHANNELS)
+    metrics: dict[str, float] = {"identity_channels": float(present)}
+    if present:
+        metrics |= _identity_metrics(deep, ranges)
         difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
-        alpha_error = float(np.abs(difference).max(initial=0.0))
+        metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
     residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
-    return {
+    return metrics | {
         "mean_samples": float(deep.counts.mean()),
         "max_samples": float(deep.counts.max()),
         "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z * (1.0 - 1e-6) - 1e-4)).sum()),
@@ -119,11 +137,6 @@ def deep_metrics(
         "flatten_error": float(np.abs(residual).mean()),
         "uncovered": float((flat.alpha < COVERED).mean()),
         "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
-        "valid_id_fraction": float(valid.mean()) if valid.size else 1.0,
-        "blended_id_fraction": float(blended.mean()) if blended.size else 0.0,
-        "coverage_channel": float("coverage" in deep.channels),
-        "coverage_alpha_error": alpha_error,
-        "sky_id_in_front": near_sky,
     }
 
 

@@ -1,10 +1,16 @@
-# Strata dataset contract (v0.3.0)
+# Strata dataset contract (v0.4.0)
 
-The training side reads exactly this. Version string: `strata-dataset-0.3.0` (in every
-`manifest.json` and `camera.json`). `schema.json` is the JSON Schema for both files;
-`validate.py` checks a shot directory against it and against the image files.
+The training side reads exactly this. Version string: `strata-dataset-0.4.0` (in every
+`manifest.json` and `camera.json`, `strata_dataset.records.VERSION`). `schema.json` is the JSON
+Schema for both files; `validate.py` checks a shot directory against it, against
+`strata_dataset.records.errors` and against the image files.
 
-0.3.0 adds role coverage to the targets of every frame (`roles.foreground`, `roles.hero`,
+0.4.0 adds the deep and beauty `instance_check` channel: a per-id hash that rejects samples Karma
+merged from several surfaces, whose averaged id can round to a declared id of a surface that is not
+there. Such samples get id -1 in the sidecars and count for no role. Ids must lie in [0, 32768).
+0.3.0 shots have no identity check and do not satisfy it.
+
+0.3.0 added role coverage to the targets of every frame (`roles.foreground`, `roles.hero`,
 `roles.fur` in `layers/NNNN.exr`), declares `hero_groom` only when a groom is authored, and renders
 deep without merging samples across depths. 0.2.0 shots lack role coverage on frames whose raw deep
 was pruned and do not satisfy it.
@@ -74,6 +80,7 @@ Multi-part scanline EXR, one part per AOV, all at the camera resolution:
 | `metallic` | `metallic.metallic` | metalness of the front surface |
 | `Z` | `Z.Z` | camera-plane depth of the nearest surface (float, min filter) |
 | `instance_id` | `instance_id.instance_id` | id of the nearest surface (float holding an integer) |
+| `instance_check` | `instance_check.instance_check` | `check(id)` of the nearest surface (float in [1, 2)) |
 | `denoised` | `denoised.R/G/B/A` | `C` denoised by OIDN with albedo and normal guides: the model input; targets stay raw |
 | `foreground` | `foreground.foreground` | geometry coverage of the pixel (float; 0 where only the sky is seen) |
 | `coverage` | `coverage.coverage` | flat copy of the deep sample-alpha channel: 1 wherever any surface, sky included, is seen; not a foreground mask |
@@ -92,7 +99,9 @@ alpha 1, the sky colour and inverse depth 0. Training reads these for every fram
 
 The same file holds, for every frame, float32 `roles.<role>` (`strata_dataset.roles`): the visible
 coverage of the role's samples in the pixel, the sum over its samples of alpha times the
-transmittance in front, from the frame's own deep before any raw deep is pruned. A role names
+transmittance in front, from the frame's own deep before any raw deep is pruned. Samples that fail
+the identity check still occlude the samples behind them but belong to no role, so a pixel's roles
+can sum to less than its coverage; raw QA bounds that loss (`unlabelled_coverage`). A role names
 `manifest.instance_ids` ranges, never fixed ids:
 
 | role | id ranges |
@@ -121,19 +130,28 @@ directory once, reads every file through that handle and verifies each against `
 | `deep/z.npy` | float32 (N,) | camera-plane depth, front to back within a pixel (stable for ties) |
 | `deep/alpha.npy` | float32 (N,) | the sample's conditional alpha: deep `coverage` clipped to [0, 1] |
 | `deep/rgb.npy` | float32 (N, 3) | premultiplied colour |
-| `deep/ids.npy` | int64 (N,) | round(instance_id / coverage); sky samples are kept with id 0 |
+| `deep/ids.npy` | int64 (N,) | `strata_dataset.identity.decode`: the id, or -1 where the identity check fails; sky samples keep id 0 |
 | `identity.json` | JSON | `{"sha256": {"<file>": "<hex>"}}` for each file above |
 
 ## deep/NNNN.exr
 
-Single-part deep scanline EXR with channels `R G B A` (half), `Z ZBack instance_id coverage`
-(float), one sample list per pixel, samples unsorted. `R G B` are premultiplied by `A`.
-`instance_id` and `coverage` (a constant 1 on every surface, sky included) are premultiplied by the
-sample's alpha at float precision, so `coverage` is the sample's float alpha and the integer id of a
-sample is `round(instance_id / coverage)`; do not divide by the half `A`, which is off by up to
-id x 2^-11 and rounds alpha above 0.99976 to 1. Karma merges samples only at equal depth (deep
-compression 5, depth bias 0), so a sample can stand for several pixel samples of one surface; a merge
-across two surfaces would average their ids, and raw QA rejects frames that hold such blends.
+Single-part deep scanline EXR with channels `R G B A` (half), `Z ZBack instance_id instance_check
+coverage` (float), one sample list per pixel, samples unsorted. `R G B` are premultiplied by `A`.
+`instance_id`, `instance_check` and `coverage` (a constant 1 on every surface, sky included) are
+premultiplied by the sample's alpha at float precision, so `coverage` is the sample's float alpha;
+do not divide by the half `A`, which is off by up to id x 2^-11 and rounds alpha above 0.99976 to 1.
+Karma merges samples at equal depth (deep compression 5, depth bias 0) by summing their channels,
+so a merged sample of two surfaces holds the coverage-weighted mean of their ids, which can round
+to a third, declared id (an equal merge of ids 1 and 3 reads as 2).
+
+`strata_dataset.identity.decode` gives each sample's id: id = round(instance_id / coverage), kept
+only when id is in [0, 32768) and |instance_check / coverage - check(id)| <= 2^-14. `check(id)`
+(`identity-check-1`) is 1 + 2^-23 x the top 23 bits of the murmur3 32-bit finalizer of
+(id + 0x9E3779B9) mod 2^32, an exact float32 in [1, 2); unmerged samples meet it within about 1e-5.
+A merge of different ids passes with probability at most about 4 x 2^-14 (2.4e-4) per merged
+sample, or when the other surfaces' share is below 2^-14 / |check difference|. Raw QA bounds the
+fraction of failing samples and the coverage they hold.
+
 ZBack - Z stays at most about 1 mm for surfaces.
 Fully occluded surfaces are not stored. Beauty and deep share a one-pixel box filter: compositing
 the samples front to back reproduces the beauty `C` part.
@@ -148,6 +166,7 @@ DeepExpression on instance_id; training masks depth losses on it (sky depth is u
 supervises its colour and coverage.
 
 Instance ids: 0 is the sky backdrop, 1 terrain, 2 hero skin, 3 hero groom (hair or fur grown on the
-skin), 4 hero hairstyle, 100 and up thin structures, 1000 and up scattered instances.
+skin), 4 hero hairstyle, 100 and up thin structures, 1000 and up scattered instances, all below 32768
+(`identity.MAX_ID`; generation refuses a scene that needs more).
 `manifest.instance_ids` maps every id to its layer and declares only ranges the scene authors: a hero
 without a groom has no `hero_groom`, so an id 3 in its deep is invalid.

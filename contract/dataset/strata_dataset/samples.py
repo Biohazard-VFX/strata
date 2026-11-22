@@ -2,8 +2,9 @@
 
 A frame directory holds `noisy.npy` and `denoised.npy` (float32, 3 x H x W) and `deep/` with
 `shape.npy` (int64 (2,)), `offsets.npy` (int64 (H*W+1,)), `z.npy`, `alpha.npy` (float32 (N,)),
-`rgb.npy` (float32 (N, 3), premultiplied) and `ids.npy` (int64 (N,)): row-major pixels, samples
-front to back within a pixel. Arrays are uncompressed little-endian C-order NPY, no pickles.
+`rgb.npy` (float32 (N, 3), premultiplied) and `ids.npy` (int64 (N,), -1 where the identity check
+failed): row-major pixels, samples front to back within a pixel. Arrays are uncompressed
+little-endian C-order NPY, no pickles.
 `identity.json` records the SHA-256 of every array file; its own SHA-256 is the frame's identity.
 A published frame directory is immutable: it is never rewritten, only removed offline.
 """
@@ -20,6 +21,8 @@ from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
+
+from strata_dataset.identity import UNLABELLED
 
 DEEP_FIELDS: dict[str, str] = {
     "shape": "<i8",
@@ -163,8 +166,8 @@ def _sample_errors(arrays: dict[str, NDArray[np.generic]], pixels: int) -> list[
         errors.append("alpha must be in [0, 1]")
     if not np.isfinite(arrays["rgb"]).all() or not all(np.isfinite(arrays[n]).all() for n in IMAGES):
         errors.append("rgb and images must be finite")
-    if np.any(arrays["ids"].astype(np.int64) < 0):
-        errors.append("ids must be nonnegative")
+    if np.any(arrays["ids"].astype(np.int64) < UNLABELLED):
+        errors.append(f"ids must be nonnegative or {UNLABELLED} (unlabelled)")
     pixel = np.repeat(np.arange(pixels), np.diff(offsets))
     if np.any((pixel[1:] == pixel[:-1]) & (z[1:] < z[:-1])):
         errors.append("samples must be front to back within each pixel")

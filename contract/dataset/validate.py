@@ -12,7 +12,7 @@ import numpy as np
 import OpenEXR
 from jsonschema import Draft202012Validator
 
-from strata_dataset import roles, samples
+from strata_dataset import records, roles, samples
 
 SCHEMA = cast("dict[str, object]", json.loads((Path(__file__).parent / "schema.json").read_text()))
 BEAUTY = {
@@ -23,11 +23,12 @@ BEAUTY = {
     "metallic": {"metallic.metallic"},
     "Z": {"Z.Z"},
     "instance_id": {"instance_id.instance_id"},
+    "instance_check": {"instance_check.instance_check"},
     "denoised": {"denoised.R", "denoised.G", "denoised.B", "denoised.A"},
     "foreground": {"foreground.foreground"},
     "coverage": {"coverage.coverage"},
 }
-DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id", "coverage"}
+DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id", "instance_check", "coverage"}
 LAYERS = {f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B")} | set(roles.CHANNELS)
 
 
@@ -87,6 +88,7 @@ def validate(shot: Path) -> list[str]:
     except (OSError, json.JSONDecodeError) as error:
         return [f"unreadable records: {error}"]
     errors = _schema_errors(manifest, "manifest") + _schema_errors(camera, "camera")
+    errors = errors or records.errors(manifest, camera)
     if errors:
         return errors
     render = cast("dict[str, object]", manifest["render"])

@@ -1,4 +1,4 @@
-"""Deep-pixel measurements: front-to-back flattening, partial-coverage and blended-id detection."""
+"""Deep-pixel measurements: front-to-back flattening, partial coverage and per-sample identity."""
 
 from dataclasses import dataclass
 
@@ -6,13 +6,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from strata_datagen.exr import Deep
+from strata_dataset import identity
 
 VISIBLE = 0.02
 OPAQUE = 0.98
 LAYER_GAP_M = 0.05
 FRONT_SLAB = 0.05
-ID_TOLERANCE = 0.05
-ID_RELATIVE_TOLERANCE = 2e-5
 
 
 @dataclass(frozen=True)
@@ -59,21 +58,9 @@ def flatten(deep: Deep) -> Flattened:
     return Flattened(rgba.reshape(*shape, 4), covered.reshape(shape), partial.reshape(shape))
 
 
-def _quotients(deep: Deep) -> NDArray[np.float64]:
-    coverage = np.maximum(deep.channels["coverage"].astype(np.float64), 1e-12)
-    return deep.channels["instance_id"] / coverage
+IDENTITY_CHANNELS = ("instance_id", "instance_check", "coverage")
 
 
 def instance_ids(deep: Deep) -> NDArray[np.int64]:
-    """Per-sample instance ids: both channels are premultiplied by the sample's float alpha."""
-    return np.rint(_quotients(deep)).astype(np.int64)
-
-
-def blended_ids(deep: Deep) -> NDArray[np.bool_]:
-    """Samples whose id is not one surface's integer id but a coverage-weighted mean of several.
-
-    Karma's float accumulation leaves an unblended id within about 1e-5 of its value relative to it.
-    """
-    quotients = _quotients(deep)
-    tolerance = np.maximum(ID_TOLERANCE, ID_RELATIVE_TOLERANCE * np.abs(quotients))
-    return np.abs(quotients - np.rint(quotients)) > tolerance
+    """Per-sample instance ids; `identity.UNLABELLED` where the identity check fails."""
+    return identity.decode(*(deep.channels[name] for name in IDENTITY_CHANNELS))

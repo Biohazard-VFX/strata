@@ -80,7 +80,10 @@ class ShotFrames:
 
 
 def samples(deep: Deep) -> Samples:
-    """Sample alpha is the float `coverage` channel; the half `A` rounds alpha above 0.99976 to 1."""
+    """Sample alpha is the float `coverage` channel; the half `A` rounds alpha above 0.99976 to 1.
+
+    Samples failing the identity check keep their colour and alpha but carry `identity.UNLABELLED`.
+    """
     pixel = deep.pixel_index()
     order = np.lexsort((deep.channels["Z"], pixel))
     rgb = np.stack([deep.channels[c] for c in "RGB"], axis=-1)

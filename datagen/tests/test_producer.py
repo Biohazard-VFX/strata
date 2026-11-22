@@ -16,9 +16,10 @@ from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators import lighting
 from strata_datagen.qa import checks
 from strata_datagen.render import pack
+from strata_dataset import identity
 from strata_dataset import samples as contract_samples
 from tests.concurrency import free
-from tests.fixtures import SKY, Sample, frame_record, write_beauty, write_deep, write_shot
+from tests.fixtures import SKY, Sample, frame_record, merged, write_beauty, write_deep, write_shot
 
 CLEAN: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 2), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
 SKY_IN_FRONT: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 0), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
@@ -110,6 +111,40 @@ class RawEvidenceTest(unittest.TestCase):
             with mock.patch.dict(checks.LIMITS, {"valid_id_fraction": (0.5, 1.0)}):
                 self.assertIn("frame 2: validation changed since raw acceptance", shot_failures(shot))
             self.assertEqual(shot_failures(shot), [])
+
+    def test_merged_ids_rounding_to_declared_ids_are_rejected_and_label_no_role(self) -> None:
+        """Terrain 1 merged equally with groom 3 reads as hero skin 2; 30000.4 rounds into a declared id."""
+        cases = (
+            ({1: 0.5, 3: 0.5}, {"name": "hero_groom", "first_id": 3, "count": 1}),
+            ({30000: 0.6, 30001: 0.4}, {"name": "grass_near", "first_id": 29000, "count": 2002}),
+        )
+        for sources, declared in cases:
+            with self.subTest(sources=sources), tempfile.TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "s"
+                pixels: list[Sample | list[Sample]] = [
+                    [merged(0.5, 1.0, sources), SKY],
+                    [Sample(0.2, 0.5, 1), SKY],
+                    SKY,
+                ]
+                write_shot(shot, [pixels, pixels], stride=24)
+                manifest = json.loads((shot / "manifest.json").read_text())
+                manifest["instance_ids"].append(declared)
+                (shot / "manifest.json").write_text(json.dumps(manifest))
+                self.assertFalse(cli.finish_task(shot, range(1, 3)))
+                self.assertTrue((shot / "deep" / "0002.exr").exists())
+                failures = shot_failures(shot)
+                self.assertTrue(
+                    any(f.startswith("frame 2: id_check_failure_fraction=0.2") for f in failures), failures
+                )
+                self.assertTrue(
+                    any(f.startswith("frame 2: unlabelled_coverage=0.3333") for f in failures), failures
+                )
+                ids = contract_samples.load(pack.ShotFrames.load(shot).sample_dir(shot, 1))["ids"]
+                self.assertEqual(ids.tolist(), [identity.UNLABELLED, 0, 1, 0, 0])
+                layers = read_flat(shot / "layers" / "0001.exr")
+                for role in ("foreground", "hero", "fur"):
+                    self.assertEqual(float(layers[f"roles.{role}"][0, 0]), 0.0)
+                self.assertEqual(float(layers["roles.foreground"][0, 1]), 0.5)
 
 
 def _drop_hero_ids(shot: Path) -> None:

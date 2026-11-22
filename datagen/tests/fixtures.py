@@ -11,6 +11,7 @@ from numpy.typing import NDArray
 from strata_datagen.exr import Deep, read_deep
 from strata_datagen.qa.deep import flatten
 from strata_datagen.scene.export import CONTRACT_VERSION
+from strata_dataset import identity
 
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
 FOCAL_MM = 18.0
@@ -19,22 +20,39 @@ SENSOR_MM = 36.0
 
 @dataclass(frozen=True)
 class Sample:
-    """One deep sample: premultiplied grey, true float alpha (A is stored as half), id and depth."""
+    """One deep sample: premultiplied grey, true float alpha (A is stored as half), id and depth.
+
+    `check` is the unpremultiplied `instance_check`; None stores the check of the integer `instance`.
+    """
 
     grey: float
     alpha: float
-    instance: int
+    instance: float
     z: float = 2.0
+    check: float | None = None
+
+    def instance_check(self) -> float:
+        if self.check is not None:
+            return self.check
+        return float(identity.check(np.array([int(self.instance)]))[0])
+
+
+def merged(grey: float, alpha: float, sources: dict[int, float], z: float = 2.0) -> Sample:
+    """A sample Karma merged from `sources` (id to coverage share): both id channels are averaged."""
+    ids = np.array(list(sources))
+    shares = np.array(list(sources.values()), np.float64)
+    check = float(np.dot(shares, identity.check(ids).astype(np.float64)))
+    return Sample(grey, alpha, float(np.dot(shares, ids)), z, check)
 
 
 SKY = Sample(0.3, 1.0, 0, 3000.0)
 
 
 def write_deep(path: Path, pixels: list[Sample | list[Sample]]) -> None:
-    """A one-row deep EXR stored the way Karma writes it: half A and colour, float id and coverage."""
+    """A one-row deep EXR stored the way Karma writes it: half A and colour, float id, check and coverage."""
     rows = [[p] if isinstance(p, Sample) else p for p in pixels]
     values: dict[str, list[NDArray[np.float32]]] = {name: [] for name in ("R", "G", "B", "A", "Z", "ZBack")}
-    values |= {"instance_id": [], "coverage": []}
+    values |= {"instance_id": [], "instance_check": [], "coverage": []}
     for samples in rows:
         alpha = np.array([s.alpha for s in samples], np.float32)
         grey = np.array([s.grey for s in samples], np.float16).astype(np.float32)
@@ -43,6 +61,7 @@ def write_deep(path: Path, pixels: list[Sample | list[Sample]]) -> None:
         values["A"].append(alpha.astype(np.float16).astype(np.float32))
         values["coverage"].append(alpha)
         values["instance_id"].append(np.array([s.instance for s in samples], np.float32) * alpha)
+        values["instance_check"].append(np.array([s.instance_check() for s in samples], np.float32) * alpha)
         values["Z"].append(np.array([s.z for s in samples], np.float32))
         values["ZBack"].append(values["Z"][-1].copy())
     channels: dict[str, OpenEXR.Channel] = {}

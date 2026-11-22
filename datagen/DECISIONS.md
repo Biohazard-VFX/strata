@@ -6,6 +6,10 @@
 - Roughness and metallic AOVs are `inputs:aov:<name>` on the surface shader, rendered as raw render vars.
 - Camera-space normals come from Karma's `ray:hitN_camera`: x right, y up, +Z towards the viewer.
 - Deep carries `C`, `instance_id` and a float `coverage` (constant 1 on every surface, sky too): it is the sample's float alpha and id = round(instance_id / coverage); Karma stores A as half.
+- Deep also carries `instance_check` = hash(id) in [1, 2): Karma averages ids of merged samples, so a sample is labelled only if its check matches its rounded id (fix the encoding, not a tolerance).
+- Identity check tolerance is 2^-14 against ~1e-5 float noise: a merge of different ids passes with p <= 4 x 2^-14 = 2.4e-4 per merged sample.
+- Ids stay below 2^15 so round(instance_id / coverage) is exact under float32 accumulation; authoring an id outside [0, 2^15) fails the build.
+- Samples failing the identity check keep colour, alpha and occlusion but carry id -1 and belong to no role; raw QA limits their fraction and coverage.
 - Deep uses Karma compression 5: against 0 it moves K=4 layer alpha by 3e-4 on partial pixels and saves 20% (measured; ids are decoded via coverage).
 - Beauty carries a raw `C` (the deep flattens to it, targets stay raw) and an OIDN-denoised `denoised` copy (albedo and normal guides) as the model input.
 - Beauty, AOVs and deep share a one-pixel box filter so the flattened deep reproduces the beauty.

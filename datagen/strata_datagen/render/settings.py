@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from pxr import Gf, Sdf, Usd, UsdRender
 
-VERSION = "render-settings-0.3.0"
+VERSION = "render-settings-0.4.0"
 SETTINGS_PATH = "/Render/settings"
 
 
@@ -27,6 +27,7 @@ BEAUTY_AOVS = (
     Aov("metallic", "raw", "metallic", "float", "half"),
     Aov("Z", "raw", "ray:hitPz", "float", "float", '["minmax",{"mode":"zmin"}]'),
     Aov("instance_id", "primvar", "instance_id", "int", "float", '["minmax",{"mode":"zmin"}]'),
+    Aov("instance_check", "primvar", "instance_check", "float", "float", '["minmax",{"mode":"zmin"}]'),
     Aov("denoised", "lpe", "C.*[LO]", "color4f", "color4h"),
     Aov("foreground", "primvar", "foreground", "float", "float"),
     Aov("coverage", "primvar", "coverage", "float", "float"),
@@ -34,7 +35,7 @@ BEAUTY_AOVS = (
 DENOISER = json.dumps(
     [["denoise", {"engine": "oidn", "use_albedo_input": True, "use_n_input": True, "aovs": ["denoised"]}]]
 )
-DEEP_AOVS = ("C", "instance_id", "coverage")
+DEEP_AOVS = ("C", "instance_id", "instance_check", "coverage")
 DEEP_COMPRESSION = 5
 DEEP_Z_BIAS_M = 0.0
 
