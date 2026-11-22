@@ -1,12 +1,13 @@
-# Strata dataset contract (v0.2.0)
+# Strata dataset contract (v0.3.0)
 
-The training side reads exactly this. Version string: `strata-dataset-0.2.0` (in every
+The training side reads exactly this. Version string: `strata-dataset-0.3.0` (in every
 `manifest.json` and `camera.json`). `schema.json` is the JSON Schema for both files;
 `validate.py` checks a shot directory against it and against the image files.
 
-0.2.0 changes the targets: layers keep the sky (float32, sky clusters with zero inverse depth),
-recomposition frames carry raw-sample sidecars, and the flat geometry mask is the beauty
-`foreground` part. 0.1.0 layer files (half, sky dropped) do not satisfy it.
+0.3.0 adds role coverage to the targets of every frame (`roles.foreground`, `roles.hero`,
+`roles.fur` in `layers/NNNN.exr`), declares `hero_groom` only when a groom is authored, and renders
+deep without merging samples across depths. 0.2.0 shots lack role coverage on frames whose raw deep
+was pruned and do not satisfy it.
 
 ## Layout
 
@@ -18,7 +19,7 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   camera.json
   beauty/0001.exr ... 0024.exr
   deep/0001.exr ... 0024.exr     raw deep, kept on the frame stride (`manifest.render.deep_stride`)
-  layers/0001.exr ... 0024.exr   K = 4 sky-inclusive layer targets for every frame
+  layers/0001.exr ... 0024.exr   K = 4 sky-inclusive layer targets and role coverage, every frame
   samples/<shot_id>_NNNN/        raw-sample sidecars of every recomposition frame (the deep stride)
   qa/NNNN.json      raw QA acceptance of each frame (identity of every input it validated)
   scene/            optional: the USD the shot was rendered from (reproducibility, not training input)
@@ -88,6 +89,19 @@ ln(1.15) and merge front to back. Any layer holding visible sky keeps its alpha 
 inverse depth 0. Sample alpha is the deep `coverage` channel (float), not the half `A`. Compositing
 the four layers front to back reproduces the beauty `C`; an opaque sky-only pixel is one layer with
 alpha 1, the sky colour and inverse depth 0. Training reads these for every frame.
+
+The same file holds, for every frame, float32 `roles.<role>` (`strata_dataset.roles`): the visible
+coverage of the role's samples in the pixel, the sum over its samples of alpha times the
+transmittance in front, from the frame's own deep before any raw deep is pruned. A role names
+`manifest.instance_ids` ranges, never fixed ids:
+
+| role | id ranges |
+| --- | --- |
+| `foreground` | every range but `sky` |
+| `hero` | `hero_skin`, `hero_groom`, `hero_hair` |
+| `fur` | `hero_groom`, `hero_hair` (strands: fur, feathers, hair) |
+
+A role with no declared range has zero coverage. `fur <= hero <= foreground` in every pixel.
 
 ## samples/<shot_id>_NNNN/
 

@@ -22,6 +22,7 @@ from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M, SKY_ID
 from strata_datagen.qa.deep import blended_ids, flatten, instance_ids
 from strata_datagen.render import pack
+from strata_dataset import roles
 from strata_dataset import samples as contract_samples
 
 VALIDATION = "raw-qa-2"
@@ -43,6 +44,7 @@ LIMITS = {
     "camera_error": (0.0, 1e-3),
     "intrinsics_error": (0.0, 1e-4),
     "target_format": (1.0, 1.0),
+    "role_coverage": (1.0, 1.0),
     "target_error": (0.0, 0.005),
     "target_excess": (0.0, 0.005),
     "target_mismatch": (0.0, 0.0),
@@ -146,12 +148,24 @@ def target_metrics(path: Path, beauty: dict[str, NDArray[np.float32]]) -> dict[s
         "target_format": float(in_range),
         "target_error": float(np.abs(residual).mean()),
         "target_excess": float(np.maximum(-residual, 0.0).mean()),
+        "role_coverage": _role_coverage(dtypes, targets),
     }
 
 
-def _target_mismatch(path: Path, frame: pack.Samples) -> float:
+def _role_coverage(dtypes: dict[str, np.dtype[np.generic]], targets: dict[str, NDArray[np.float32]]) -> float:
+    """1 when the targets hold every role as float32 coverage in [0, 1], fur within hero within foreground."""
+    if any(dtypes.get(name) != np.dtype(np.float32) for name in roles.CHANNELS):
+        return 0.0
+    foreground, hero, fur = (targets[name].astype(np.float64) for name in roles.CHANNELS)
+    nested = np.all(fur <= hero + 1e-6) and np.all(hero <= foreground + 1e-6)
+    return float(bool(nested and np.all(foreground >= 0) and np.all(foreground <= 1) and np.all(fur >= 0)))
+
+
+def _target_mismatch(path: Path, frame: pack.Samples, declared: roles.Ranges) -> float:
     stored = read_flat(path)
-    expected = pack.layer_channels(pack.layers(frame))
+    expected = pack.targets(frame, declared)
+    if not expected.keys() <= stored.keys():
+        return 1.0
     return float(max(np.abs(stored[name] - value).max(initial=0.0) for name, value in expected.items()))
 
 
@@ -237,7 +251,7 @@ def _raw_metrics(
     frame_samples = pack.samples(deep)
     failures: list[str] = []
     if paths["layers"].exists():
-        metrics["target_mismatch"] = _target_mismatch(paths["layers"], frame_samples)
+        metrics["target_mismatch"] = _target_mismatch(paths["layers"], frame_samples, plan.roles)
     if plan.recomposition(frame):
         mismatch, failures = _samples_mismatch(plan.sample_dir(shot, frame), frame_samples, paths["beauty"])
         metrics["samples_mismatch"] = mismatch

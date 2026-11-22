@@ -24,9 +24,9 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   time-varying parameter. A generator's `sample_*` returns one value per frame sample (frames plus
   a motion-blur handle each side, sample i at USD time first_frame - 1 + i); `author` writes them as
   time samples. QA bounds per-frame camera steps.
-- `strata_datagen/render/pack.py`: after each render task, sky-inclusive K-layer targets for every
-  frame (`strata_dataset.layers`, in `../contract/dataset`) and raw-sample sidecars on the deep
-  stride. It never deletes: `accept` runs raw QA per frame and records it, then `prune` drops
+- `strata_datagen/render/pack.py`: after each render task, sky-inclusive K-layer targets and role
+  coverage for every frame (`strata_dataset.layers` and `strata_dataset.roles`, in
+  `../contract/dataset`) and raw-sample sidecars on the deep stride. It never deletes: `accept` runs raw QA per frame and records it, then `prune` drops
   off-stride raw deep of accepted, unchanged frames only. Sidecars are write-once; to repack a
   changed frame, stop every reader and run `remove-samples` first. Every command that changes a shot (build, render,
   render-task, pack, accept, prune, remove-samples, qa) holds an exclusive `flock` on `<shot>/.lock`; a locked shot is

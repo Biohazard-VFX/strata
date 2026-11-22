@@ -12,7 +12,7 @@ import numpy as np
 import OpenEXR
 from jsonschema import Draft202012Validator
 
-from strata_dataset import samples
+from strata_dataset import roles, samples
 
 SCHEMA = cast("dict[str, object]", json.loads((Path(__file__).parent / "schema.json").read_text()))
 BEAUTY = {
@@ -28,7 +28,7 @@ BEAUTY = {
     "coverage": {"coverage.coverage"},
 }
 DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id", "coverage"}
-LAYERS = {f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B")}
+LAYERS = {f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B")} | set(roles.CHANNELS)
 
 
 def _schema_errors(record: dict[str, object], definition: str) -> list[str]:

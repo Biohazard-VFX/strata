@@ -1,4 +1,4 @@
-"""After rendering: sky-inclusive K-layer targets for every frame, raw-sample sidecars on the deep stride.
+"""After rendering: K-layer targets and role coverage for every frame, raw-sample sidecars on the stride.
 
 Packing never removes raw deep: it is QA evidence, and only `qa.checks.prune` removes it, after the
 frame has passed raw QA. Sidecars are write-once: a frame's directory is published whole and never
@@ -21,6 +21,7 @@ from strata_datagen import shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators.lighting import SKY_ID
 from strata_datagen.qa.deep import instance_ids
+from strata_dataset import roles
 from strata_dataset import samples as contract_samples
 from strata_dataset.layers import Layers, reduce_samples
 
@@ -53,18 +54,23 @@ class Samples:
 
 @dataclass(frozen=True)
 class ShotFrames:
-    """The frame plan a manifest declares: frames on the deep stride are recomposition frames."""
+    """The frame plan a manifest declares: frames on the deep stride are recomposition frames.
+
+    `roles` holds each role's id ranges, named in the manifest's `instance_ids`.
+    """
 
     shot_id: str
     first: int
     stride: int
+    roles: roles.Ranges
 
     @staticmethod
     def load(shot: Path) -> "ShotFrames":
         manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
         render = cast("dict[str, object]", manifest["render"])
         frames = cast("list[int]", render["frames"])
-        return ShotFrames(str(manifest["shot_id"]), frames[0], cast("int", render["deep_stride"]))
+        declared = roles.ranges(cast("list[dict[str, object]]", manifest["instance_ids"]))
+        return ShotFrames(str(manifest["shot_id"]), frames[0], cast("int", render["deep_stride"]), declared)
 
     def recomposition(self, frame: int) -> bool:
         return (frame - self.first) % self.stride == 0
@@ -110,9 +116,15 @@ def layer_channels(targets: Layers) -> dict[str, NDArray[np.float32]]:
     return {name: np.ascontiguousarray(value, np.float32) for name, value in out.items()}
 
 
-def write_layers(targets: Layers, out_path: Path) -> None:
-    """layers/NNNN.exr: per layer k, float32 `L<k>.invdepth` (1/m, 0 with sky) and `L<k>.A/R/G/B`."""
-    channels = {name: OpenEXR.Channel(value) for name, value in layer_channels(targets).items()}
+def targets(frame: Samples, declared: roles.Ranges) -> dict[str, NDArray[np.float32]]:
+    """Every channel of a frame's targets: its K layers and the coverage of each role."""
+    covered = roles.coverage(frame.alpha, frame.ids, np.diff(frame.offsets), frame.shape, declared)
+    return layer_channels(layers(frame)) | covered
+
+
+def write_layers(values: dict[str, NDArray[np.float32]], out_path: Path) -> None:
+    """layers/NNNN.exr: float32 `L<k>.invdepth` (1/m, 0 with sky) and `L<k>.A/R/G/B`, `roles.<role>`."""
+    channels = {name: OpenEXR.Channel(value) for name, value in values.items()}
     header: dict[str, object] = {"compression": OpenEXR.ZIPS_COMPRESSION, "type": OpenEXR.scanlineimage}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = out_path.with_suffix(".tmp.exr")
@@ -190,12 +202,15 @@ def remove_samples(shot: Path, frames: range) -> list[int]:
 
 
 def pack(shot: Path, frames: range) -> None:
-    """Write targets for `frames` and sidecars for their recomposition frames; never removes raw deep."""
+    """Write targets for `frames` and sidecars for their recomposition frames; never removes raw deep.
+
+    Role coverage comes from each frame's own deep, so every frame keeps it after raw deep is pruned.
+    """
     plan = ShotFrames.load(shot)
     with shotlock.held(shot):
         for frame in frames:
             name = f"{frame:04d}.exr"
             frame_samples = samples(read_deep(shot / "deep" / name))
-            write_layers(layers(frame_samples), shot / "layers" / name)
+            write_layers(targets(frame_samples, plan.roles), shot / "layers" / name)
             if plan.recomposition(frame):
                 write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))

@@ -62,5 +62,6 @@ class HuskTest(unittest.TestCase):
         self.assertEqual(calls, [{"KARMA_XPU_DISABLE_EMBREE_DEVICE": "1"}])
         self.assertEqual((record["device"], record["exit_code"]), ("gpu", 1))
 
+
 if __name__ == "__main__":
     unittest.main()

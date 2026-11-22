@@ -56,7 +56,8 @@ class RawEvidenceTest(unittest.TestCase):
             kept = target.read_bytes()
             target.unlink()
             self.assertIn("frame 2: missing layers", shot_failures(shot))
-            pack.write_layers(pack.layers(pack.samples(_sky_everywhere(shot))), target)
+            sky = pack.targets(pack.samples(_sky_everywhere(shot)), pack.ShotFrames.load(shot).roles)
+            pack.write_layers(sky, target)
             self.assertIn("frame 2: targets changed since raw acceptance", shot_failures(shot))
             target.write_bytes(kept)
             (shot / "qa" / "0002.json").unlink()
@@ -68,7 +69,8 @@ class RawEvidenceTest(unittest.TestCase):
             write_shot(shot, [CLEAN, CLEAN], stride=24)
             pack.pack(shot, range(1, 3))
             self.assertEqual(shot_failures(shot), [])
-            pack.write_layers(pack.layers(pack.samples(_sky_everywhere(shot))), shot / "layers" / "0002.exr")
+            sky = pack.targets(pack.samples(_sky_everywhere(shot)), pack.ShotFrames.load(shot).roles)
+            pack.write_layers(sky, shot / "layers" / "0002.exr")
             failures = shot_failures(shot)
             self.assertTrue(any(f.startswith("frame 2: target_mismatch") for f in failures), failures)
 
@@ -152,6 +154,46 @@ class SkyTargetTest(unittest.TestCase):
             self.assertAlmostEqual(float(layers.alpha[0, 0, 0]), 0.9999, places=6)
             self.assertAlmostEqual(float(layers.alpha[1, 0, 0]), 1.0, places=6)
             self.assertAlmostEqual(float(layers.inverse_depth[1, 0, 0]), 0.1, places=6)
+
+
+HAIRSTYLE: list[Sample | list[Sample]] = [
+    [Sample(0.1, 0.5, 7, 1.9), Sample(0.5, 1.0, 2), SKY],
+    [Sample(0.2, 0.5, 1), SKY],
+    SKY,
+]
+
+
+class RoleTest(unittest.TestCase):
+    def test_every_frame_keeps_role_coverage_from_its_own_deep_after_pruning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "s"
+            write_shot(shot, [CLEAN, HAIRSTYLE, CLEAN], stride=2)
+            manifest = json.loads((shot / "manifest.json").read_text())
+            manifest["instance_ids"].append({"name": "hero_hair", "first_id": 7, "count": 1})
+            (shot / "manifest.json").write_text(json.dumps(manifest))
+            self.assertTrue(cli.finish_task(shot, range(1, 4)))
+            self.assertFalse((shot / "deep" / "0002.exr").exists())
+            expected = {
+                1: {"foreground": [1.0, 0.5, 0.0], "hero": [1.0, 0.0, 0.0], "fur": [0.0, 0.0, 0.0]},
+                2: {"foreground": [1.0, 0.5, 0.0], "hero": [1.0, 0.0, 0.0], "fur": [0.5, 0.0, 0.0]},
+            }
+            for frame, roles in ((1, expected[1]), (2, expected[2]), (3, expected[1])):
+                targets = read_flat(shot / "layers" / f"{frame:04d}.exr")
+                for role, values in roles.items():
+                    np.testing.assert_allclose(targets[f"roles.{role}"][0], values, atol=1e-6)
+            self.assertEqual(shot_failures(shot), [])
+
+    def test_targets_without_role_coverage_fail_qa_on_frames_without_raw_deep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "s"
+            write_shot(shot, [CLEAN, CLEAN], stride=24)
+            self.assertTrue(cli.finish_task(shot, range(1, 3)))
+            target = shot / "layers" / "0002.exr"
+            frame = read_flat(target)
+            pack.write_layers({k: v for k, v in frame.items() if not k.startswith("roles.")}, target)
+            failures = shot_failures(shot)
+            self.assertIn("frame 2: role_coverage=0 outside 1.0..1.0", failures)
+            self.assertIn("frame 2: targets changed since raw acceptance", failures)
 
 
 class SidecarTest(unittest.TestCase):
