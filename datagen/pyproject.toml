@@ -53,6 +53,8 @@ ignore = ["PLR2004", "S603", "S607", "TRY003", "EM101", "EM102", "D203", "D213",
 "strata_datagen/cli.py" = ["T201"]
 "**/validate.py" = ["T201"]
 "blender/*" = ["T201", "INP001"]
+"garments/*" = ["T201", "INP001"]
+"houdini/*" = ["T201", "INP001"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

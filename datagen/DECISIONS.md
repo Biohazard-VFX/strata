@@ -31,3 +31,13 @@
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
 - Every frame gets K=4 layer targets (contract strata_contract.layers, the training merge rule); raw deep is kept every 24th frame, as long shots are 720 frames.
+- Bulk shots are 8-frame clips for diversity; a configurable share (default 10%) are 24-96-frame sequences for temporal training. Camera moves scale with duration.
+- Human heroes are MPFB bodies (cmu_mb rig, CC0 skins, eyes and clothes) animated with original CMU ASF/AMC clips, built offline into the external hero library.
+- Animated heroes are point caches with samples at each frame and ±0.25, not UsdSkel, so skinned bodies, simulated garments and grooms share one representation.
+- Animated hero prims set `primvars:karma:object:geosamples` to 3; Karma renders no deformation blur without it.
+- Retargeting copies CMU world bone rotations after a rest-direction swing per bone; joints keep the target's proportions and root travel scales by hip height.
+- Hand bones follow the wrist because CMU finger channels are placeholders.
+- Skin regions (scalp, face, brows, beard, ears, lips, body) are GeomSubsets of family `hero_region`; their heights scale with the eye-to-crown distance.
+- GarmentCode supplies sewing patterns only; panels are sewn and simulated in Houdini Vellum, never with GarmentCode's non-commercial Warp fork.
+- Animated heroes carry their own MaterialX looks; scenes reference them without overriding bindings.
+- A shot's subject size is the hero's largest bounding extent, so tall heroes are framed by height.
