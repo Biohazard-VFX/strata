@@ -103,21 +103,32 @@ def render_task(shot: Path, frames: range, husk_path: str) -> dict[str, object]:
     return timings
 
 
+def _passed(timings: dict[str, object]) -> bool:
+    return timings["exit_code"] == 0 and bool(timings["post_passed"])
+
+
 def cmd_render_task(args: argparse.Namespace) -> None:
     timings = render_task(args.shot, _frames(args), args.husk)
     print("rendered", timings["device"], timings["mean_frame_seconds"], flush=True)
-    if timings["exit_code"] != 0 or not timings["post_passed"]:
+    if not _passed(timings):
         raise SystemExit(1)
 
 
 def cmd_render(args: argparse.Namespace) -> None:
+    """Run every selected task, then exit non-zero naming the tasks that failed to render or pass QA."""
     jobs = [husk.Job(**j) for j in json.loads((args.root / "jobs.json").read_text())]
+    failed: list[str] = []
     for job in jobs:
         if args.shots and job.shot_id not in args.shots:
             continue
         frames = range(job.first, job.first + job.count)
         timings = render_task(args.root / job.workdir, frames, args.husk)
         print("rendered", job.shot_id, timings["device"], timings["mean_frame_seconds"], flush=True)
+        if not _passed(timings):
+            failed.append(f"{job.shot_id}:{job.first}-{job.first + job.count - 1}")
+    if failed:
+        print("failed", *failed, flush=True)
+        raise SystemExit(1)
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
