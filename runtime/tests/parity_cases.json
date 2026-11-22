@@ -42,7 +42,11 @@
  {
   "id": "dof_05",
   "input": "renders/v004_dataset/dof_05/beauty.0001.exr",
-  "focal_px": 2666.67
+  "focal_px": 2666.67,
+  "quarantine": {
+   "median": "FP16 global scale is ill-conditioned: PyTorch alone shifts it up to 0.14% under 1-ulp input flips and 0.18% against FP32",
+   "signed_bias": "FP16 global scale is ill-conditioned: PyTorch alone shifts it up to 0.14% under 1-ulp input flips and 0.18% against FP32"
+  }
  },
  {
   "id": "dof_06",
@@ -112,7 +116,10 @@
  {
   "id": "mb_07",
   "input": "renders/v004_dataset/mb_07/beauty.0001.exr",
-  "focal_px": 2666.67
+  "focal_px": 2666.67,
+  "quarantine": {
+   "signed_bias": "PyTorch alone shifts its signed bias +0.04% to +0.15% under 1-ulp input flips"
+  }
  },
  {
   "id": "mb_08",

@@ -100,18 +100,15 @@ def check_case(args, case, data, reference_dir):
     return {'id': case['id'], 'timing': report, 'network_inverse_depth': stats}, error, z
 
 
-def gate(row, args):
+def gate(row, case, args):
     stats = row['network_inverse_depth']
-    failures = []
-    if stats['interior_max_relative'] > args.interior_max_relative:
-        failures.append('interior max')
-    if stats['p999_relative'] > args.p999_relative:
-        failures.append('p99.9')
-    if stats['median_relative'] > args.median_relative:
-        failures.append('median')
-    if abs(stats['signed_bias']) > args.signed_bias:
-        failures.append('signed bias')
-    return failures
+    limits = {'interior_max': (stats['interior_max_relative'], args.interior_max_relative),
+              'p999': (stats['p999_relative'], args.p999_relative),
+              'median': (stats['median_relative'], args.median_relative),
+              'signed_bias': (abs(stats['signed_bias']), args.signed_bias)}
+    quarantined = case.get('quarantine', {})
+    assert set(quarantined) <= set(limits), quarantined
+    return [name for name, (value, limit) in limits.items() if name not in quarantined and value > limit]
 
 
 def main():
@@ -143,20 +140,24 @@ def main():
         if index == 0:
             rgb = np.asarray(Image.open(data/case['input']).convert('RGB'), dtype=np.float32)/255
             verify_deep(args.out/(case['id']+'.deep.exr'), rgb, z)
-        row['failed'] = gate(row, args)
+        row['failed'] = gate(row, case, args)
+        row['quarantine'] = sorted(case.get('quarantine', {}))
         failed += [(case['id'], row['failed'])] if row['failed'] else []
         rows.append(row)
         all_errors.append(np.abs(error))
         (args.out/'results.json').write_text(json.dumps(rows, indent=2)+'\n')
-        print(json.dumps({'id': row['id'], **row['network_inverse_depth'], 'failed': row['failed']}), flush=True)
+        print(json.dumps({'id': row['id'], **row['network_inverse_depth'], 'failed': row['failed'],
+                          'quarantined': bool(row['quarantine'])}), flush=True)
     pooled = np.concatenate(all_errors)
     summary = {'cases': len(rows), 'failed': failed,
+               'quarantined': [row['id'] for row in rows if row['quarantine']],
                'aggregate': {'max_relative': float(pooled.max()), 'median_relative': float(np.median(pooled)),
                              'p99_relative': float(np.quantile(pooled, .99)),
                              'p999_relative': float(np.quantile(pooled, .999)), 'pixels': int(pooled.size)},
                'worst_interior_max_relative': max(row['network_inverse_depth']['interior_max_relative'] for row in rows),
                'worst_p999_relative': max(row['network_inverse_depth']['p999_relative'] for row in rows),
-               'worst_signed_bias': max((row['network_inverse_depth']['signed_bias'] for row in rows), key=abs)}
+               'worst_gated_signed_bias': max((row['network_inverse_depth']['signed_bias'] for row in rows
+                                               if 'signed_bias' not in row['quarantine']), key=abs)}
     (args.out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
     print(json.dumps(summary), flush=True)
     assert not failed, failed
