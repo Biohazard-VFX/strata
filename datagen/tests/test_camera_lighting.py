@@ -85,6 +85,22 @@ class SunTest(unittest.TestCase):
         dome = stage.GetPrimAtPath("/lights/dome")
         self.assertTrue(dome.GetAttribute("inputs:karma:light:renderlightgeo").Get())
 
+    def test_backdrop_is_camera_only_sky_mapped_like_the_dome(self) -> None:
+        stage = Usd.Stage.CreateInMemory()
+        hdri = lighting.Hdri("h", "h.exr", (0.48, 0.6, -0.64), 5.0, (1.0, 1.0, 1.0), 1.0)
+        lighting.author(stage, "/lights", lighting.Lighting(hdri, 0.0, 1.0), 1)
+        mesh = UsdGeom.Mesh(stage.GetPrimAtPath("/lights/backdrop"))
+        points = np.array(mesh.GetPointsAttr().Get())
+        st = np.array(UsdGeom.PrimvarsAPI(mesh).GetPrimvar("st").Get())
+        centre = np.argmin(np.abs(st - [0.5, 0.5]).sum(axis=1))
+        np.testing.assert_allclose(points[centre] / lighting.BACKDROP_M, [0.0, 0.0, 1.0], atol=1e-6)
+        top = np.argmax(st[:, 1])
+        np.testing.assert_allclose(points[top] / lighting.BACKDROP_M, [0.0, 1.0, 0.0], atol=1e-6)
+        primvars = UsdGeom.PrimvarsAPI(mesh)
+        self.assertEqual(primvars.GetPrimvar("karma:object:rendervisibility").Get(), "+primary")
+        self.assertEqual(primvars.GetPrimvar("instance_id").Get(), lighting.SKY_ID)
+        self.assertLess(lighting.BACKDROP_M, camera.CLIPPING_M[1])
+
     def test_lighting_drifts_smoothly_over_the_shot(self) -> None:
         hdri = lighting.Hdri("h", "h.exr", (0.48, 0.6, -0.64), 5.0, (1.0, 1.0, 1.0), 1.0)
         light = lighting.sample((hdri,), stream(5, "l"), 3.0, None, None, samples=722)

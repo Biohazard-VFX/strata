@@ -32,7 +32,9 @@ class PackTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp)
             (shot / "deep").mkdir()
-            write_deep(shot / "deep" / "0001.exr", [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
+            write_deep(
+                shot / "deep" / "0001.exr", [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2), (0.6, 1.0, 0, 3000.0)]]
+            )
             for frame in (2, 3):
                 shutil.copy(shot / "deep" / "0001.exr", shot / "deep" / f"{frame:04d}.exr")
             kept = pack.pack(shot, range(1, 4), 1, 2)
@@ -41,6 +43,7 @@ class PackTest(unittest.TestCase):
             layers = read_flat(shot / "layers" / "0002.exr")
             np.testing.assert_allclose(layers["L0.A"][0], [1.0, 0.5])
             np.testing.assert_allclose(layers["L0.invdepth"][0], [0.5, 0.5])
+            self.assertEqual(float(layers["L1.A"].max()), 0.0)
 
 
 class ChunkTest(unittest.TestCase):

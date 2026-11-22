@@ -15,6 +15,7 @@ PATH = "path"
 PATH_MIN_FRAMES = 97
 SENSOR_MM = (36.0, 20.25)
 CLIPPING_M = (0.03, 5000.0)
+REFERENCE_SUBJECT_M = 1.6
 MM_PER_LENS_UNIT = 100.0  # UsdGeomCamera lens values are tenths of a scene unit; Karma honours it.
 
 
@@ -193,8 +194,9 @@ def _path(
     t = timeline.sample_times(len(targets))
     duration = float(t[-1]) + 1.0
     swing = timeline.curve(rng, duration, 6.0, -60.0, 60.0)(t) + azimuth
-    distance = np.exp(timeline.curve(rng, duration, 8.0, np.log(2.5), np.log(11.0))(t))
-    height = timeline.curve(rng, duration, 7.0, 0.25, 2.2)(t)
+    size = subject_m / REFERENCE_SUBJECT_M
+    distance = size * np.exp(timeline.curve(rng, duration, 8.0, np.log(2.5), np.log(11.0))(t))
+    height = size * timeline.curve(rng, duration, 7.0, 0.25, 2.2)(t)
     fill = timeline.curve(rng, duration, 9.0, 0.3, 0.9)(t)
     fstop = timeline.curve(rng, duration, 10.0, 1.4, 16.0)(t) if dof else np.zeros_like(t)
     poses = np.stack(
@@ -226,8 +228,9 @@ def sample(
     targets = np.broadcast_to(np.asarray(target, np.float64), (count, 3)).copy()
     drawn_move = str(rng.choice(MOVES))
     move = _pick(choices.move, PATH if len(frames) >= PATH_MIN_FRAMES else drawn_move)
-    distance = _pick(choices.distance_m, float(np.exp(rng.uniform(np.log(2.5), np.log(11.0)))))
-    height = _pick(choices.height_m, float(rng.uniform(0.25, 2.2)))
+    size = subject_m / REFERENCE_SUBJECT_M
+    distance = _pick(choices.distance_m, size * float(np.exp(rng.uniform(np.log(2.5), np.log(11.0)))))
+    height = _pick(choices.height_m, size * float(rng.uniform(0.25, 2.2)))
     azimuth = _pick(choices.azimuth_deg, float(rng.uniform(0.0, 360.0)))
     fill = _pick(choices.fill, float(rng.uniform(0.3, 0.9)))
     dof = _pick(choices.depth_of_field, bool(rng.random() < 0.4))
@@ -268,7 +271,8 @@ def author(stage: Usd.Stage, path: str, track: CameraTrack) -> UsdGeom.Camera:
         focus.Set(float(lens[2]), time)
     camera.CreateHorizontalApertureAttr(SENSOR_MM[0] / MM_PER_LENS_UNIT)
     camera.CreateVerticalApertureAttr(SENSOR_MM[1] / MM_PER_LENS_UNIT)
-    camera.CreateClippingRangeAttr(Gf.Vec2f(*CLIPPING_M))
+    nearest = float(track.lenses[:, 2].min())
+    camera.CreateClippingRangeAttr(Gf.Vec2f(min(CLIPPING_M[0], 0.1 * nearest), CLIPPING_M[1]))
     camera.CreateShutterOpenAttr(track.shutter[0])
     camera.CreateShutterCloseAttr(track.shutter[1])
     return camera

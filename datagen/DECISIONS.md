@@ -32,3 +32,5 @@
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
 - Every frame gets K=4 layer targets (contract strata_contract.layers, the training merge rule); raw deep is kept every 24th frame, as long shots are 720 frames.
+- The sky is a camera-only 3000 m backdrop sphere (id 0, HDRI mapped like the dome), so every pixel has a deep sample and the deep flattens to the beauty everywhere.
+- Camera distance and height scale with the hero's horizontal size (2.5-11 m for a 1.6 m subject), so any creature fills a similar share of the frame.

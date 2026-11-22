@@ -51,6 +51,20 @@ class CameraPathTest(unittest.TestCase):
             self.assertGreater(checks.camera_steps(records)["fstop"], checks.STEP_LIMITS["fstop"])
 
 
+class FramingTest(unittest.TestCase):
+    def test_camera_distance_scales_with_the_subject(self) -> None:
+        ground = Ground(np.zeros((41, 41)), 0.5, {})
+        target = np.array([0.0, 0.01, 0.0])
+        for move in ("orbit", camera.PATH):
+            frames = tuple(range(1, 121))
+            choices = camera.CameraChoices(move=move)
+            small = camera.sample(stream(3, "c"), ground, target, 0.03, frames=frames, choices=choices)
+            large = camera.sample(stream(3, "c"), ground, target, 1.6, frames=frames, choices=choices)
+            ratio = small.frame_lenses()[:, 2] / large.frame_lenses()[:, 2]
+            np.testing.assert_allclose(ratio, 0.03 / 1.6, rtol=0.05)
+            np.testing.assert_allclose(small.frame_lenses()[:, 0], large.frame_lenses()[:, 0], rtol=1e-6)
+
+
 class SamplesTest(unittest.TestCase):
     def test_depth_of_field_or_motion_blur_doubles_the_samples(self) -> None:
         ground = Ground(np.zeros((41, 41)), 0.5, {})

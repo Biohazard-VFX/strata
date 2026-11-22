@@ -20,6 +20,7 @@ LIMITS = {
     "partial_share": (0.005, 1.0),
     "flatten_error": (0.0, 0.005),
     "flatten_excess": (0.0, 0.005),
+    "uncovered": (0.0, 0.0),
     "valid_id_fraction": (0.999, 1.0),
     "coverage_channel": (1.0, 1.0),
     "camera_error": (0.0, 1e-3),
@@ -62,14 +63,14 @@ def deep_metrics(
         ids = instance_ids(deep)
         for low, high in ranges:
             valid |= (ids >= low) & (ids < high)
-    covered = flat.alpha >= COVERED
     residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
     return {
         "mean_samples": float(deep.counts.mean()),
         "max_samples": float(deep.counts.max()),
         "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z - 1e-4)).sum()),
         "partial_share": float(flat.partial.mean()),
-        "flatten_error": float(np.abs(residual[covered]).mean()) if covered.any() else 0.0,
+        "flatten_error": float(np.abs(residual).mean()),
+        "uncovered": float((flat.alpha < COVERED).mean()),
         "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
         "valid_id_fraction": float(valid.mean()) if valid.size else 1.0,
         "coverage_channel": float("coverage" in deep.channels),

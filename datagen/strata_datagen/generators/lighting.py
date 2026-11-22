@@ -3,13 +3,15 @@
 from dataclasses import dataclass, field
 
 import numpy as np
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdShade
 
 from strata_datagen import timeline
-from strata_datagen.usdutil import FloatArray
+from strata_datagen.usdutil import FloatArray, IntArray, ints, tag_instances, vec2f, vec3f
 
-VERSION = "lighting-0.2.0"
+VERSION = "lighting-0.3.0"
 SUN_ANGLE_DEG = 0.53
+BACKDROP_M = 3000.0
+SKY_ID = 0
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,60 @@ def _sun_rotation(direction: tuple[float, float, float]) -> Gf.Vec3f:
     return Gf.Vec3f(float(pitch), float(yaw), 0.0)
 
 
+def _backdrop_mesh(stage: Usd.Stage, path: Sdf.Path, segments: int = 128) -> UsdGeom.Mesh:
+    """An inward-facing sphere whose st maps the HDRI exactly as Karma's latlong dome does."""
+    u = np.linspace(0.0, 1.0, segments + 1)
+    v = np.linspace(0.0, 1.0, segments // 2 + 1)
+    uu, vv = np.meshgrid(u, v)
+    theta, phi = np.pi * (1.0 - vv), 2.0 * np.pi * uu
+    points = BACKDROP_M * np.stack(
+        [np.sin(theta) * np.sin(phi), np.cos(theta), -np.sin(theta) * np.cos(phi)], axis=-1
+    )
+    columns = segments + 1
+    rows = segments // 2 + 1
+    index: IntArray = np.arange(rows * columns, dtype=np.int64).reshape(rows, columns)
+    quads = np.stack([index[:-1, :-1], index[:-1, 1:], index[1:, 1:], index[1:, :-1]], axis=-1).reshape(-1, 4)
+    mesh = UsdGeom.Mesh.Define(stage, path)
+    mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+    mesh.CreatePointsAttr(vec3f(points.reshape(-1, 3)))
+    mesh.CreateFaceVertexCountsAttr(ints(np.full(len(quads), 4)))
+    mesh.CreateFaceVertexIndicesAttr(ints(quads.ravel()))
+    mesh.CreateDoubleSidedAttr(defaultValue=True)
+    st = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar(
+        "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex
+    )
+    st.Set(vec2f(np.stack([uu, vv], axis=-1).reshape(-1, 2)))
+    mesh.CreateExtentAttr(UsdGeom.PointBased.ComputeExtent(mesh.GetPointsAttr().Get()))
+    return mesh
+
+
+def _backdrop(stage: Usd.Stage, rig: Sdf.Path, lighting: Lighting) -> Usd.Attribute:
+    """Camera-only sky geometry, so every pixel has a deep sample; returns its emission input."""
+    mesh = _backdrop_mesh(stage, rig.AppendChild("backdrop"))
+    prim = mesh.GetPrim()
+    UsdGeom.PrimvarsAPI(prim).CreatePrimvar(
+        "karma:object:rendervisibility", Sdf.ValueTypeNames.String, UsdGeom.Tokens.constant
+    ).Set("+primary")
+    tag_instances(prim, np.array([SKY_ID]))
+    material = UsdShade.Material.Define(stage, rig.AppendChild("backdrop_look"))
+    image = UsdShade.Shader.Define(stage, material.GetPath().AppendChild("sky"))
+    image.CreateIdAttr("ND_image_color3")
+    image.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath(lighting.hdri.asset))
+    image.CreateOutput("out", Sdf.ValueTypeNames.Color3f)
+    surface = UsdShade.Shader.Define(stage, material.GetPath().AppendChild("surface"))
+    surface.CreateIdAttr("ND_standard_surface_surfaceshader")
+    surface.CreateInput("base", Sdf.ValueTypeNames.Float).Set(0.0)
+    surface.CreateInput("specular", Sdf.ValueTypeNames.Float).Set(0.0)
+    surface.CreateInput("emission_color", Sdf.ValueTypeNames.Color3f).ConnectToSource(
+        image.ConnectableAPI(), "out"
+    )
+    emission = surface.CreateInput("emission", Sdf.ValueTypeNames.Float)
+    surface.CreateOutput("out", Sdf.ValueTypeNames.Token)
+    material.CreateSurfaceOutput("mtlx").ConnectToSource(surface.ConnectableAPI(), "out")
+    UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
+    return emission.GetAttr()
+
+
 def author(stage: Usd.Stage, path: str, lighting: Lighting, first_frame: int) -> None:
     """Dome and sun under one rotated rig; drift sample i is authored at first_frame - 1 + i."""
     rig = UsdGeom.Xform.Define(stage, path)
@@ -95,9 +151,11 @@ def author(stage: Usd.Stage, path: str, lighting: Lighting, first_frame: int) ->
     sun.CreateNormalizeAttr(defaultValue=True)
     UsdGeom.Xformable(sun).AddRotateXYZOp().Set(_sun_rotation(lighting.hdri.sun_direction))
     dome_intensity, sun_intensity = dome.CreateIntensityAttr(), sun.CreateIntensityAttr()
+    sky = _backdrop(stage, rig.GetPath(), lighting)
     for index, (offset, stops) in enumerate(lighting.drift):
         time = Usd.TimeCode(first_frame - 1 + index) if len(lighting.drift) > 1 else Usd.TimeCode.Default()
         scale = lighting.exposure_scale * float(2.0**stops)
         turn.Set(lighting.rotation_deg + float(offset), time)
         dome_intensity.Set(scale, time)
+        sky.Set(scale, time)
         sun_intensity.Set(scale * lighting.hdri.sun_irradiance, time)

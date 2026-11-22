@@ -55,8 +55,8 @@ class DeepTest(unittest.TestCase):
         self.assertNotEqual(half_alpha[-1], 25882)
 
 
-def write_deep(path: Path, samples: list[list[tuple[float, float, float]]]) -> None:
-    """Pixels of (premultiplied grey, alpha, id) samples at depth 2 m in a 2x1 deep image."""
+def write_deep(path: Path, samples: list[list[tuple[float, ...]]]) -> None:
+    """Pixels of (premultiplied grey, alpha, id[, depth, default 2 m]) samples in a 1-row deep image."""
     chans: dict[str, NDArray[np.object_]] = {}
     for name, index in (("R", 0), ("G", 0), ("B", 0), ("A", 1), ("coverage", 1), ("instance_id", 2)):
         cells = np.empty((1, len(samples)), dtype=object)
@@ -67,27 +67,27 @@ def write_deep(path: Path, samples: list[list[tuple[float, float, float]]]) -> N
     for name in ("Z", "ZBack"):
         cells = np.empty((1, len(samples)), dtype=object)
         for i, pixel in enumerate(samples):
-            cells[0, i] = np.full(len(pixel), 2.0, np.float32)
+            cells[0, i] = np.array([s[3] if len(s) > 3 else 2.0 for s in pixel], np.float32)
         chans[name] = cells
     header: dict[str, object] = {"compression": OpenEXR.ZIPS_COMPRESSION, "type": OpenEXR.deepscanline}
     OpenEXR.File(header, {k: OpenEXR.Channel(v) for k, v in chans.items()}).write(str(path))
 
 
 class QaTest(unittest.TestCase):
-    def test_sky_behind_partial_pixels_is_allowed_but_deep_may_not_exceed_beauty(self) -> None:
+    def test_deep_with_a_sky_sample_flattens_to_the_beauty_everywhere(self) -> None:
+        ranges = [(0, 4), (1000, 1001)]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "d.exr"
-            write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
-            sky = np.array([[0.5, 0.2 + 0.5 * 0.6]], np.float32)
-            beauty = dict.fromkeys("RGB", sky)
-            metrics = checks.deep_metrics(path, beauty, [(1, 4), (1000, 1001)])
+            write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2), (0.6, 1.0, 0, 3000.0)]])
+            beauty = {c: np.array([[0.5, 0.2 + 0.5 * 0.6]], np.float32) for c in "RGB"}
+            metrics = checks.deep_metrics(path, beauty, ranges)
             self.assertLess(metrics["flatten_error"], 1e-6)
-            self.assertLess(metrics["flatten_excess"], 1e-6)
+            self.assertEqual(metrics["uncovered"], 0.0)
             self.assertEqual(metrics["valid_id_fraction"], 1.0)
             dark = {c: np.array([[0.5, 0.1]], np.float32) for c in "RGB"}
-            self.assertGreater(
-                checks.deep_metrics(path, dark, [(1, 4), (1000, 1001)])["flatten_excess"], 0.04
-            )
+            self.assertGreater(checks.deep_metrics(path, dark, ranges)["flatten_excess"], 0.04)
+            write_deep(path, [[(0.5, 1.0, 1000)], [(0.2, 0.5, 2)]])
+            self.assertEqual(checks.deep_metrics(path, beauty, ranges)["uncovered"], 0.5)
 
 
 class GroomTest(unittest.TestCase):
