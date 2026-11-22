@@ -1,5 +1,7 @@
 # Architecture decisions
 
+- Torch transmission uses bounded row-local log-prefix scans, never a floating global CUDA scan, to make dense replay bitwise stable.
+
 - CUDA hybrid batches default to Torch math; raw target rebuilds and Alexa fields batch across views, while final-image codecs alone use bounded CPU threads.
 
 - Persistent spawned workers prepare native I/O; raw CSR samples cross queues as privately owned mmap descriptors, then gather crop columns on the device.

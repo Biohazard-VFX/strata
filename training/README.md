@@ -193,6 +193,8 @@ and Alexa grain on the selected device. Changed deep targets are rebuilt togethe
 across the batch through `strata_contract.torch_layers.reduce_sorted_samples`;
 that optional Torch module owns the same thresholds, tie breaking, hidden-sample
 rule and sky masking as `strata_contract.layers`. Reductions accumulate in float64.
+Transmission uses row-local log-prefix scans sized by actual maximum pixel density,
+avoiding CUDA global-scan carry-order variability without truncating samples.
 Alexa noise fields are batched by profile, retaining the studio permutation table,
 Nuke response curves and nearest-edge sharpening. Its tensor noise kernel compiles
 lazily on CUDA; include first-use compilation in startup, not steady-state timing.

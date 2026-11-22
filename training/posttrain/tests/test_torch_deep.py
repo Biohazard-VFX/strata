@@ -1,8 +1,27 @@
 import numpy as np
+import pytest
 import torch
 from strata_contract.layers import reduce_samples
 
 from strata_training.augment.torch_deep import TensorSamples
+
+
+@pytest.mark.parametrize(("pixels", "count"), [(2048, 128), (1, 16384)])
+def test_transmission_replays_are_bitwise_stable(math_device: str, pixels: int, count: int) -> None:
+    rng = np.random.default_rng(1931)
+    counts = torch.full((pixels,), count, dtype=torch.long, device=math_device)
+    n = pixels * count
+    samples = TensorSamples(
+        (1, pixels),
+        counts,
+        torch.ones(n, device=math_device),
+        torch.tensor(rng.uniform(0, 0.2, n).astype(np.float32), device=math_device),
+        torch.zeros((n, 3), device=math_device),
+        torch.ones(n, dtype=torch.long, device=math_device),
+    )
+    reference = samples.through().clone()
+    for _ in range(8):
+        torch.testing.assert_close(samples.through(), reference, atol=0, rtol=0)
 
 
 def test_torch_targets_match_contract(math_device: str) -> None:
