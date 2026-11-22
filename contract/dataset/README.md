@@ -20,11 +20,12 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   deep/0001.exr ... 0024.exr     raw deep, kept on the frame stride (`manifest.render.deep_stride`)
   layers/0001.exr ... 0024.exr   K = 4 sky-inclusive layer targets for every frame
   samples/<shot_id>_NNNN/        raw-sample sidecars of every recomposition frame (the deep stride)
-  .samples/<shot_id>_NNNN/<n>/   the immutable sidecar version each `samples/` entry points to
   qa/NNNN.json      raw QA acceptance of each frame (identity of every input it validated)
   scene/            optional: the USD the shot was rendered from (reproducibility, not training input)
   qa.json           optional: the generator's acceptance report
 ```
+
+Entries whose names start with a dot (`.staging/`) belong to the writer; readers ignore them.
 
 Frames are numbered from 1 and zero-padded to four digits, at 24 fps. `manifest.render.frames` is the
 rendered range: most shots are 8-frame clips, a minority are 24-96-frame sequences.
@@ -91,9 +92,11 @@ alpha 1, the sky colour and inverse depth 0. Training reads these for every fram
 ## samples/<shot_id>_NNNN/
 
 The raw samples of a recomposition frame (every frame on the deep stride from the first frame),
-as uncompressed C-order NPY (`strata_contract.samples`). `samples/<shot_id>_NNNN` is a relative
-symlink to an immutable version directory `.samples/<shot_id>_NNNN/<n>`; a new version is written in
-full, then the symlink is replaced atomically. Open the files through the `samples/` name:
+as uncompressed C-order NPY (`strata_contract.samples`). A frame directory is write-once: it appears
+whole, by one rename, and is never changed afterwards; only an offline removal deletes it. It is a
+real directory, never a symlink. `identity.json` records the SHA-256 of every file below, and its
+own SHA-256 is the frame's identity (recorded by raw QA). `strata_contract.samples.read` opens the
+directory once, reads every file through that handle and verifies each against `identity.json`:
 
 | file | dtype, shape | meaning |
 | --- | --- | --- |
@@ -105,6 +108,7 @@ full, then the symlink is replaced atomically. Open the files through the `sampl
 | `deep/alpha.npy` | float32 (N,) | the sample's conditional alpha: deep `coverage` clipped to [0, 1] |
 | `deep/rgb.npy` | float32 (N, 3) | premultiplied colour |
 | `deep/ids.npy` | int64 (N,) | round(instance_id / coverage); sky samples are kept with id 0 |
+| `identity.json` | JSON | `{"sha256": {"<file>": "<hex>"}}` for each file above |
 
 ## deep/NNNN.exr
 

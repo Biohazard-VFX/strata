@@ -129,6 +129,10 @@ def cmd_prune(args: argparse.Namespace) -> None:
     print("pruned raw deep", checks.prune(args.shot, _frames(args)), flush=True)
 
 
+def cmd_remove_samples(args: argparse.Namespace) -> None:
+    print("removed sidecars", pack.remove_samples(args.shot, _frames(args)), flush=True)
+
+
 def _label(shot: Path) -> str:
     scene = cast("dict[str, dict[str, object]]", export.load_json(shot / "manifest.json")["scene"])
     cam = cast("dict[str, float | str | bool]", scene["camera"])
@@ -214,6 +218,7 @@ def parser() -> argparse.ArgumentParser:
         ("pack", cmd_pack, "write layer targets for rendered frames and sidecars on the deep stride"),
         ("accept", cmd_accept, "raw QA of packed frames; records each frame's acceptance"),
         ("prune", cmd_prune, "delete off-stride raw deep of accepted, unchanged frames"),
+        ("remove-samples", cmd_remove_samples, "offline, no reader running: delete published sidecars"),
     ):
         p = sub.add_parser(name, help=text)
         p.add_argument("--shot", type=Path, required=True)

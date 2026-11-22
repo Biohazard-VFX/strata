@@ -1,11 +1,13 @@
 """After rendering: sky-inclusive K-layer targets for every frame, raw-sample sidecars on the deep stride.
 
 Packing never removes raw deep: it is QA evidence, and only `qa.checks.prune` removes it, after the
-frame has passed raw QA. Sidecars are published as immutable versions behind a symlink pointer.
+frame has passed raw QA. Sidecars are write-once: a frame's directory is published whole and never
+changed; only the offline `remove_samples` deletes it.
 """
 
 import json
 import os
+import secrets
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +24,8 @@ from strata_datagen.generators.lighting import SKY_ID
 from strata_datagen.qa.deep import instance_ids
 
 DEEP_STRIDE = 24
-VERSIONS = ".samples"
+STAGING = ".staging"
+REMOVE = "remove them with `strata-datagen remove-samples` while no reader runs, then pack again"
 
 
 @dataclass(frozen=True)
@@ -124,58 +127,64 @@ def images(beauty_path: Path) -> dict[str, NDArray[np.float32]]:
     }
 
 
-def versions(published: Path) -> Path:
-    """Where the immutable versions behind `samples/<frame_id>` live: `.samples/<frame_id>/<n>`."""
-    return published.parent.parent / VERSIONS / published.name
+def _staging(published: Path) -> Path:
+    """A directory no other publish can name, beside `samples/` on the same filesystem."""
+    return published.parent.parent / STAGING / f"{published.name}.{os.getpid()}.{secrets.token_hex(4)}"
 
 
-def _current(published: Path) -> str | None:
-    if not published.is_symlink():
-        if published.exists():
-            raise ValueError(f"{published} is not a version pointer; remove it and pack again")
-        return None
-    target = published.readlink()
-    if target.parent != Path(os.path.relpath(versions(published), published.parent)):
-        raise ValueError(f"{published} points outside its versions: {target}")
-    return target.name
-
-
-def _collect(published: Path) -> None:
-    """Remove every version, staging directory and pointer an earlier publish left unreferenced."""
-    current = _current(published)
-    _pointer_staging(published).unlink(missing_ok=True)
-    folder = versions(published)
-    for entry in sorted(folder.iterdir()) if folder.is_dir() else []:
-        if entry.name != current:
-            shutil.rmtree(entry)
-
-
-def _pointer_staging(published: Path) -> Path:
-    return published.with_name(f".{published.name}.pointer")
+def _verify_published(published: Path, encoded: dict[str, bytes]) -> None:
+    try:
+        found = contract_samples.read(published).identity
+    except (OSError, ValueError) as error:
+        raise ValueError(f"{published} is not a valid published frame: {error}; {REMOVE}") from error
+    wanted = contract_samples.identity(encoded)
+    if found != wanted:
+        raise ValueError(
+            f"{published} holds sidecars {found[:12]}, not the {wanted[:12]} packed now;"
+            f" published sidecars are immutable: {REMOVE}"
+        )
 
 
 def write_samples(frame: Samples, beauty_path: Path, published: Path) -> None:
-    """Publish a frame's sidecars as a new immutable version, then atomically repoint `published` to it.
+    """Publish a frame's sidecars once: stage a whole directory, then rename it to the absent `published`.
 
-    `published` is a relative symlink; at every step it names a complete version (or nothing before
-    the first publish), and the next publish clears whatever an interrupted one left behind.
+    An identical frame already published is left as it is; a different one is refused, never replaced.
+    rename(2) cannot replace a non-empty directory, so a published frame survives even a racing writer.
     """
-    _collect(published)
-    folder = versions(published)
-    current = _current(published)
-    version = folder / str(1 if current is None else int(current) + 1)
-    staging = version.with_name(version.name + ".partial")
-    (staging / "deep").mkdir(parents=True)
-    for name, value in images(beauty_path).items():
-        np.save(staging / f"{name}.npy", np.ascontiguousarray(value), allow_pickle=False)
-    for name, value in frame.arrays().items():
-        np.save(staging / "deep" / f"{name}.npy", np.ascontiguousarray(value), allow_pickle=False)
-    staging.rename(version)
-    pointer = _pointer_staging(published)
-    published.parent.mkdir(parents=True, exist_ok=True)
-    pointer.symlink_to(os.path.relpath(version, published.parent), target_is_directory=True)
-    pointer.replace(published)
-    _collect(published)
+    encoded = contract_samples.encode({**images(beauty_path), **frame.arrays()})
+    if published.exists(follow_symlinks=False):
+        _verify_published(published, encoded)
+        return
+    staging = _staging(published)
+    try:
+        for name, data in encoded.items():
+            path = staging / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        published.parent.mkdir(parents=True, exist_ok=True)
+        staging.rename(published)
+    except OSError:
+        shutil.rmtree(staging, ignore_errors=True)
+        if not published.exists():
+            raise
+        _verify_published(published, encoded)
+
+
+def remove_samples(shot: Path, frames: range) -> list[int]:
+    """Offline: delete the published sidecars of `frames` and abandoned staging; readers must be stopped."""
+    plan = ShotFrames.load(shot)
+    removed: list[int] = []
+    for frame in frames:
+        published = plan.sample_dir(shot, frame)
+        if not published.exists(follow_symlinks=False):
+            continue
+        doomed = _staging(published)
+        doomed.parent.mkdir(parents=True, exist_ok=True)
+        published.rename(doomed)
+        removed.append(frame)
+    if (shot / STAGING).is_dir():
+        shutil.rmtree(shot / STAGING)
+    return removed
 
 
 def pack(shot: Path, frames: range) -> None:

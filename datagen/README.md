@@ -23,7 +23,8 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
 - `strata_datagen/render/pack.py`: after each render task, sky-inclusive K-layer targets for every
   frame (`strata_contract.layers`, in `../contract/dataset`) and raw-sample sidecars on the deep
   stride. It never deletes: `accept` runs raw QA per frame and records it, then `prune` drops
-  off-stride raw deep of accepted, unchanged frames only.
+  off-stride raw deep of accepted, unchanged frames only. Sidecars are write-once; to repack a
+  changed frame, stop every reader and run `remove-samples` first.
 - `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).
 - `blender/`: FBX to USD conversion, MPFB human export and creature export, run inside Blender.
 

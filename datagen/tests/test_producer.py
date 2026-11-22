@@ -1,9 +1,8 @@
+import dataclasses
 import json
 import shutil
 import tempfile
 import unittest
-from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 from unittest import mock
@@ -197,60 +196,64 @@ class SidecarTest(unittest.TestCase):
             shot = Path(tmp) / "s"
             write_shot(shot, [CLEAN, CLEAN], stride=24)
             pack.pack(shot, range(1, 3))
-            ids = shot / "samples" / "s_0001" / "deep" / "ids.npy"
-            np.save(ids, np.zeros_like(np.load(ids)), allow_pickle=False)
+            pack.remove_samples(shot, range(1, 2))
+            frame = pack.samples(read_deep(shot / "deep" / "0001.exr"))
+            wrong = dataclasses.replace(frame, ids=np.zeros_like(frame.ids))
+            published = shot / "samples" / "s_0001"
+            pack.write_samples(wrong, shot / "beauty" / "0001.exr", published)
+            self.assertEqual(contract_samples.errors(published, (1, 3)), [])
             failures = shot_failures(shot)
             self.assertTrue(any(f.startswith("frame 1: samples_mismatch") for f in failures), failures)
             shutil.rmtree(shot / "samples")
             self.assertTrue(any("frame 1: s_0001: missing" in f for f in shot_failures(shot)))
 
-    def test_an_interrupted_republish_leaves_a_complete_version_published_and_a_retry_recovers(self) -> None:
-        for step in ("write", "version", "pointer", "switch", "collect"):
-            with self.subTest(step), tempfile.TemporaryDirectory() as tmp:
+    def test_a_sidecar_file_that_differs_from_its_recorded_identity_is_unreadable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "s"
+            write_shot(shot, [CLEAN], stride=1)
+            pack.pack(shot, range(1, 2))
+            ids = shot / "samples" / "s_0001" / "deep" / "ids.npy"
+            np.save(ids, np.zeros_like(np.load(ids)), allow_pickle=False)
+            errors = contract_samples.errors(ids.parent.parent, (1, 3))
+            self.assertEqual(errors, ["s_0001: unreadable: deep/ids.npy does not match identity.json"])
+            with self.assertRaisesRegex(ValueError, "not a valid published frame"):
+                pack.pack(shot, range(1, 2))
+
+    def test_an_interrupted_publish_publishes_nothing_and_a_retry_publishes(self) -> None:
+        for name in ("write_bytes", "rename"):
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "s"
+                write_shot(shot, [CLEAN], stride=1)
+                with (
+                    mock.patch.object(Path, name, side_effect=OSError("injected")),
+                    self.assertRaises(OSError),
+                ):
+                    pack.pack(shot, range(1, 2))
+                self.assertFalse((shot / "samples" / "s_0001").exists())
+                self.assertEqual(list((shot / pack.STAGING).iterdir()), [])
+                pack.pack(shot, range(1, 2))
+                self.assertEqual(contract_samples.errors(shot / "samples" / "s_0001", (1, 3)), [])
+
+    def test_anything_but_the_identical_frame_at_the_published_path_is_refused(self) -> None:
+        for kind in ("empty", "symlink", "file"):
+            with self.subTest(kind), tempfile.TemporaryDirectory() as tmp:
                 shot = Path(tmp) / "s"
                 write_shot(shot, [CLEAN], stride=1)
                 pack.pack(shot, range(1, 2))
                 published = shot / "samples" / "s_0001"
-                beauty = shot / "beauty" / "0001.exr"
-                sky = pack.samples(_sky_everywhere(shot))
-                with _failing(step, published), self.assertRaises(OSError):
-                    pack.write_samples(sky, beauty, published)
-                self.assertEqual(contract_samples.errors(published, (1, 3)), [])
-                expected = [0, 0, 0] if step == "collect" else [2, 0, 1, 0, 0]
-                self.assertEqual(contract_samples.load(published)["ids"].tolist(), expected)
-                pack.write_samples(sky, beauty, published)
-                self.assertEqual(contract_samples.load(published)["ids"].tolist(), [0, 0, 0])
-                self.assertEqual([p.name for p in (shot / "samples").iterdir()], ["s_0001"])
-                self.assertEqual(len(list((shot / ".samples" / "s_0001").iterdir())), 1)
-
-    def test_a_published_path_that_is_not_a_version_pointer_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN], stride=1)
-            (shot / "samples" / "s_0001").mkdir(parents=True)
-            with self.assertRaises(ValueError):
+                elsewhere = published.rename(shot / "elsewhere")
+                if kind == "empty":
+                    published.mkdir()
+                elif kind == "symlink":
+                    published.symlink_to(Path("..") / elsewhere.name, target_is_directory=True)
+                else:
+                    published.write_bytes(b"")
+                self.assertTrue(contract_samples.errors(published, (1, 3)))
+                with self.assertRaisesRegex(ValueError, "not a valid published frame"):
+                    pack.pack(shot, range(1, 2))
+                self.assertEqual(pack.remove_samples(shot, range(1, 2)), [1])
                 pack.pack(shot, range(1, 2))
-
-
-@contextmanager
-def _failing(step: str, published: Path) -> Generator[None]:
-    """Make one step of a sidecar publish raise, the way a crash or full disk would stop it there."""
-    replace = Path.replace
-
-    def switch(path: Path, target: Path) -> Path:
-        if Path(target) == published:
-            raise OSError("injected")
-        return replace(path, target)
-
-    patches = {
-        "write": mock.patch.object(np, "save", side_effect=OSError("injected")),
-        "version": mock.patch.object(Path, "rename", side_effect=OSError("injected")),
-        "pointer": mock.patch.object(Path, "symlink_to", side_effect=OSError("injected")),
-        "switch": mock.patch.object(Path, "replace", switch),
-        "collect": mock.patch.object(shutil, "rmtree", side_effect=OSError("injected")),
-    }
-    with patches[step]:
-        yield
+                self.assertEqual(contract_samples.errors(published, (1, 3)), [])
 
 
 class SchemaTest(unittest.TestCase):

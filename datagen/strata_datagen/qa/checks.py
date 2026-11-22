@@ -189,13 +189,6 @@ def _canonical(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def _tree(directory: Path) -> str | None:
-    if not directory.is_dir():
-        return None
-    found = sorted(p for p in directory.rglob("*") if p.is_file())
-    return _canonical({p.relative_to(directory).as_posix(): digest(p) for p in found})
-
-
 def inputs(shot: Path, frame: int) -> dict[str, str | None]:
     """Identity of everything raw QA of `frame` reads; manifest `timings` is bookkeeping, not input."""
     paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
@@ -209,7 +202,11 @@ def inputs(shot: Path, frame: int) -> dict[str, str | None]:
         "beauty": digest(paths["beauty"]) if paths["beauty"].exists() else None,
         "deep": digest(paths["deep"]) if paths["deep"].exists() else None,
         "targets": digest(paths["layers"]) if paths["layers"].exists() else None,
-        "samples": _tree(plan.sample_dir(shot, frame)) if plan.recomposition(frame) else None,
+        "samples": (
+            contract_samples.recorded_identity(plan.sample_dir(shot, frame))
+            if plan.recomposition(frame)
+            else None
+        ),
     }
 
 
