@@ -7,17 +7,18 @@ import numpy as np
 from pxr import Usd, UsdGeom
 
 from strata_datagen.fields import Ground
-from strata_datagen.generators import camera, hero, lighting, materials, scatter, terrain
+from strata_datagen.generators import camera, hero, lighting, materials, scatter, terrain, thin
 from strata_datagen.generators.scatter import Disk, Layer
 from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
 from strata_datagen.render.pack import DEEP_STRIDE
 from strata_datagen.rng import stream
 from strata_datagen.scene import layers, looks
-from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec, frames
+from strata_datagen.scene.spec import DEFAULT_FRAMES, REFERENCE_WIDTH_PX, ShotSpec, frames
 from strata_datagen.usdutil import new_stage, relative_asset, tag_instances
 
 TERRAIN_ID = 1
+FIRST_THIN_ID = 100
 FIRST_SCATTER_ID = 1000
 TARGET_IRRADIANCE = 3.0
 GROWING = ("grass_near", "grass_far", "groundcover", "shrubs")
@@ -46,6 +47,7 @@ class Shot:
     track: camera.CameraTrack
     frames: tuple[int, ...]
     light: lighting.Lighting
+    thin: list[thin.Structure]
     layers: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     assets: dict[str, Model] = field(default_factory=dict[str, Model])
 
@@ -84,6 +86,18 @@ def _hdris(library: Library, root: Path, scene_dir: Path) -> tuple[lighting.Hdri
     )
 
 
+def thin_view(track: camera.CameraTrack, motion: hero.HeroMotion, radius: float, height: float) -> thin.View:
+    focal = track.lens.focal_mm
+    return thin.View(
+        cameras=track.samples,
+        tan_half=(0.5 * camera.SENSOR_MM[0] / focal, 0.5 * camera.SENSOR_MM[1] / focal),
+        pixel_rad=camera.SENSOR_MM[0] / focal / REFERENCE_WIDTH_PX,
+        subject=motion.positions,
+        subject_radius_m=radius,
+        subject_height_m=height,
+    )
+
+
 def plan(spec: ShotSpec, library: Library, root: Path, frame_count: int = DEFAULT_FRAMES) -> Shot:
     directory = root / "shots" / spec.shot_id
     clip = frames(spec, frame_count)
@@ -109,7 +123,11 @@ def plan(spec: ShotSpec, library: Library, root: Path, frame_count: int = DEFAUL
         spec.hdri_rotation_deg,
         samples=samples,
     )
-    return Shot(spec, directory, ground, params, surface, entry.key, pose, motion, track, clip, light)
+    view = thin_view(track, motion, 0.5 * subject, height)
+    structures = thin.sample(stream(spec.seed, "thin"), ground, view, spec.thin)
+    return Shot(
+        spec, directory, ground, params, surface, entry.key, pose, motion, track, clip, light, structures
+    )
 
 
 def _exclusions(shot: Shot, hero_radius: float) -> list[Disk]:
@@ -176,6 +194,34 @@ def _author_scatter(shot: Shot, library: Library, stage: Usd.Stage, root: Path) 
         next_id += len(instances)
 
 
+def _author_thin(shot: Shot, stage: Usd.Stage) -> None:
+    """Each structure is its own binary layer, referenced here and bound to its finishes."""
+    next_id = FIRST_THIN_ID
+    for index, structure in enumerate(shot.thin):
+        name = f"thin_{index}_{structure.kind}"
+        layer = new_stage(shot.scene_dir / f"{name}.usdc")
+        parts = thin.author(
+            layer,
+            "/structure",
+            structure,
+            next_id,
+            first_frame=shot.frames[0],
+            samples=len(shot.track.samples),
+        )
+        layer.SetDefaultPrim(layer.GetPrimAtPath("/structure"))
+        layer.GetRootLayer().Save()
+        stage.DefinePrim(f"/World/thin/{name}").GetReferences().AddReference(f"./{name}.usdc")
+        finishes = {"strands": structure.strand_finish, "members": structure.member_finish}
+        for part in parts:
+            material = looks.thin_finish(stage, finishes[part.name])
+            for prim in part.prims:
+                materials.bind(
+                    stage.OverridePrim(prim.replace("/structure", f"/World/thin/{name}", 1)), material
+                )
+            shot.layers.append({"name": f"{name}_{part.name}", "first_id": part.instance_id, "count": 1})
+            next_id = part.instance_id + 1
+
+
 def _terrain_layer(shot: Shot) -> str:
     path = shot.scene_dir / "terrain.usdc"
     stage = new_stage(path)
@@ -215,6 +261,7 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
         groom=groom,
     )
     _author_scatter(shot, library, stage, root)
+    _author_thin(shot, stage)
     camera.author(stage, "/World/camera", shot.track)
     lighting.author(stage, "/World/lights", shot.light, shot.frames[0])
     settings.author(

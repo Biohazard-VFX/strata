@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from pxr import Usd, UsdShade
 
-from strata_datagen.generators import materials
+from strata_datagen.generators import materials, thin
 from strata_datagen.library.catalogue import Hero, Model, Surface
 from strata_datagen.usdutil import relative_asset
 
@@ -66,3 +66,11 @@ def hero(
         stage, f"{MATERIALS}/hero_groom", materials.Look(materials.Textures(albedo), roughness=0.45)
     )
     return skin, groom
+
+
+def thin_finish(stage: Usd.Stage, finish: thin.Finish) -> UsdShade.Material:
+    path = f"{MATERIALS}/thin_{finish.name}"
+    if stage.GetPrimAtPath(path):
+        return UsdShade.Material(stage.GetPrimAtPath(path))
+    look = materials.Look(None, roughness=finish.roughness, base_color=finish.color, metallic=finish.metallic)
+    return materials.author(stage, path, look)

@@ -3,9 +3,11 @@
 from dataclasses import dataclass, field
 
 from strata_datagen.generators.camera import CameraChoices
+from strata_datagen.generators.thin import Choice
 
 RECIPE_VERSION = "strata-datagen-recipe-0.3.0"
 DEFAULT_FRAMES = 720
+REFERENCE_WIDTH_PX = 1280
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,7 @@ class ShotSpec:
     foreground_cover: bool | None = None
     frame_count: int | None = None
     camera: CameraChoices = field(default_factory=CameraChoices)
+    thin: tuple[Choice, ...] | None = None
 
     @property
     def shot_id(self) -> str:
