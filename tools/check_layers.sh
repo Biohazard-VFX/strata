@@ -68,7 +68,7 @@ for path in Path('runtime').rglob('*'):
         if last-first+1 > 100:
             errors.append(f'{path}:{first}: function {name} exceeds 100 lines')
 python_layers = (
-    ('training/strata_train', ('runtime','datagen','strata_datagen'),
+    ('training', ('runtime','datagen','strata_datagen'),
      r'(?:\.\./runtime|\.\./datagen|runtime/|datagen/)', 'cross-side imports must use contract'),
     ('contract/strata_contract', ('runtime','training','datagen','strata_train','strata_datagen','strata_dataset'),
      r'(?:\.\./runtime|\.\./datagen|runtime/|datagen/)', 'cross-side imports must use contract'),

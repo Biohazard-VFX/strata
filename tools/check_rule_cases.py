@@ -60,6 +60,7 @@ CASES = [
     ('datagen dynamic runtime import', {'datagen/tools/unit.py':'__import__("runtime")\n'}, 'datagen may depend only'),
     ('datagen training path', {'datagen/strata_datagen/unit.py':'ROOT = "../training/strata_train"\n'}, 'forbidden cross-side path'),
     ('training imports datagen', {'training/strata_train/unit.py':'import strata_datagen.cli\n'}, 'cross-side imports'),
+    ('training tests import datagen', {'training/tests/unit.py':'from datagen import cli\n'}, 'cross-side imports'),
     ('runtime names datagen', {'runtime/tests/unit.py':'import strata_datagen\n'}, 'runtime cannot depend'),
     ('dataset contract imports datagen', {'contract/dataset/strata_dataset/unit.py':'from strata_datagen import rng\n'}, 'dataset contract imports no'),
     ('model contract imports dataset', {'contract/strata_contract/unit.py':'import strata_dataset\n'}, 'cross-side imports'),
