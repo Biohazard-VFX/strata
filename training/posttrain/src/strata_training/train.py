@@ -32,6 +32,11 @@ def train(config_path: Path) -> dict[str, Any]:
     output = Path(config["output"])
     output.mkdir(parents=True, exist_ok=True)
     entries = entries_for(Path(config["index"]), Path(config["protocol"]), "train")
+    if any(e.get("compact_scene_only", False) for e in entries):
+        raise ValueError(
+            "Compact datagen targets omit sky colour/coverage; background supervision "
+            "must be published before training this representation"
+        )
     frames = [Frame(e, Path(config["features"]), config["scale_mode"]) for e in entries]
     online = (
         OnlineLoader(
@@ -69,7 +74,7 @@ def train(config_path: Path) -> dict[str, Any]:
             .eval()
             .requires_grad_(False)
         )
-        teacher.base.encoder.to(device)
+        teacher.base.encoder.to(device, dtype=torch.bfloat16)
         encoder = FrozenEncoder(teacher.base.encoder, compiled=config["compile_encoder"])
     mean, std = normalization(frames)
     head.input_mean.copy_(torch.as_tensor(mean).to(device))

@@ -78,7 +78,7 @@ The container's one-command entry point is `uv run --frozen --no-dev strata-trai
 
 `predict` accepts `--scale-mode oracle-aligned` to substitute the same GT-derived global-scale input used by the historical probe, and `--features PATH` to evaluate a checkpoint on a different feature cache. It records both training and inference configurations; checkpoint bytes remain unchanged. For a trainable decoder, a tiled scalar-only pass calibrates that checkpoint's current scalar prior using the same GT solid-surface rule as the probe cache, then a second pass conditions the nonlinear deep head on it. Reusing a stale stock-model scale after decoder training is not an oracle alignment. This is an oracle-conditioned diagnostic, not metric inference or oracle-trained retraining.
 
-`baselines ... --calibration PATH/curves.json` reuses the original training-only curves without fitting on OOD frames. An evaluation-only protocol can have an empty `train` list and all pilot frame IDs in `test`, with the exact index SHA256. Do not train on these shots. Native role masks decode `round(instance_id/A)` per deep sample, include any visible groom contribution, and threshold composited hero coverage at 0.1 for silhouettes.
+`baselines ... --calibration PATH/curves.json` reuses the original training-only curves without fitting on OOD frames. An evaluation-only protocol can have an empty `train` list and all pilot frame IDs in `test`, with the exact index SHA256. Do not train on these shots. Native role masks decode `round(instance_id/coverage)` per deep sample, include any visible groom contribution, and threshold composited hero coverage at 0.1 for silhouettes.
 
 See `DECISIONS.md` for design choices. Measured outcomes and diagnostics live outside the repository under the project's results/data directories.
 
@@ -99,8 +99,10 @@ augmentation package's public memory-map format, `noisy.npy`, and `denoised.npy`
 (scene-linear ACEScg CHW). `strata_training.data.online.prepare_sample(entry,
 denoised_array, output_directory)` builds this boundary from the native contract and
 an actual denoiser output. Missing denoised images/IDs are errors, never noisy or
-invented fallbacks. The current datagen contract does not yet publish a denoised layer;
-prepare supplied denoises explicitly until it does.
+invented fallbacks. Pass `None` as the denoised array to read the published `denoised`
+beauty part directly. Feature extraction also uses native target-cache denoises by
+default; it stores and hashes the exact model-input image for matching evaluation.
+Raw C beauty stays separate as the reconstruction target.
 
 Build the clean cache from those same images:
 
@@ -116,3 +118,20 @@ crop plus halo, then transfers its image and matching targets. No augmented feat
 are written. `augmentation` passes explicit settings to `AugmentConfig.from_dict`;
 use top-level `clean_fraction`, not `augmentation.clean`. Logs include loader seconds
 and clean/live counts. CPU-heavy augmentation is not silently pre-baked.
+
+### Native datagen layout and supervision boundary
+
+Target preparation prefers `layers/NNNN.exr` for every camera frame, including frames
+without raw deep on the 24-frame storage stride. It does not manufacture deep IDs or
+fur/hero masks on those frames; role-specific evaluation groups are omitted when
+those masks are unavailable. Raw-deep sky samples (ID 0, decoded using float
+`coverage`) retain alpha/RGB targets but have zero target inverse depth, excluding
+them from both depth and depth-gradient losses.
+
+The current datagen packer explicitly removes sky samples before writing compact
+layers. Those files therefore cannot supply the required sky colour/coverage
+supervision. Preparation can inspect/cache them, but training rejects their
+`compact_scene_only` index entries. The producer must publish sky-inclusive targets
+(or an explicit background target representation) before long-shot training can be
+qualified. Raw-deep augmentation also requires real deep samples; missing stride
+frames are not converted into invented per-sample identities.

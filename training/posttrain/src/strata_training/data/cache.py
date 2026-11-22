@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from strata_training.data.compact import read_layers
 from strata_training.data.exr import read_deep, read_rgb, read_roles
 from strata_training.data.metadata import CONTRACT, camera_frames, category
 from strata_training.io import save_arrays, write_json
@@ -40,13 +41,17 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                         raise ValueError("Target cache K changed; use a new cache directory")
                     if legacy is None and (
                         "role_mask_version" not in existing
-                        or str(existing["role_mask_version"]) != "deep-visible-v1"
+                        or str(existing["role_mask_version"]) != "deep-visible-v2"
                     ):
                         raise ValueError("Native role masks changed; use a new cache directory")
             if not cache.exists():
-                target = read_deep(shot / "deep" / f"{int(frame):04d}.exr", layers)
-                if not target.valid.any():
-                    raise ValueError(f"No visible deep geometry in {identifier}")
+                packed = shot / "layers" / f"{int(frame):04d}.exr"
+                deep = shot / "deep" / f"{int(frame):04d}.exr"
+                target = (
+                    read_layers(packed, layers)
+                    if packed.exists()
+                    else read_deep(deep, layers, background="background" in manifest)
+                )
                 image = read_rgb(
                     shot / "beauty" / f"{int(frame):04d}.exr", legacy=legacy is not None
                 )
@@ -65,9 +70,12 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                 else:
                     srgb = display_rgb(image, manifest.get("color_space", "ACEScg"))
                     mixed = (target.alpha[0] > 0.03) & (target.alpha[0] < 0.97)
-                    roles = read_roles(shot / "deep" / f"{frame:04d}.exr")
-                    fur = roles["fur"]
-                    reference = {"foreground": roles["foreground"]}
+                    reference = read_roles(deep) if deep.exists() else {}
+                    fur = reference.pop("fur", None)
+                if "background" in manifest:
+                    reference["denoised"] = fp16_safe(
+                        read_rgb(shot / "beauty" / f"{int(frame):04d}.exr", part_name="denoised")
+                    )
                 save_arrays(
                     cache,
                     inverse_depth=target.inverse_depth,
@@ -76,8 +84,8 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                     beauty=fp16_safe(image),
                     srgb=srgb,
                     mixed=mixed,
-                    fur=fur,
-                    role_mask_version=np.array("legacy-v004" if legacy else "deep-visible-v1"),
+                    **({"fur": fur} if fur is not None else {}),
+                    role_mask_version=np.array("legacy-v004" if legacy else "deep-visible-v2"),
                     **reference,
                 )
             entries.append(
@@ -90,6 +98,10 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                     "cache": str(cache.resolve()),
                     "manifest": str(manifest_path.resolve()),
                     "legacy_data": str(legacy) if legacy else None,
+                    "compact_scene_only": bool(
+                        "background" in manifest
+                        and (shot / "layers" / f"{int(frame):04d}.exr").exists()
+                    ),
                 }
             )
     if not entries:

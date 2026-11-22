@@ -77,6 +77,13 @@ def _save(
     )
 
 
+def _denoised(entry: dict[str, Any], samples: Path | None) -> Array | None:
+    if samples is not None:
+        return np.load(samples / entry["id"] / "denoised.npy")
+    with np.load(entry["cache"]) as data:
+        return data["denoised"].astype(np.float32) if "denoised" in data else None
+
+
 def extract(
     index: Path,
     output: Path,
@@ -103,22 +110,20 @@ def extract(
         for indices in clip_indices(shot, clip_length):
             clip = [shot[i] for i in indices]
             ids = [e["id"] for e in clip]
+            denoises = [_denoised(e, samples) for e in clip]
             if all((output / e["id"] / "base.npz").exists() for e in clip):
-                if samples is not None:
-                    for entry in clip:
+                for entry, denoise in zip(clip, denoises, strict=True):
+                    if denoise is not None:
                         context = json.loads((output / entry["id"] / "context.json").read_text())
-                        image = np.load(samples / entry["id"] / "denoised.npy", mmap_mode="r")
-                        if context.get("image_sha256") != image_digest(image):
+                        if context.get("image_sha256") != image_digest(denoise):
                             raise ValueError(
                                 "Existing clean cache input changed; use a new directory"
                             )
                 completed += len(clip)
                 continue
             arrays = [
-                np.load(e["cache"])["srgb"]
-                if samples is None
-                else display_rgb(np.load(samples / e["id"] / "denoised.npy"), "ACEScg")
-                for e in clip
+                np.load(e["cache"])["srgb"] if denoise is None else display_rgb(denoise, "ACEScg")
+                for e, denoise in zip(clip, denoises, strict=True)
             ]
             image = torch.as_tensor(np.stack(arrays).astype(np.float32) / 255, device=device)
             height, width = image.shape[-2:]
@@ -133,7 +138,7 @@ def extract(
                         preset == "depthpro2-h"
                         and entry["legacy_data"]
                         and len(clip) == 1
-                        and samples is None
+                        and denoises[i] is None
                     ):
                         inverse = np.load(Path(entry["legacy_data"]) / "dp2.npz")["inverse_depth"]
                         full_features = None
@@ -158,18 +163,17 @@ def extract(
                         ids,
                     )
                     completed += 1
-                    if samples is not None:
+                    denoise = denoises[i]
+                    if denoise is not None:
                         save_array(
                             output / entry["id"] / "image.npy",
-                            np.load(samples / entry["id"] / "denoised.npy").astype(np.float32),
+                            denoise.astype(np.float32),
                         )
                         write_json(
                             output / entry["id"] / "context.json",
                             {
                                 "clip_ids": ids,
-                                "image_sha256": image_digest(
-                                    np.load(samples / entry["id"] / "denoised.npy")
-                                ),
+                                "image_sha256": image_digest(denoise),
                             },
                         )
     write_json(

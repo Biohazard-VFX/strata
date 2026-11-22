@@ -37,7 +37,7 @@ class Frame:
                 digest = hashlib.sha256(np.asarray(image, dtype=np.float32).tobytes()).hexdigest()
                 if digest != context["image_sha256"]:
                     raise ValueError("Feature cache image identity mismatch")
-                self.arrays["target_beauty"] = self.arrays["beauty"]
+                self.arrays.setdefault("target_beauty", self.arrays["beauty"])
                 self.arrays["beauty"] = image
         self.features = np.load(root / "features.npy", mmap_mode="r")
         self.pyramid = [np.load(root / f"pyramid_{i}.npy", mmap_mode="r") for i in range(4)]
@@ -86,7 +86,11 @@ def batch(
     targets = {
         key: tensor(
             [
-                f.arrays[key][..., y + halo : y + halo + crop, x + halo : x + halo + crop]
+                f.arrays.get("target_beauty", f.arrays[key])[
+                    ..., y + halo : y + halo + crop, x + halo : x + halo + crop
+                ]
+                if key == "beauty"
+                else f.arrays[key][..., y + halo : y + halo + crop, x + halo : x + halo + crop]
                 for f, y, x in selected
             ]
         )

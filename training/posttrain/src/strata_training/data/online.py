@@ -25,7 +25,7 @@ def image_digest(image: Array) -> str:
     return hashlib.sha256(np.asarray(image, dtype=np.float32).tobytes()).hexdigest()
 
 
-def prepare_sample(entry: dict[str, Any], denoised: Array, output: Path) -> None:
+def prepare_sample(entry: dict[str, Any], denoised: Array | None, output: Path) -> None:
     """Publish native raw samples and supplied linear ACEScg denoise, never synthesize IDs.
 
     Borrowed image is copied to atomic array files; output is a cache for this entry only.
@@ -34,9 +34,12 @@ def prepare_sample(entry: dict[str, Any], denoised: Array, output: Path) -> None
     shot = Path(entry["manifest"]).parent
     frame = f"{entry['frame']:04d}.exr"
     noisy = read_rgb(shot / "beauty" / frame)
+    if denoised is None:
+        denoised = read_rgb(shot / "beauty" / frame, part_name="denoised")
     if noisy.shape != denoised.shape or not np.isfinite(denoised).all():
         raise ValueError("Denoised beauty must be finite and match native beauty dimensions")
-    save_samples(output / "deep", read_samples(shot / "deep" / frame))
+    if (shot / "deep" / frame).exists():
+        save_samples(output / "deep", read_samples(shot / "deep" / frame))
     save_array(output / "noisy.npy", noisy)
     save_array(output / "denoised.npy", denoised.astype(np.float32))
 
@@ -137,7 +140,7 @@ class OnlineLoader:
             if rng.random() < self.clean_fraction:
                 clean.append(position)
                 image = self.shots[i].denoised[:, *window]
-                beauty = image
+                beauty = frame.arrays.get("target_beauty", frame.arrays["beauty"])[:, *window]
                 scale = frame.scale
             else:
                 live.append(position)

@@ -164,8 +164,14 @@ def collect(
     )
     masks = {
         "all": np.ones_like(data["mixed"], dtype=bool),
-        f"{entry['category']} / fur": data["fur"],
-        f"{entry['category']} / hard": ~data["fur"],
+        **(
+            {
+                f"{entry['category']} / fur": data["fur"],
+                f"{entry['category']} / hard": ~data["fur"],
+            }
+            if "fur" in data
+            else {}
+        ),
     }
     for group, region in masks.items():
         mixed = data["mixed"] & region
