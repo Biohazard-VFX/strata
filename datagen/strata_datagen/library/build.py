@@ -197,6 +197,9 @@ def prepare_heroes(sources: Sources, root: Path) -> list[catalogue.Hero]:
                 _rel(albedo, root),
                 poses,
                 catalogue.Provenance(manifest.source, manifest.license, str(manifest.directory)),
+                catalogue.HeroHair(manifest.regions, manifest.forward, manifest.facial_hair)
+                if "scalp" in manifest.regions
+                else None,
             )
         )
     return out

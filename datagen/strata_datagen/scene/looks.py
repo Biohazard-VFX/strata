@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from pxr import Usd, UsdShade
 
-from strata_datagen.generators import materials
+from strata_datagen.generators import hairstyle, materials
 from strata_datagen.library.catalogue import Hero, Model, Surface
 from strata_datagen.usdutil import relative_asset
 
@@ -66,3 +66,23 @@ def hero(
         stage, f"{MATERIALS}/hero_groom", materials.Look(materials.Textures(albedo), roughness=0.45)
     )
     return skin, groom
+
+
+def hair(stage: Usd.Stage, style: hairstyle.Style) -> tuple[UsdShade.Material, UsdShade.Material]:
+    """Scalp and facial hair materials; wet hair is smoother with a clear coat."""
+    roughness, coat = (0.18, 0.6) if style.wet else (0.3, 0.0)
+    scalp = materials.author_hair(
+        stage,
+        f"{MATERIALS}/hero_hair",
+        materials.HairLook(
+            style.colour.melanin, style.colour.redness, style.colour.randomize, roughness, coat
+        ),
+    )
+    facial = materials.author_hair(
+        stage,
+        f"{MATERIALS}/hero_facial_hair",
+        materials.HairLook(
+            style.facial_colour.melanin, style.facial_colour.redness, style.facial_colour.randomize
+        ),
+    )
+    return scalp, facial
