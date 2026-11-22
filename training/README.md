@@ -65,7 +65,13 @@ New runs default to `early_stopping: true`, `validation_every: 250` and
 separate scene-distribution cohort, not a different pose of a training scene. The
 loader rejects the training index itself and overlapping shot/frame/target/manifest
 identities. Reserve different shots again for the final OOD test; never select
-checkpoints on that test set.
+checkpoints on that test set. Canary shots and real-matte evaluation datasets are
+final tests only: never training, early stopping, checkpoint selection or tuning.
+Mark their shot or dataset-root `manifest.json` with `"split": "test-only"`. The
+marker is inherited through ancestor manifests and followed symlink targets; legacy
+`eval_only: true` markers are also protected. Training and validation selection,
+feature/sample loading and direct validation evaluation refuse these sources. Final
+test scoring remains allowed. Use held-out **synthetic** shots for early stopping.
 
 A step-zero validation establishes the initial best. Full native-frame validation
 then runs every N steps and at the ceiling. Checkpoint selection uses pooled

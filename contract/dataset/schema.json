@@ -71,6 +71,7 @@
       "properties": {
         "contract": {"$ref": "#/$defs/contract"},
         "shot_id": {"type": "string", "minLength": 1},
+        "split": {"enum": ["train", "test", "test-only"]},
         "seed": {"type": "integer"},
         "recipe_version": {"type": "string"},
         "generator_versions": {"type": "object", "additionalProperties": {"type": "string"}},

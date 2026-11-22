@@ -1,8 +1,9 @@
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from strata_training.data.policy import require_supervision
 from strata_training.io import write_json
 
 
@@ -29,7 +30,13 @@ def freeze(index: Path, output: Path) -> dict[str, Any]:
     return split
 
 
-def entries_for(index: Path, protocol: Path, split: str) -> list[dict[str, Any]]:
+def entries_for(
+    index: Path,
+    protocol: Path,
+    split: str,
+    *,
+    purpose: Literal["training", "validation", "test"] | None = None,
+) -> list[dict[str, Any]]:
     data: list[dict[str, Any]] = json.loads(index.read_text())
     frozen: dict[str, Any] = json.loads(protocol.read_text())
     if hashlib.sha256(index.read_bytes()).hexdigest() != frozen["index_sha256"]:
@@ -38,4 +45,7 @@ def entries_for(index: Path, protocol: Path, split: str) -> list[dict[str, Any]]
     selected = [e for e in data if e["id"] in ids]
     if len(selected) != len(ids):
         raise ValueError("Frozen split contains missing or duplicate frames")
+    use = purpose or ("training" if split == "train" else "test")
+    if use != "test":
+        require_supervision(selected, purpose=use, root=index.parent)
     return selected

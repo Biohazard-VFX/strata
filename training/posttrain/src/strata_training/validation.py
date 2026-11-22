@@ -6,6 +6,7 @@ import torch
 from torch import nn
 
 from strata_training.data.dataset import Frame
+from strata_training.data.policy import require_supervision
 from strata_training.eval.predict import predict
 from strata_training.eval.protocol import entries_for
 from strata_training.losses.deep import deep_loss
@@ -21,7 +22,10 @@ def validation_frames(config: dict[str, Any], training: list[dict[str, Any]]) ->
     if Path(config["validation_index"]).resolve() == Path(config["index"]).resolve():
         raise ValueError("OOD validation requires a separate scene-distribution index")
     entries = entries_for(
-        Path(config["validation_index"]), Path(config["validation_protocol"]), "test"
+        Path(config["validation_index"]),
+        Path(config["validation_protocol"]),
+        "test",
+        purpose="validation",
     )
     if not entries:
         raise ValueError("OOD validation must contain frames")
@@ -31,6 +35,7 @@ def validation_frames(config: dict[str, Any], training: list[dict[str, Any]]) ->
             raise ValueError(
                 "OOD validation must be disjoint from training shots, frames and targets"
             )
+    require_supervision(entries, purpose="validation", root=Path(config["validation_features"]))
     frames = [Frame(e, Path(config["validation_features"]), config["scale_mode"]) for e in entries]
     if not any(frame.arrays["mixed"].any() for frame in frames):
         raise ValueError("OOD validation requires mixed pixels for checkpoint selection")
@@ -45,6 +50,7 @@ def evaluate_validation(
     Calls change model mode temporarily and must not overlap training or other evaluations.
     Validation loss reconstructs logits from clipped inference probabilities on CPU.
     """
+    require_supervision([frame.entry for frame in frames], purpose="validation")
     was_training = model.training
     error, pixels = 0.0, 0
     losses: list[float] = []

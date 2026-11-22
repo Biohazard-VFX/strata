@@ -9,6 +9,7 @@ from PIL import Image
 from strata_training.data.compact import read_layers
 from strata_training.data.exr import read_deep, read_rgb, read_roles
 from strata_training.data.metadata import CONTRACT, camera_frames, category
+from strata_training.data.policy import is_test_only
 from strata_training.io import save_arrays, write_json
 from strata_training.types import Array, Layers, fp16_safe
 
@@ -28,7 +29,12 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
         shot = manifest_path.parent
         if manifest["shot_id"] != shot.name:
             raise ValueError("Shot directory does not match its literal shot_id")
-        split = manifest.get("split", "test" if shot.name in heldout else "train")
+        protected = is_test_only(shot)
+        split = (
+            "test"
+            if protected
+            else manifest.get("split", "test" if shot.name in heldout else "train")
+        )
         if split not in {"train", "test"}:
             raise ValueError("Shot split must be train or test")
         for frame, camera in sorted(camera_frames(shot).items()):
@@ -94,6 +100,8 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
                     "shot": shot.name,
                     "frame": int(frame),
                     "split": split,
+                    "test_only": protected,
+                    "dataset_root": str(dataset.resolve()),
                     "category": manifest.get("category", category(camera)),
                     "cache": str(cache.resolve()),
                     "manifest": str(manifest_path.resolve()),

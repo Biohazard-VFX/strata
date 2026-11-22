@@ -34,11 +34,20 @@ def test_published_camera_records_use_frame_list_and_native_intrinsics(tmp_path:
         camera_frames(tmp_path)
 
 
-def test_native_parts_and_role_masks_are_preserved_in_target_cache(tmp_path: Path) -> None:
+@pytest.mark.parametrize("protected", [None, "root", "shot"])
+def test_native_parts_and_role_masks_are_preserved_in_target_cache(
+    tmp_path: Path,
+    protected: str | None,
+) -> None:
     shot = tmp_path / "dataset" / "shot"
     (shot / "beauty").mkdir(parents=True)
     (shot / "deep").mkdir()
-    (shot / "manifest.json").write_text(json.dumps({"contract": CONTRACT, "shot_id": "shot"}))
+    manifest = {"contract": CONTRACT, "shot_id": "shot"}
+    if protected == "shot":
+        manifest["split"] = "test-only"
+    (shot / "manifest.json").write_text(json.dumps(manifest))
+    if protected == "root":
+        (shot.parent / "manifest.json").write_text(json.dumps({"split": "test-only"}))
     record = {
         "frame": 1,
         "width": 2,
@@ -83,6 +92,8 @@ def test_native_parts_and_role_masks_are_preserved_in_target_cache(tmp_path: Pat
     ) as file:
         file.write(str(deep_path))
     entries = prepare(tmp_path / "dataset", tmp_path / "targets")
+    assert entries[0]["test_only"] == (protected is not None)
+    assert entries[0]["split"] == ("test" if protected else "train")
     with np.load(entries[0]["cache"]) as data:
         assert data["alpha"].shape == (4, 2, 2)
         assert_allclose(data["beauty"][:, 0, 0], [1, 0.5, 0.25])

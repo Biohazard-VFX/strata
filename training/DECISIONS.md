@@ -26,7 +26,8 @@
 - Warm up new-head and pretrained-decoder optimizer groups at separate learning rates; reject resume across objective or schedule changes.
 - Oracle evaluation aligns the current scalar prior before the deep head; frozen heads align the stock prior with the same GT mask.
 - Public raw deep samples own flattened channel arrays and preserve pixel counts, sample order and premultiplied IDs; missing channels fail explicitly.
-- Sorted pixel and cluster segments use contiguous extrema reductions; ordered first candidates preserve stable depth-gap ties.
+- K-layer clustering lives only in strata_contract.layers; training validates inputs and masks sky geometry without implementing a second clustering rule.
 - Hybrid training uses native 512² independent crops, 40% clean-cache reuse and frozen bf16/SDPA encoding otherwise; augmented features are never cached.
 - Sky ID 0 retains colour/coverage targets; clusters containing visible sky have no depth supervision, including when the K limit merges sky and geometry.
 - Select best checkpoints by OOD-validation mixed-alpha MAE every 250 steps; stop after four stale checks and treat step budgets as ceilings.
+- Canary shots and real-matte sets are test-only: no training, early stopping or tuning; inherited manifest split=test-only blocks supervision, and validation uses held-out synthetic shots.

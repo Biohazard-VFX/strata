@@ -52,6 +52,16 @@ choices the shot was built from), `scene` (sampled terrain, lighting, hero, came
 samples, frame range, AOV lists) and `timings` (filled after rendering: device, per-frame seconds,
 VRAM).
 
+## Test-only policy
+
+A shot manifest may set `split` to `train`, `test`, or `test-only`. An optional
+dataset-root `manifest.json` containing `{"split": "test-only"}` applies to every
+descendant shot, even if a child says `train`. This policy-only root record is not a
+shot record. `test-only` permits final scoring but forbids training, early stopping,
+checkpoint selection and hyperparameter tuning. Canary shots and real-matte eval
+cohorts must carry this marker; early-stopping validation uses held-out synthetic
+shots instead. Ordinary `test` is a frozen split, not the stronger test-only policy.
+
 ## beauty/NNNN.exr
 
 Multi-part scanline EXR, one part per AOV, all at the camera resolution:

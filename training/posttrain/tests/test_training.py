@@ -91,6 +91,13 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) ->
         train(path)
 
 
+def test_cached_training_refuses_protected_feature_roots(tmp_path: Path) -> None:
+    config, path = _configuration(tmp_path)
+    write_json(Path(config["features"]) / "manifest.json", {"split": "test-only"})
+    with pytest.raises(ValueError, match="test-only"):
+        train(path)
+
+
 def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -202,3 +209,6 @@ def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode
             },
             entries,
         )
+    write_json(tmp_path / "manifest.json", {"split": "test-only"})
+    with pytest.raises(ValueError, match="test-only"):
+        evaluate_validation(model, config, [frame])

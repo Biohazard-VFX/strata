@@ -11,6 +11,7 @@ from torch import nn
 from strata_training.config import training_defaults, validate_config
 from strata_training.data.dataset import Frame, batch, normalization
 from strata_training.data.online import OnlineLoader
+from strata_training.data.policy import require_supervision
 from strata_training.data.sequences import clip_indices
 from strata_training.eval.protocol import entries_for
 from strata_training.io import write_json
@@ -39,6 +40,7 @@ def train(config_path: Path) -> dict[str, Any]:
             "Compact datagen targets omit sky colour/coverage; background supervision "
             "must be published before training this representation"
         )
+    require_supervision(entries, purpose="training", root=Path(config["features"]))
     frames = [Frame(e, Path(config["features"]), config["scale_mode"]) for e in entries]
     validation = validation_frames(config, entries) if config["early_stopping"] else []
     if validation:

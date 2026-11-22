@@ -142,6 +142,9 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
     write_json(root / "sample/context.json", {"image_sha256": "stale"})
     with pytest.raises(ValueError, match="match denoised"):
         OnlineLoader([frame], samples)
+    write_json(manifest, {"instance_ids": [], "split": "test-only"})
+    with pytest.raises(ValueError, match="test-only"):
+        OnlineLoader([frame], samples)
 
 
 def test_hybrid_policy_defaults_and_unsupported_temporal_or_oracle_inputs() -> None:

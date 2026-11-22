@@ -14,6 +14,7 @@ from strata_training.augment.pipeline import AugmentConfig, Donor, Roles, augmen
 from strata_training.data.cache import display_rgb
 from strata_training.data.dataset import Frame, batch
 from strata_training.data.exr import read_rgb
+from strata_training.data.policy import require_supervision
 from strata_training.data.targets import composite
 from strata_training.io import save_array
 from strata_training.model.dp2 import DeepDepthPro
@@ -86,6 +87,7 @@ class OnlineLoader:
         clean_fraction: float = 0.4,
         augmentation: dict[str, Any] | None = None,
     ) -> None:
+        require_supervision([frame.entry for frame in frames], purpose="training", root=samples)
         self.frames = frames
         self.clean_fraction = clean_fraction
         values = augmentation or {}
