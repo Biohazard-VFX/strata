@@ -9,7 +9,7 @@ from typing import cast
 
 from strata_datagen import files
 from strata_datagen.library import build as library_build
-from strata_datagen.library import catalogue, fetch
+from strata_datagen.library import catalogue, creatures, fetch
 from strata_datagen.presets import PRESETS
 from strata_datagen.qa import checks, contact
 from strata_datagen.render import husk, pack
@@ -42,6 +42,14 @@ def cmd_prepare(args: argparse.Namespace) -> None:
             }
         )
     )
+
+
+def cmd_creatures(args: argparse.Namespace) -> None:
+    raw = cast("dict[str, list[dict[str, object]]]", json.loads(args.recipes.read_text()))
+    recipes = [r for r in raw["creatures"] if not args.only or r["key"] in args.only]
+    tools = creatures.Tools(infinigen=[args.infinigen_python], blender=[args.blender])
+    for manifest in creatures.prepare(recipes, tools, args.library):
+        print("creature", manifest["key"], ",".join(cast("list[str]", manifest["coat_classes"])), flush=True)
 
 
 def cmd_build(args: argparse.Namespace) -> None:
@@ -118,6 +126,13 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--sources", type=Path, required=True)
     p.set_defaults(run=cmd_prepare)
+    p = sub.add_parser("creatures", help="generate or import creature bodies into a hero library")
+    p.add_argument("--recipes", type=Path, required=True)
+    p.add_argument("--library", type=Path, required=True)
+    p.add_argument("--infinigen-python", required=True)
+    p.add_argument("--blender", default="blender")
+    p.add_argument("--only", nargs="*", default=[])
+    p.set_defaults(run=cmd_creatures)
     p = sub.add_parser("build", help="compose shots and write the husk job list")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--presets", nargs="*", default=[], choices=sorted(PRESETS))

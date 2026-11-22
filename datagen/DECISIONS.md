@@ -22,6 +22,11 @@
 - Heroes enter only through an external library (`hero.json` + USD poses); repo code never names a hero.
 - Fur and hair come from the generic groom generator: guide shapes blended from the nearest guides, or parametric hair when there are none.
 - Grooms and skins are baked per pose into the build root at prepare time, so shot layers stay small.
+- Creature bodies come from Infinigen or authored glTF via Blender export scripts run only by `strata-datagen creatures`, never at render time.
+- Infinigen bodies are generated hairless (its animated fur is unsupported); all fur and feathers are grown downstream by our generators.
+- Creature coats are fur layers and feather curves on skin regions, combed down the geodesic distance from the nose, merged into one groom prim.
+- Animated creature poses time-sample skin points; each hair is bound to its root triangle and carried rigidly with it per frame.
+- Groom clumping pulls each hair towards its nearest leader hair, linearly from none at the root to full strength at the tip.
 - Presets are the only code that names library asset ids; generators take assets as parameters.
 - Banned identifiers are checked as SHA-256 digests so the public repo never spells them.
 - Randomness comes from named streams `sha256(seed:labels)`; fixed choices still consume their draws, so a seed gives byte-identical USD.

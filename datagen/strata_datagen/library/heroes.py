@@ -3,7 +3,8 @@
 hero.json fields:
   key: library id; poses: {pose name: USD file relative to the hero directory};
   skin_prim: mesh prim path in each pose file; guide_prims: curve prim paths (may be empty);
-  albedo: texture file relative to the hero directory; groom: GroomParams fields;
+  albedo: texture file relative to the hero directory; groom: GroomParams fields, optional when a
+  coat (library/coat.py) replaces it;
   source, license, redistributable: provenance recorded in every shot manifest.
 """
 
@@ -30,7 +31,7 @@ class HeroManifest:
     skin_prim: str
     guide_prims: tuple[str, ...]
     albedo: str
-    groom: groom.GroomParams
+    groom: groom.GroomParams | None
     source: str
     license: str
     redistributable: bool
@@ -46,6 +47,8 @@ def _groom(raw: dict[str, float]) -> groom.GroomParams:
         length_jitter=float(raw["length_jitter"]),
         frizz_m=float(raw["frizz_m"]),
         neighbours=int(raw["neighbours"]),
+        clump_count=int(raw.get("clump_count", 0)),
+        clump_strength=float(raw.get("clump_strength", 0.0)),
     )
 
 
@@ -58,7 +61,7 @@ def load(directory: Path) -> HeroManifest:
         skin_prim=str(raw["skin_prim"]),
         guide_prims=tuple(str(p) for p in cast("list[object]", raw.get("guide_prims", []))),
         albedo=str(raw["albedo"]),
-        groom=_groom(cast("dict[str, float]", raw["groom"])),
+        groom=_groom(cast("dict[str, float]", raw["groom"])) if "groom" in raw else None,
         source=str(raw["source"]),
         license=str(raw["license"]),
         redistributable=bool(raw.get("redistributable", False)),
@@ -83,7 +86,7 @@ def _corner_st(mesh: UsdGeom.Mesh, corners: int) -> FloatArray:
     return values[indices] if values.shape[0] != corners else values
 
 
-def _fan(counts: IntArray) -> tuple[IntArray, IntArray]:
+def fan(counts: IntArray) -> tuple[IntArray, IntArray]:
     """Triangle corner indices into the face-vertex list, fanning each polygon from its first corner."""
     starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
     tri = [(s, s + k, s + k + 1) for s, n in zip(starts, counts, strict=True) for k in range(1, n - 1)]
@@ -97,7 +100,7 @@ def read_skin(stage: Usd.Stage, path: str) -> tuple[groom.Skin, UsdGeom.Mesh]:
     counts = np.asarray(mesh.GetFaceVertexCountsAttr().Get(), dtype=np.int64)
     indices = np.asarray(mesh.GetFaceVertexIndicesAttr().Get(), dtype=np.int64)
     corner_st = _corner_st(mesh, indices.size)
-    corners, flat = _fan(counts)
+    corners, flat = fan(counts)
     triangles = indices[corners]
     return groom.Skin(points, triangles, corner_st[flat].reshape(-1, 2)), mesh
 
@@ -135,6 +138,8 @@ class PreparedPose:
 
 def prepare_pose(manifest: HeroManifest, pose: str, output: Path) -> PreparedPose:
     """Skin plus a generated groom for one pose, in a Y-up metre USD file with prims /hero/{skin,groom}."""
+    if manifest.groom is None:
+        raise ValueError(f"{manifest.key} has neither a groom nor a coat")
     source = Usd.Stage.Open(str(manifest.directory / manifest.poses[pose]))
     skin, _ = read_skin(source, manifest.skin_prim)
     guides = read_guides(source, manifest.guide_prims, manifest.groom.segments + 1)

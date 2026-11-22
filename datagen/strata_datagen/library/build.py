@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 from strata_datagen import files
-from strata_datagen.library import catalogue, hdri, heroes, megascans, models, textures
+from strata_datagen.library import catalogue, coat, hdri, heroes, megascans, models, textures
 
 BLENDER_SCRIPT = Path(__file__).resolve().parents[2] / "blender" / "fbx_to_usd.py"
 EXCLUDED_PLANTS = ("houseplant", "succulent", "aloe", "palm", "paddle", "eelgrass", "basil", "ivy", "climber")
@@ -185,10 +185,11 @@ def prepare_heroes(sources: Sources, root: Path) -> list[catalogue.Hero]:
     for key in sources.heroes:
         manifest = heroes.load(sources.hero_library / key)
         folder = root / "assets" / "heroes" / key
+        prepare_pose = heroes.prepare_pose if coat.load(manifest.directory) is None else coat.prepare_pose
         poses = tuple(
             catalogue.HeroPose(pose, _rel(p.file, root), p.bounds_min, p.bounds_max, p.hairs)
             for pose in sorted(manifest.poses)
-            for p in (heroes.prepare_pose(manifest, pose, folder / f"{pose}.usdc"),)
+            for p in (prepare_pose(manifest, pose, folder / f"{pose}.usdc"),)
         )
         albedo = heroes.copy_albedo(manifest, folder / "textures")
         out.append(
