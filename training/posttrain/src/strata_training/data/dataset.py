@@ -43,7 +43,7 @@ class Frame:
         if self.has_image:
             return {
                 **values,
-                "target_beauty": values["beauty"],
+                "target_beauty": values.get("target_beauty", values["beauty"]),
                 "beauty": mapped.image_array(self.root),
             }
         return values

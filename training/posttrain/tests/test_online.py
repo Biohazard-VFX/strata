@@ -74,7 +74,8 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
         alpha=target,
         inverse_depth=inverse,
         rgb=colour,
-        beauty=image * 1.4,
+        beauty=image * 1.6,
+        target_beauty=image * 1.4,
         mixed=np.ones((height, width), dtype=bool),
     )
     manifest = tmp_path / "manifest.json"
@@ -220,6 +221,14 @@ def test_hybrid_policy_defaults_and_unsupported_temporal_or_oracle_inputs() -> N
         4,
     )
     validate_config(config)
+    for key, value in (
+        ("loader_workers", -1),
+        ("loader_workers", True),
+        ("loader_prefetch", 0),
+        ("loader_prefetch", 1.5),
+    ):
+        with pytest.raises(ValueError, match=key):
+            validate_config({**config, key: value})
     for changes in ({"scale_mode": "oracle-aligned"}, {"clip_length": 2}, {"clean_fraction": -0.1}):
         with pytest.raises(ValueError, match=r"Hybrid native crops|clean_fraction"):
             validate_config({**config, **changes})
