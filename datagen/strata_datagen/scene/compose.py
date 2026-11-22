@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from pxr import Sdf, Usd, UsdGeom
+from pxr import Usd, UsdGeom
 
 from strata_datagen.fields import Ground
 from strata_datagen.generators import camera, hero, lighting, materials, scatter, terrain
@@ -15,7 +15,7 @@ from strata_datagen.render.pack import DEEP_STRIDE
 from strata_datagen.rng import stream
 from strata_datagen.scene import layers, looks
 from strata_datagen.scene.spec import DEFAULT_FRAMES, ShotSpec, frames
-from strata_datagen.usdutil import new_stage, relative_asset
+from strata_datagen.usdutil import new_stage, relative_asset, tag_instances
 
 TERRAIN_ID = 1
 FIRST_SCATTER_ID = 1000
@@ -184,9 +184,7 @@ def _author_ground(shot: Shot, library: Library, stage: Usd.Stage, root: Path) -
     surface = next(s for s in library.surfaces if s.asset_id == shot.surface)
     prim = stage.DefinePrim("/World/terrain", "Mesh")
     prim.GetReferences().AddReference(_terrain_layer(shot))
-    UsdGeom.PrimvarsAPI(prim).CreatePrimvar(
-        "instance_id", Sdf.ValueTypeNames.Int, UsdGeom.Tokens.constant
-    ).Set(TERRAIN_ID)
+    tag_instances(prim, np.array([TERRAIN_ID]))
     materials.bind(prim, looks.ground(stage, root, shot.scene_dir, surface))
 
 

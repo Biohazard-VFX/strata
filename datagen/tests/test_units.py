@@ -31,6 +31,8 @@ def _deep(samples: list[list[tuple[float, float, float, float, float, int]]]) ->
     channels["Z"] = np.array([s[4] for s in flat], np.float32)
     channels["ZBack"] = channels["Z"].copy()
     channels["instance_id"] = np.array([s[5] for s in flat], np.float32) * a
+    channels["coverage"] = a.copy()
+    channels["A"] = a.astype(np.float16).astype(np.float32)
     return Deep(len(samples), 1, counts, channels)
 
 
@@ -40,20 +42,22 @@ class DeepTest(unittest.TestCase):
             [
                 [(0, 0, 1, 1.0, 5.0, 1000), (1, 0, 0, 0.5, 1.0, 7)],
                 [(0, 1, 0, 1.0, 2.0, 2)],
-                [(0, 1, 0, 0.3, 2.0, 3)],
+                [(0, 1, 0, 0.3, 2.0, 25882)],
             ]
         )
         flat = flatten(deep)
         np.testing.assert_allclose(flat.rgba[0, 0], [0.5, 0.0, 0.5, 1.0], atol=1e-6)
-        np.testing.assert_allclose(flat.rgba[0, 2], [0.0, 0.3, 0.0, 0.3], atol=1e-6)
+        np.testing.assert_allclose(flat.rgba[0, 2], [0.0, 0.3, 0.0, 0.3], atol=2.0**-11)
         self.assertEqual(flat.partial[0].tolist(), [True, False, True])
-        self.assertEqual(instance_ids(deep).tolist(), [1000, 7, 2, 3])
+        self.assertEqual(instance_ids(deep).tolist(), [1000, 7, 2, 25882])
+        half_alpha = np.rint(deep.channels["instance_id"] / deep.channels["A"]).astype(int)
+        self.assertNotEqual(half_alpha[-1], 25882)
 
 
 def write_deep(path: Path, samples: list[list[tuple[float, float, float]]]) -> None:
     """Pixels of (premultiplied grey, alpha, id) samples at depth 2 m in a 2x1 deep image."""
     chans: dict[str, NDArray[np.object_]] = {}
-    for name, index in (("R", 0), ("G", 0), ("B", 0), ("A", 1), ("instance_id", 2)):
+    for name, index in (("R", 0), ("G", 0), ("B", 0), ("A", 1), ("coverage", 1), ("instance_id", 2)):
         cells = np.empty((1, len(samples)), dtype=object)
         for i, pixel in enumerate(samples):
             value = np.array([s[index] * (s[1] if name == "instance_id" else 1.0) for s in pixel], np.float32)

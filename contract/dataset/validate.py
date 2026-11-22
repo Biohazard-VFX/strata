@@ -26,7 +26,7 @@ BEAUTY = {
     "instance_id": {"instance_id.instance_id"},
     "denoised": {"denoised.R", "denoised.G", "denoised.B", "denoised.A"},
 }
-DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id"}
+DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id", "coverage"}
 LAYERS = {f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B")}
 
 

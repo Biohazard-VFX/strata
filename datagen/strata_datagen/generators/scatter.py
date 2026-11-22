@@ -9,7 +9,7 @@ from pxr import Sdf, Usd, UsdGeom, UsdShade
 
 from strata_datagen import timeline
 from strata_datagen.fields import Ground
-from strata_datagen.usdutil import FloatArray, ints, quath, vec3f
+from strata_datagen.usdutil import FloatArray, ints, quath, tag_instances, vec3f
 
 VERSION = "scatter-0.3.0"
 GROWTH_KEY_FRAMES = 24
@@ -200,8 +200,5 @@ def author(
             time = Usd.TimeCode(first_frame - 1 + key * GROWTH_KEY_FRAMES)
             scales.Set(vec3f(instances.scales * row[:, None]), time)
     instancer.CreateProtoIndicesAttr(ints(instances.prototype_indices))
-    ids = UsdGeom.PrimvarsAPI(instancer).CreatePrimvar(
-        "instance_id", Sdf.ValueTypeNames.IntArray, UsdGeom.Tokens.vertex
-    )
-    ids.Set(ints(np.arange(first_id, first_id + len(instances))))
+    tag_instances(instancer.GetPrim(), np.arange(first_id, first_id + len(instances)))
     return instancer

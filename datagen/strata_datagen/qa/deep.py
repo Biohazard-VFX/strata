@@ -58,6 +58,6 @@ def flatten(deep: Deep) -> Flattened:
 
 
 def instance_ids(deep: Deep) -> NDArray[np.int64]:
-    """Per-sample instance ids: Karma premultiplies extra deep channels by sample alpha."""
-    alpha = np.maximum(deep.channels["A"].astype(np.float64), 1e-6)
-    return np.rint(deep.channels["instance_id"] / alpha).astype(np.int64)
+    """Per-sample instance ids: both channels are premultiplied by the sample's float alpha."""
+    coverage = np.maximum(deep.channels["coverage"].astype(np.float64), 1e-12)
+    return np.rint(deep.channels["instance_id"] / coverage).astype(np.int64)

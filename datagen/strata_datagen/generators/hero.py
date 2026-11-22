@@ -7,7 +7,7 @@ from pxr import Sdf, Usd, UsdGeom, UsdShade
 
 from strata_datagen import timeline
 from strata_datagen.fields import Ground
-from strata_datagen.usdutil import FloatArray
+from strata_datagen.usdutil import FloatArray, tag_instances
 
 VERSION = "hero-0.2.0"
 SKIN_ID = 2
@@ -50,9 +50,7 @@ def sample_coat(rng: np.random.Generator, samples: int) -> FloatArray:
 def _bind(stage: Usd.Stage, path: Sdf.Path, material: UsdShade.Material, instance_id: int) -> None:
     prim = stage.OverridePrim(path)
     UsdShade.MaterialBindingAPI.Apply(prim).Bind(material, UsdShade.Tokens.strongerThanDescendants)
-    UsdGeom.PrimvarsAPI(prim).CreatePrimvar(
-        "instance_id", Sdf.ValueTypeNames.Int, UsdGeom.Tokens.constant
-    ).Set(instance_id)
+    tag_instances(prim, np.array([instance_id]))
 
 
 def author(
