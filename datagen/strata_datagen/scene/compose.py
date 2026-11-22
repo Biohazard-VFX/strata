@@ -7,7 +7,17 @@ import numpy as np
 from pxr import Usd, UsdGeom
 
 from strata_datagen.fields import Ground
-from strata_datagen.generators import camera, hairstyle, hero, lighting, materials, scatter, terrain, thin
+from strata_datagen.generators import (
+    camera,
+    hairstyle,
+    hero,
+    human,
+    lighting,
+    materials,
+    scatter,
+    terrain,
+    thin,
+)
 from strata_datagen.generators.scatter import Disk, Layer
 from strata_datagen.library import heroes
 from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
@@ -50,6 +60,7 @@ class Shot:
     frames: tuple[int, ...]
     light: lighting.Lighting
     thin: list[thin.Structure]
+    placement: human.ClipPlacement | None
     layers: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     assets: dict[str, Model] = field(default_factory=dict[str, Model])
     hair: hairstyle.Style | None = None
@@ -69,9 +80,14 @@ def _choice(rng: np.random.Generator, options: list[str], fixed: str | None) -> 
     return drawn if fixed is None else fixed
 
 
-def _hero_pose(library: Library, spec: ShotSpec, rng: np.random.Generator) -> tuple[Hero, HeroPose]:
+def _hero_pose(
+    library: Library, spec: ShotSpec, rng: np.random.Generator, frames: int
+) -> tuple[Hero, HeroPose]:
     entry = library.hero(_choice(rng, sorted(h.key for h in library.heroes), spec.hero))
-    pose = _choice(rng, sorted(p.pose for p in entry.poses), spec.pose)
+    fits = sorted(p.pose for p in entry.poses if p.frames == 0 or p.frames >= frames)
+    if not fits:
+        raise ValueError(f"hero {entry.key} has no clip of at least {frames} frames")
+    pose = _choice(rng, fits, spec.pose)
     return entry, next(p for p in entry.poses if p.pose == pose)
 
 
@@ -107,13 +123,19 @@ def plan(spec: ShotSpec, library: Library, root: Path, frame_count: int = DEFAUL
     params = terrain.sample_params(stream(spec.seed, "terrain"))
     ground = terrain.build(params, stream(spec.seed, "terrain", "noise"))
     surface = _choice(stream(spec.seed, "ground"), sorted(s.asset_id for s in library.surfaces), spec.ground)
-    entry, pose = _hero_pose(library, spec, stream(spec.seed, "hero"))
+    entry, pose = _hero_pose(library, spec, stream(spec.seed, "hero"), len(clip))
     samples = len(clip) + 2
-    motion = hero.sample_motion(
-        stream(spec.seed, "hero", "motion"), ground, samples, -pose.bounds_min[1], spec.hero_speed_mps
-    )
+    placement = None
+    if pose.frames:
+        placement = human.place(stream(spec.seed, "hero", "clip"), ground, np.asarray(pose.track), len(clip))
+        yaw = np.full(samples, placement.yaw_deg)
+        motion = hero.HeroMotion(placement.positions, yaw, placement.speed_mps)
+    else:
+        motion = hero.sample_motion(
+            stream(spec.seed, "hero", "motion"), ground, samples, -pose.bounds_min[1], spec.hero_speed_mps
+        )
     height = pose.bounds_max[1] - pose.bounds_min[1]
-    subject = max(pose.bounds_max[0] - pose.bounds_min[0], pose.bounds_max[2] - pose.bounds_min[2])
+    subject = max(high - low for low, high in zip(pose.bounds_min, pose.bounds_max, strict=True))
     target = motion.positions + np.array([0.0, 0.5 * height, 0.0])
     track = camera.sample(
         stream(spec.seed, "camera"), ground, target, subject, frames=clip, choices=spec.camera
@@ -151,6 +173,7 @@ def plan(spec: ShotSpec, library: Library, root: Path, frame_count: int = DEFAUL
         clip,
         light,
         structures,
+        placement,
         hair=hair,
     )
 
@@ -297,19 +320,19 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
     stage.SetEndTimeCode(shot.frames[-1])
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/World").GetPrim())
     _author_ground(shot, library, stage, root)
-    skin, groom = looks.hero(stage, root, shot.scene_dir, library.hero(shot.hero_key))
-    coat = hero.sample_coat(stream(shot.spec.seed, "hero", "coat"), len(shot.frames) + 2)
-    for material in (skin, groom):
-        materials.animate_tint(material, coat, shot.frames[0])
-    hero.author(
-        stage,
-        "/World/hero",
-        relative_asset(root / shot.pose.file, shot.scene_dir),
-        shot.motion,
-        first_frame=shot.frames[0],
-        skin=skin,
-        groom=groom,
-    )
+    asset = relative_asset(root / shot.pose.file, shot.scene_dir)
+    if shot.placement is None:
+        skin, groom = looks.hero(stage, root, shot.scene_dir, library.hero(shot.hero_key))
+        coat = hero.sample_coat(stream(shot.spec.seed, "hero", "coat"), len(shot.frames) + 2)
+        for material in (skin, groom):
+            materials.animate_tint(material, coat, shot.frames[0])
+        hero.author(
+            stage, "/World/hero", asset, shot.motion, first_frame=shot.frames[0], skin=skin, groom=groom
+        )
+    else:
+        human.author(
+            stage, "/World/hero", asset, shot.placement, first_frame=shot.frames[0], instance_id=hero.SKIN_ID
+        )
     if shot.hair is not None:
         _author_hair(shot, library.hero(shot.hero_key), stage, root, shot.hair)
     _author_scatter(shot, library, stage, root)

@@ -44,3 +44,14 @@
 - Heroes mark hair-growing skin with float vertex primvars `region_<scalp|brows|lashes|beard>`; a scalp region gives the hero a seeded hairstyle in every shot.
 - Hairstyles are grown per shot into `scene/hair.usdc` so each seed gets its own style; skins and fur grooms stay baked per pose at prepare time.
 - Hairstyles morph over a shot on timeline curves with one topology: length trims, density fades widths, cut and updo stay fixed; points keyed every 3 s, USD interpolates.
+- Human heroes are MPFB bodies (cmu_mb rig, CC0 skins, eyes and clothes) animated with original CMU ASF/AMC clips, built offline into the external hero library.
+- Animated heroes are point caches with samples at each frame and ±0.25, not UsdSkel, so skinned bodies, simulated garments and grooms share one representation.
+- Animated hero prims set `primvars:karma:object:geosamples` to 3; Karma renders no deformation blur without it.
+- Retargeting copies CMU world bone rotations after a rest-direction swing per bone; joints keep the target's proportions and root travel scales by hip height.
+- Hand bones follow the wrist because CMU finger channels are placeholders.
+- Skin regions (scalp, face, brows, beard, ears, lips, body) are GeomSubsets of family `hero_region`; their heights scale with the eye-to-crown distance.
+- GarmentCode supplies sewing patterns only; panels are sewn and simulated in Houdini Vellum, never with GarmentCode's non-commercial Warp fork.
+- Animated heroes carry their own MaterialX looks; scenes reference them without overriding bindings.
+- A shot's subject size is the hero's largest bounding extent, so tall heroes are framed by height.
+- Long takes vary a human gradually instead of cutting: corner humans with one outfit are blended per sample (points, rig, skin texture) with seeded smooth weights.
+- Chained CMU clips crossfade by sign-continuous quaternion interpolation of bone world rotations; slerp of large pose differences flips direction mid-blend.

@@ -12,6 +12,7 @@ from strata_datagen.generators import (
     groom,
     hairstyle,
     hero,
+    human,
     lighting,
     materials,
     scatter,
@@ -26,7 +27,7 @@ from strata_datagen.scene.spec import RECIPE_VERSION
 CONTRACT_VERSION = "strata-dataset-0.1.0"
 GENERATORS = {
     m.__name__.rsplit(".", 1)[-1]: m.VERSION
-    for m in (terrain, scatter, materials, lighting, camera, hero, groom, hairstyle, thin, settings)
+    for m in (terrain, scatter, materials, lighting, camera, hero, human, groom, hairstyle, thin, settings)
 }
 
 
@@ -122,6 +123,7 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
                 "speed_mps": shot.motion.speed_mps,
                 "hairs": shot.pose.hairs,
                 "hairstyle": None if shot.hair is None else hairstyle.record(shot.hair),
+                "clip_start": None if shot.placement is None else shot.placement.start,
             },
             "lighting": {
                 "hdri": shot.light.hdri.key,

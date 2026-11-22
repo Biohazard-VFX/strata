@@ -52,11 +52,15 @@ class Hdri:
 
 @dataclass(frozen=True)
 class HeroPose:
+    """A static pose, or an animated clip when `frames` > 0 (its root `track` has frames + 2 rows)."""
+
     pose: str
     file: str
     bounds_min: tuple[float, float, float]
     bounds_max: tuple[float, float, float]
     hairs: int
+    frames: int = 0
+    track: tuple[tuple[float, float, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -152,6 +156,8 @@ def _hero(raw: Json) -> Hero:
             bounds_min=_vec(p["bounds_min"]),
             bounds_max=_vec(p["bounds_max"]),
             hairs=int(cast("int", p["hairs"])),
+            frames=int(cast("int", p.get("frames", 0))),
+            track=tuple(_vec(row) for row in cast("list[object]", p.get("track", []))),
         )
         for p in cast("list[Json]", raw["poses"])
     )
