@@ -133,5 +133,7 @@ finite (camera-plane Z up to 3000 m, below the 5000 m far clip; never inf) with 
 DeepExpression on instance_id; training masks depth losses on it (sky depth is undefined) and
 supervises its colour and coverage.
 
-Instance ids: 0 is the sky backdrop, 1 terrain, 2 hero skin, 3 hero groom (hair or fur),
-1000 and up are scattered instances; `manifest.instance_ids` maps every id to its layer.
+Instance ids: 0 is the sky backdrop, 1 terrain, 2 hero skin, 3 hero groom (hair or fur grown on the
+skin), 4 hero hairstyle, 100 and up thin structures, 1000 and up scattered instances.
+`manifest.instance_ids` maps every id to its layer and declares only ranges the scene authors: a hero
+without a groom has no `hero_groom`, so an id 3 in its deep is invalid.

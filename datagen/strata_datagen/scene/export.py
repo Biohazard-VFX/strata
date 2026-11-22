@@ -99,8 +99,9 @@ def _ids(shot: Shot) -> list[dict[str, object]]:
         {"name": "sky", "first_id": lighting.SKY_ID, "count": 1},
         {"name": "terrain", "first_id": TERRAIN_ID, "count": 1},
         {"name": "hero_skin", "first_id": hero.SKIN_ID, "count": 1},
-        {"name": "hero_groom", "first_id": hero.GROOM_ID, "count": 1},
     ]
+    if shot.groomed:
+        fixed.append({"name": "hero_groom", "first_id": hero.GROOM_ID, "count": 1})
     if shot.hair is not None:
         fixed.append({"name": "hero_hair", "first_id": hero.HAIR_ID, "count": 1})
     return fixed + shot.layers

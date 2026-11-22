@@ -69,6 +69,11 @@ class Shot:
     def scene_dir(self) -> Path:
         return self.directory / "scene"
 
+    @property
+    def groomed(self) -> bool:
+        """Only a library hero's pose file holds a groom, and only when it grew hairs."""
+        return self.placement is None and self.pose.hairs > 0
+
 
 def samples_for(base: int, track: camera.CameraTrack) -> int:
     """Depth of field or motion blur doubles the samples, measured to match a still shot's error."""

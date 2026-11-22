@@ -1,4 +1,5 @@
 import filecmp
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -88,6 +89,11 @@ class DeterminismTest(unittest.TestCase):
             self.assertIn("scene/terrain.usdc", names)
             _, mismatch, errors = filecmp.cmpfiles(first, second, names, shallow=False)
             self.assertEqual((mismatch, errors), ([], []))
+
+    def test_a_groomed_hero_declares_its_groom_id(self) -> None:
+        with TemporaryDirectory() as tmp:
+            record = json.loads((build(Path(tmp), ShotSpec(seed=7)) / "manifest.json").read_text())
+            self.assertIn({"name": "hero_groom", "first_id": 3, "count": 1}, record["instance_ids"])
 
     def test_different_seeds_differ(self) -> None:
         with TemporaryDirectory() as tmp:

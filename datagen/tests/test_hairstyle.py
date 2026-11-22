@@ -319,6 +319,7 @@ class ComposeTest(unittest.TestCase):
             record = json.loads((shots[0] / "manifest.json").read_text())
             self.assertIsNotNone(record["scene"]["hero"]["hairstyle"])
             self.assertIn({"name": "hero_hair", "first_id": 4, "count": 1}, record["instance_ids"])
+            self.assertNotIn("hero_groom", {r["name"] for r in record["instance_ids"]})
             stage = Usd.Stage.Open(str(shots[0] / "scene" / "shot.usda"))
             self.assertEqual(stage.GetPrimAtPath("/World/hero/hair/scalp").GetTypeName(), "BasisCurves")
 
