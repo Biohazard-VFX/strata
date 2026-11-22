@@ -10,7 +10,7 @@ from strata_datagen.usdutil import FloatArray, IntArray
 
 CURL_TURNS_PER_FREQUENCY = 3.0
 FRIZZ_GAIN = 1.35
-NOISE_GAIN = 0.6
+NOISE_GAIN = 0.85
 
 
 def segment_lengths(curves: FloatArray) -> FloatArray:
@@ -217,7 +217,7 @@ def frizz(
 def _wave_field(points: FloatArray, scale: float, rng: np.random.Generator, waves: int = 12) -> FloatArray:
     """A smooth, zero-mean vector field from random sinusoids; deterministic per generator."""
     directions = _unit(rng.normal(size=(waves, 3)))
-    frequency = scale * 2.0 * np.pi * rng.uniform(0.5, 1.5, waves)
+    frequency = scale * rng.uniform(0.5, 1.5, waves)
     phase = rng.uniform(0.0, 2.0 * np.pi, waves)
     amplitude = _unit(rng.normal(size=(waves, 3))) * np.sqrt(2.0 / waves)
     argument = np.einsum("...d,wd->...w", points, directions) * frequency + phase

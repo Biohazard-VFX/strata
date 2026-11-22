@@ -398,7 +398,7 @@ def _texture(
     curves = strands.noise(
         curves,
         distance=0.01 if tangle else 0.002 + 0.006 * style.volume,
-        scale=25.0 if tangle else 6.0,
+        scale=160.0 if tangle else 40.0,
         shape=0.4,
         rng=rng,
     )
@@ -412,7 +412,7 @@ def _flyaways(curves: FloatArray, style: Style, rng: np.random.Generator) -> Flo
         return curves
     out = curves.copy()
     loose = strands.frizz(curves[chosen], distance=0.0006, shape=0.8, rng=rng, cumulative=True)
-    out[chosen] = strands.noise(loose, distance=0.008, scale=12.0, shape=0.85, rng=rng, offset_per_curve=0.05)
+    out[chosen] = strands.noise(loose, distance=0.008, scale=75.0, shape=0.85, rng=rng, offset_per_curve=0.05)
     return out
 
 
