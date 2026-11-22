@@ -8,6 +8,7 @@ from pxr import Usd, UsdGeom
 from strata_datagen.generators import morph
 from strata_datagen.library import creatures
 from strata_datagen.rng import stream
+from strata_datagen.scene import creature
 from strata_datagen.usdutil import floats, ints, new_stage, vec3f
 
 
@@ -70,6 +71,40 @@ class LoopTest(unittest.TestCase):
             )
             widths = UsdGeom.BasisCurves(shot.GetPrimAtPath("/World/hero/groom")).GetWidthsAttr()
             self.assertEqual(widths.GetTimeSamples(), [0.0, 12.0, 24.0, 30.0])
+
+
+class CreatureSceneTest(unittest.TestCase):
+    def test_animate_loops_the_pose_and_keys_widths_in_a_binary_sublayer(self) -> None:
+        with TemporaryDirectory() as tmp:
+            asset = Path(tmp) / "pose.usdc"
+            pose = new_stage(asset)
+            pose.SetDefaultPrim(UsdGeom.Xform.Define(pose, "/hero").GetPrim())
+            skin = UsdGeom.Mesh.Define(pose, "/hero/skin").CreatePointsAttr(vec3f(np.zeros((3, 3))))
+            for frame in range(7):
+                skin.Set(vec3f(np.full((3, 3), float(frame % 6))), float(frame))
+            curves = UsdGeom.BasisCurves.Define(pose, "/hero/groom")
+            curves.CreateCurveVertexCountsAttr(ints(np.array([4, 4])))
+            curves.CreatePointsAttr(vec3f(np.zeros((8, 3))))
+            curves.CreateWidthsAttr(floats(np.full(8, 1e-3)))
+            ranges = {"length": [0.5, 1.0], "density": [0.6, 1.0], "min_period_s": 8.0, "key_step": 48}
+            curves.GetPrim().SetCustomDataByKey("morph", ranges)
+            pose.GetRootLayer().Save()
+            shot_path = Path(tmp) / "scene" / "shot.usda"
+            shot_path.parent.mkdir()
+            shot = new_stage(shot_path)
+            shot.DefinePrim("/World/hero").GetReferences().AddReference(str(asset))
+            record = creature.animate(
+                shot, "/World/hero", asset, asset_path=str(asset), frames=(1, 100), seed=3
+            )
+            shot.GetRootLayer().Save()
+            self.assertEqual(record["loop_frames"], 6)
+            self.assertTrue((shot_path.parent / creature.COAT_LAYER).exists())
+            self.assertNotIn("widths", shot_path.read_text())
+            reopened = Usd.Stage.Open(str(shot_path))
+            widths = UsdGeom.BasisCurves(reopened.GetPrimAtPath("/World/hero/groom")).GetWidthsAttr()
+            self.assertEqual(widths.GetTimeSamples(), [0.0, 48.0, 96.0, 101.0])
+            points = UsdGeom.Mesh(reopened.GetPrimAtPath("/World/hero/skin")).GetPointsAttr()
+            self.assertEqual(float(np.asarray(points.Get(14.0))[0, 0]), 2.0)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from pxr import Sdf, Usd
 
 from strata_datagen.generators import morph
 from strata_datagen.rng import stream
+from strata_datagen.usdutil import new_stage
 
 Json = dict[str, object]
 COAT_LAYER = "hero_coat.usdc"
@@ -44,12 +45,16 @@ def animate(
         float(cast("float", raw["min_period_s"])),
         int(cast("int", raw["key_step"])),
     )
+    path = Path(stage.GetRootLayer().realPath).parent / COAT_LAYER
+    coat = new_stage(path)
     record["coat"] = morph.author_coat(
-        stage,
+        coat,
         f"{hero_path}/groom",
         base,
         morph=params,
         frames=(first, last),
         rng=stream(seed, "coat", "morph"),
     )
+    coat.GetRootLayer().Save()
+    stage.GetRootLayer().subLayerPaths.append(f"./{COAT_LAYER}")
     return record
