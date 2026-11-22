@@ -97,7 +97,7 @@ class SunTest(unittest.TestCase):
         top = np.argmax(st[:, 1])
         np.testing.assert_allclose(points[top] / lighting.BACKDROP_M, [0.0, 1.0, 0.0], atol=1e-6)
         primvars = UsdGeom.PrimvarsAPI(mesh)
-        self.assertEqual(primvars.GetPrimvar("karma:object:rendervisibility").Get(), "+primary")
+        self.assertEqual(primvars.GetPrimvar("karma:object:rendervisibility").Get(), "primary")
         self.assertEqual(primvars.GetPrimvar("instance_id").Get(), lighting.SKY_ID)
         self.assertLess(lighting.BACKDROP_M, camera.CLIPPING_M[1])
 

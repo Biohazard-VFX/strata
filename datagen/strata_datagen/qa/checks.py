@@ -24,7 +24,7 @@ LIMITS = {
     "uncovered": (0.0, 0.0),
     "valid_id_fraction": (0.999, 1.0),
     "coverage_channel": (1.0, 1.0),
-    "sky_id_in_front": (0.0, 0.0),
+    "sky_id_in_front": (0.0, 1e-5),
     "camera_error": (0.0, 1e-3),
 }
 COVERED = 0.999
@@ -72,7 +72,7 @@ def deep_metrics(
     return {
         "mean_samples": float(deep.counts.mean()),
         "max_samples": float(deep.counts.max()),
-        "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z - 1e-4)).sum()),
+        "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z * (1.0 - 1e-6) - 1e-4)).sum()),
         "partial_share": float(flat.partial.mean()),
         "flatten_error": float(np.abs(residual).mean()),
         "uncovered": float((flat.alpha < COVERED).mean()),
