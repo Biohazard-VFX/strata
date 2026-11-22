@@ -4,7 +4,7 @@
 - Materials are MaterialX standard_surface UsdShade networks on `outputs:mtlx:surface`; node ids and inputs are validated against the MaterialX library.
 - Roughness and metallic AOVs are `inputs:aov:<name>` on the surface shader, rendered as raw render vars.
 - Camera-space normals come from Karma's `ray:hitN_camera`: x right, y up, +Z towards the viewer.
-- Deep carries `C`, `instance_id` and a float `coverage` (constant 1, premultiplied like the id); id = round(instance_id / coverage), since Karma stores A as half.
+- Deep carries `C`, `instance_id` and a float `coverage` (constant 1 on every surface, sky too): it is the sample's float alpha and id = round(instance_id / coverage); Karma stores A as half.
 - Deep uses Karma compression 5: against 0 it moves K=4 layer alpha by 3e-4 on partial pixels and saves 20% (measured; ids are decoded via coverage).
 - Beauty carries a raw `C` (the deep flattens to it, targets stay raw) and an OIDN-denoised `denoised` copy (albedo and normal guides) as the model input.
 - Beauty, AOVs and deep share a one-pixel box filter so the flattened deep reproduces the beauty.
@@ -38,7 +38,7 @@
 - Job lists (`jobs.json`, `jobs.sh`) hold one husk command per shot with paths relative to the build root.
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
-- Every frame gets K=4 layer targets (contract strata_contract.layers, the training merge rule); raw deep is kept every 24th frame, as long shots are 720 frames.
+- Every frame gets float32 sky-inclusive K=4 targets (strata_contract.layers, sky masked); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.
 - Thin structures are self-authored: flexible elements (cable, fence wire, twine, rope) as linear BasisCurves, rigid ones (posts, rails, bars) as tube meshes.
 - Thin-structure widths are drawn in pixels of a 1280-wide frame, main elements 0.15-5 px and members at most 24 px unless a kind's physical minimum is wider.
 - Thin structures sit in a depth band (foreground, between camera and subject, background) and are rejected if they come near any camera position or the subject.
@@ -55,7 +55,7 @@
 - A shot's scalp hair is capped at 9M points over all keys; capped styles grow fewer strands widened to keep their summed width, so 30 s shots stay near 150 MB.
 - Human heroes are MPFB bodies (cmu_mb rig, CC0 skins, eyes and clothes) animated with original CMU ASF/AMC clips, built offline into the external hero library.
 - Animated heroes are point caches with samples at each frame and ±0.25, not UsdSkel, so skinned bodies, clothes and grooms share one representation.
-- Animated hero prims set `primvars:karma:object:geosamples` to 3; Karma renders no deformation blur without it.
+- Every prim whose points vary in the composed shot gets `primvars:karma:object:geosamples` 3 (scene/deformation.py); Karma renders no deformation blur without it.
 - Retargeting copies CMU world bone rotations after a rest-direction swing per bone; joints keep the target's proportions and root travel scales by hip height.
 - Hand bones follow the wrist because CMU finger channels are placeholders.
 - Human skin regions (scalp, face, brows, beard, ears, lips, body) are vertex masks scaled by the eye-to-crown distance, written as faces' shares per vertex.
@@ -67,3 +67,9 @@
 - The sky is a camera-only 3000 m backdrop sphere (id 0, HDRI mapped like the dome), so every pixel has a deep sample and the deep flattens to the beauty everywhere.
 - Camera distance and height scale with the hero's horizontal size (2.5-11 m for a 1.6 m subject), so any creature fills a similar share of the frame.
 - Background is part of the deep: one opaque, finite-Z sample per pixel with reserved id 0 (manifest.background); depth losses ignore it, colour and coverage use it.
+- Packing only adds files; off-stride raw deep is deleted by `prune` only after that frame's recorded raw QA passed and its deep and targets are unchanged.
+- Layer and sample alpha come from the float `coverage`, not half A, so near-opaque samples keep the visible layers behind them.
+- The flat geometry mask is a `foreground` primvar AOV (1 on geometry, 0 on the sky); deep `coverage` stays 1 on the sky for id decoding and float alpha.
+- `coverage` stays in the beauty product as well: Karma's deep product writes only AOVs that a raster product renders (husk: "Unable to find AOV coverage").
+- The camera's vertical aperture follows the output aspect (36 mm x H/W), so square pixels need no aperture conform and fy = fx.
+- Creature raw exports are reused only when a fingerprint of recipe job, frames, export scripts, source files and tool command matches.
