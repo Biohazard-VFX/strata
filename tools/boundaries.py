@@ -32,6 +32,7 @@ IMPORTERS = {
 MACHINERY = ('importlib', 'runpy', 'imp', 'zipimport', 'pkgutil', 'site', 'builtins')
 MACHINERY_MODULES = ('importlib', 'importlib.util', 'builtins')
 SAFE_MACHINERY = ('importlib.resources', 'importlib.metadata')
+CODE_RUNNERS = ('exec', 'eval', 'compile')
 PATH_STATE = ('sys.path', 'sys.meta_path', 'sys.path_hooks', 'sys.path_importer_cache')
 BLENDER = 'datagen/blender'
 OWN_DIRECTORY = ast.dump(ast.parse('sys.path.insert(0, str(Path(__file__).resolve().parent))', mode='eval').body)
@@ -158,9 +159,25 @@ def _static_roots(node, path):
     return [package[0]], None
 
 
+def _code_string(call, names):
+    """The literal source an exec, eval or compile call runs, or None."""
+    func = call.func
+    builtin = isinstance(func, ast.Name) and func.id in CODE_RUNNERS and func.id not in names
+    if not (builtin or _qualname(func, names) in {f'builtins.{name}' for name in CODE_RUNNERS}):
+        return None
+    source = _argument(call, 'source', 0)
+    if isinstance(source, ast.Constant) and isinstance(source.value, bytes):
+        return source.value.decode(errors='replace')
+    text, whole = _prefix(source) if source is not None else ('', False)
+    return text if whole else None
+
+
 def import_violations(path, forbidden, message):
     """Every import in a layer file that reaches a forbidden package or cannot be resolved statically."""
-    tree = ast.parse(path.read_text())
+    return _violations(ast.parse(path.read_text()), path, forbidden, message)
+
+
+def _violations(tree, path, forbidden, message):
     names = _bindings(tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     exempt = set()
@@ -200,6 +217,12 @@ def import_violations(path, forbidden, message):
             problem = 'PYTHONPATH changes where imports resolve'
         elif isinstance(node, ast.keyword) and node.arg == 'PYTHONPATH':
             problem = 'PYTHONPATH changes where imports resolve'
+        elif isinstance(node, ast.Call) and (code := _code_string(node, names)) is not None:
+            try:
+                inner = _violations(ast.parse(code), path, forbidden, message)
+            except SyntaxError:
+                inner = []
+            errors += [f'{path}:{node.lineno}: code string: {error.split(": ", 1)[1]}' for error in inner]
         if problem:
             errors.append(f'{path}:{node.lineno}: {problem}')
         if any(root in forbidden for root in roots):
