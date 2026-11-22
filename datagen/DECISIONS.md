@@ -31,3 +31,10 @@
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
 - Every frame gets K=4 layer targets (contract strata_contract.layers, the training merge rule); raw deep is kept every 24th frame, as long shots are 720 frames.
+- Thin structures are self-authored: flexible elements (cable, fence wire, twine, rope) as linear BasisCurves, rigid ones (posts, rails, bars) as tube meshes.
+- Thin-structure widths are drawn in pixels of a 1280-wide frame, main elements 0.15-5 px and members at most 24 px unless a kind's physical minimum is wider.
+- Thin structures sit in a depth band (foreground, between camera and subject, background) and are rejected if they come near any camera position or the subject.
+- Each thin structure's strands and members get their own instance ids from 100 up, below the scatter range.
+- Thin structures are anchored at times along the camera path (per 8 s window) and stay static in the world, so long shots pass structures that enter and leave frame without popping.
+- Hanging thin spans sway about their chord and vary sag as timeline curves, authored as per-frame transforms on rest-pose curves rather than per-frame points.
+- Each thin structure is written to its own usdc layer beside shot.usda and referenced, with material bindings as overrides, so shot layers stay small.

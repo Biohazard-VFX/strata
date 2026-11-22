@@ -6,7 +6,7 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
 ## Layout
 
 - `strata_datagen/generators/`: independent generators, seed and parameters in, USD prims out
-  (terrain, scatter, materials, lighting, camera, hero, groom). A generator never imports another.
+  (terrain, scatter, materials, lighting, camera, hero, groom, thin). A generator never imports another.
 - `strata_datagen/scene/`: composes the generators into one shot from a `ShotSpec` (seed plus fixed
   choices) and writes `manifest.json` and `camera.json`.
 - `strata_datagen/presets/`: fixed recipes (canaries) that name external-library assets.

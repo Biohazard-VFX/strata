@@ -4,6 +4,7 @@ Assets are named by their external-library ids; everything not fixed here comes 
 """
 
 from strata_datagen.generators.camera import CameraChoices
+from strata_datagen.generators.thin import Choice
 from strata_datagen.scene.spec import ShotSpec
 
 PRESETS: dict[str, ShotSpec] = {
@@ -28,6 +29,7 @@ PRESETS: dict[str, ShotSpec] = {
             depth_of_field=False,
             motion_blur=False,
         ),
+        thin=(),
     ),
     "foliage_heavy": ShotSpec(
         seed=202,
@@ -49,6 +51,35 @@ PRESETS: dict[str, ShotSpec] = {
             fill=0.5,
             depth_of_field=True,
             motion_blur=True,
+        ),
+        thin=(),
+    ),
+    "thin_structures": ShotSpec(
+        seed=303,
+        name="thin_structures",
+        hero="jaguar",
+        pose="neutral",
+        hero_speed_mps=0.0,
+        ground="ompjC0",
+        hdri="syferfontein_6d_clear_puresky",
+        hdri_rotation_deg=60.0,
+        foliage_density=0.5,
+        foreground_cover=False,
+        frame_count=24,
+        camera=CameraChoices(
+            move="locked",
+            distance_m=6.0,
+            height_m=1.1,
+            azimuth_deg=-20.0,
+            fill=0.45,
+            depth_of_field=False,
+            motion_blur=False,
+        ),
+        thin=(
+            Choice("rigging", "foreground"),
+            Choice("chain_link", "between"),
+            Choice("wires", "background"),
+            Choice("antenna", "background"),
         ),
     ),
 }

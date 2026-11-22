@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from strata_datagen import files
-from strata_datagen.generators import camera, groom, hero, lighting, materials, scatter, terrain
+from strata_datagen.generators import camera, groom, hero, lighting, materials, scatter, terrain, thin
 from strata_datagen.library.catalogue import Library, Provenance
 from strata_datagen.render import settings
 from strata_datagen.scene.compose import FIRST_SCATTER_ID, TERRAIN_ID, RenderParams, Shot
@@ -16,7 +16,7 @@ from strata_datagen.scene.spec import RECIPE_VERSION
 CONTRACT_VERSION = "strata-dataset-0.1.0"
 GENERATORS = {
     m.__name__.rsplit(".", 1)[-1]: m.VERSION
-    for m in (terrain, scatter, materials, lighting, camera, hero, groom, settings)
+    for m in (terrain, scatter, materials, lighting, camera, hero, groom, thin, settings)
 }
 
 
@@ -123,6 +123,7 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
                 "motion_blur": shot.track.motion_blur,
                 "depth_of_field": shot.track.depth_of_field,
             },
+            "thin": [s.record() for s in shot.thin],
         },
         "instance_ids": _ids(shot),
         "first_scatter_id": FIRST_SCATTER_ID,
