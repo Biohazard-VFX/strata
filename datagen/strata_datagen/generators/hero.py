@@ -1,0 +1,79 @@
+"""Place a prepared hero (skin plus groom) on the ground, static or moving across the shot."""
+
+from dataclasses import dataclass
+
+import numpy as np
+from pxr import Sdf, Usd, UsdGeom, UsdShade
+
+from strata_datagen import timeline
+from strata_datagen.fields import Ground
+from strata_datagen.usdutil import FloatArray, tag_instances
+
+VERSION = "hero-0.2.0"
+SKIN_ID = 2
+GROOM_ID = 3
+HAIR_ID = 4
+
+
+@dataclass(frozen=True)
+class HeroMotion:
+    """Root position (on the ground) and heading per sample: one per frame plus a handle each side."""
+
+    positions: FloatArray
+    yaw_deg: FloatArray
+    speed_mps: float
+
+
+def sample_motion(
+    rng: np.random.Generator, ground: Ground, samples: int, foot_offset_m: float, speed_mps: float | None
+) -> HeroMotion:
+    drawn = float(rng.uniform(0.2, 1.0)) if rng.random() < 0.6 else 0.0
+    speed = drawn if speed_mps is None else speed_mps
+    heading = float(rng.uniform(0.0, 360.0))
+    turn = float(rng.uniform(-15.0, 15.0))
+    t = (np.arange(samples) - samples // 2) / 24.0
+    yaw = heading + turn * t
+    angle = np.radians(yaw)
+    step = np.concatenate([[0.0], np.full(samples - 1, speed / 24.0)])
+    x = np.cumsum(step * np.sin(angle))
+    z = np.cumsum(step * np.cos(angle))
+    x, z = x - x[samples // 2], z - z[samples // 2]
+    y = ground.height(x, z) + foot_offset_m
+    return HeroMotion(np.stack([x, y, z], axis=-1), yaw, speed)
+
+
+def sample_coat(rng: np.random.Generator, samples: int) -> FloatArray:
+    """Per-sample RGB albedo multipliers: brightness and warmth of the coat drift over the shot."""
+    t = timeline.sample_times(samples)
+    duration = float(t[-1]) + 1.0
+    brightness = timeline.curve(rng, duration, 9.0, 0.65, 1.25)(t)
+    warmth = timeline.curve(rng, duration, 11.0, -0.12, 0.12)(t)
+    return brightness[:, None] * np.stack([1.0 + warmth, np.ones_like(warmth), 1.0 - warmth], axis=-1)
+
+
+def _bind(stage: Usd.Stage, path: Sdf.Path, material: UsdShade.Material, instance_id: int) -> None:
+    prim = stage.OverridePrim(path)
+    UsdShade.MaterialBindingAPI.Apply(prim).Bind(material, UsdShade.Tokens.strongerThanDescendants)
+    tag_instances(prim, np.array([instance_id]))
+
+
+def author(
+    stage: Usd.Stage,
+    path: str,
+    asset: str,
+    motion: HeroMotion,
+    *,
+    first_frame: int,
+    skin: UsdShade.Material,
+    groom: UsdShade.Material,
+) -> UsdGeom.Xform:
+    xform = UsdGeom.Xform.Define(stage, path)
+    xform.GetPrim().GetReferences().AddReference(asset)
+    translate, rotate = xform.AddTranslateOp(), xform.AddRotateYOp()
+    for index, (position, yaw) in enumerate(zip(motion.positions, motion.yaw_deg, strict=True)):
+        time = Usd.TimeCode(first_frame - 1 + index)
+        translate.Set((float(position[0]), float(position[1]), float(position[2])), time)
+        rotate.Set(float(yaw), time)
+    _bind(stage, xform.GetPath().AppendChild("skin"), skin, SKIN_ID)
+    _bind(stage, xform.GetPath().AppendChild("groom"), groom, GROOM_ID)
+    return xform

@@ -1,0 +1,81 @@
+# Decisions
+
+- USD is authored with usd-core in a uv project, not Houdini's pxr, so datagen is typed, testable without a license and runs unchanged on render nodes.
+- Materials are MaterialX standard_surface UsdShade networks on `outputs:mtlx:surface`; node ids and inputs are validated against the MaterialX library.
+- Roughness and metallic AOVs are `inputs:aov:<name>` on the surface shader, rendered as raw render vars.
+- Camera-space normals come from Karma's `ray:hitN_camera`: x right, y up, +Z towards the viewer.
+- Deep carries `C`, `instance_id` and a float `coverage` (constant 1 on every surface, sky too): it is the sample's float alpha and id = round(instance_id / coverage); Karma stores A as half.
+- Deep uses Karma compression 5: against 0 it moves K=4 layer alpha by 3e-4 on partial pixels and saves 20% (measured; ids are decoded via coverage).
+- Beauty carries a raw `C` (the deep flattens to it, targets stay raw) and an OIDN-denoised `denoised` copy (albedo and normal guides) as the model input.
+- Beauty, AOVs and deep share a one-pixel box filter so the flattened deep reproduces the beauty.
+- Beauty EXRs are multi-part, one part per AOV, ZIPS-compressed; no LPE lighting splits (unused by training, 43% of beauty size).
+- Every product name is time-sampled per frame; outputs never rely on `$F` expansion.
+- Camera focal length and apertures are authored in tenths of a scene unit (mm / 100 at metres), per UsdGeomCamera.
+- Dome lights set `inputs:karma:light:renderlightgeo` so the HDRI is visible to camera rays.
+- HDRI directions use Karma's latlong frame: image centre at +Z, top row at +Y.
+- Each HDRI's sun is cut into a distant light whose intensity is the measured irradiance (Karma's distant-light unit).
+- Shots are normalised to a fixed horizontal irradiance (sky plus sun) so exposure is comparable across HDRIs.
+- Camera-visible skies use 8K outdoor HDRIs resampled to 4K.
+- Path-traced samples: 64, doubled when a shot has depth of field or motion blur, so per-layer alpha and RGB error match a still shot.
+- FBX models are converted in Blender, then merged into one Y-up metre mesh per variation, footprint-centred on y = 0.
+- Megascans maps are stored at most 2K, 8-bit: sRGB albedo, raw normal, roughness and opacity; EXR albedo is linear.
+- Ground surfaces are natural Megascans surfaces only; asphalt, concrete, metal and wood are excluded.
+- Heroes enter only through an external library (`hero.json` + USD poses); repo code never names a hero.
+- Fur and hair come from the generic groom generator: guide shapes blended from the nearest guides, or parametric hair when there are none.
+- Grooms and skins are baked per pose into the build root at prepare time, so shot layers stay small.
+- Creature bodies come from Infinigen or authored glTF via Blender export scripts run only by `strata-datagen creatures`, never at render time.
+- Infinigen bodies are generated hairless (its animated fur is unsupported); all fur and feathers are grown downstream by our generators.
+- Creature coats are fur layers and feather curves on skin regions, combed down the geodesic distance from the nose, merged into one groom prim.
+- Animated creature poses time-sample skin points; each hair is bound to its root triangle and carried rigidly with it per frame.
+- Coats vary over a shot on fixed strands: length and density are timeline curves that taper widths to zero, keyed into a sublayer.
+- Cyclic creature clips are stored as one closed cycle and looped across a shot with USD value clips.
+- Groom clumping pulls each hair towards its nearest leader hair, linearly from none at the root to full strength at the tip.
+- Presets are the only code that names library asset ids; generators take assets as parameters.
+- Banned identifiers are checked as SHA-256 digests so the public repo never spells them.
+- Randomness comes from named streams `sha256(seed:labels)`; fixed choices still consume their draws, so a seed gives byte-identical USD.
+- Terrain is a 300 m, 0.5 m-cell heightfield with a flattened centre; beyond the scattered 60 m it flattens and sinks, so bare ground never rises into the HDRI horizon.
+- Renders are Karma XPU GPU-only and abort without a GPU; the driver retries once with the CPU device and records which ran.
+- Job lists (`jobs.json`, `jobs.sh`) hold one `strata-datagen render-task` per task, never bare husk, with paths relative to the build root.
+- render-task holds the shot lock across husk, pack, accept and prune; husk inherits the lock descriptor, so the shot stays locked while it runs.
+- Farm nodes never write a local shot: downloaded output enters only via `ingest`, staged in the shot and renamed in under the lock.
+- Files are written atomically (temporary file, then rename).
+- Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
+- Every frame gets float32 sky-inclusive K=4 targets (strata_contract.layers, sky masked); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.
+- Thin structures are self-authored: flexible elements (cable, fence wire, twine, rope) as linear BasisCurves, rigid ones (posts, rails, bars) as tube meshes.
+- Thin-structure widths are drawn in pixels of a 1280-wide frame, main elements 0.15-5 px and members at most 24 px unless a kind's physical minimum is wider.
+- Thin structures sit in a depth band (foreground, between camera and subject, background) and are rejected if they come near any camera position or the subject.
+- Each thin structure's strands and members get their own instance ids from 100 up, below the scatter range.
+- Thin structures are anchored at times along the camera path (per 8 s window) and stay static in the world, so long shots pass structures that enter and leave frame without popping.
+- Hanging thin spans sway about their chord and vary sag as timeline curves, authored as per-frame transforms on rest-pose curves rather than per-frame points.
+- Each thin structure is written to its own usdc layer beside shot.usda and referenced, with material bindings as overrides, so shot layers stay small.
+- Human hair comes from the hairstyle generator: guides grown under gravity against the skin, dense strands interpolated, then Blender hair-node deformers ported to numpy (strands.py).
+- Hair renders with Karma's kma_hair melanin shader on `outputs:kma:surface`; Karma XPU skips MaterialX chiang_hair graphs (ND_surface roots).
+- Every hero marks skin regions only as float vertex primvars `region_<name>` (0..1, soft at borders), never GeomSubsets or int labels; a scalp region turns on hair.
+- Hairstyles are grown per shot into `scene/hair.usdc` so each seed gets its own style; skins and fur grooms stay baked per pose at prepare time.
+- Hair on animated heroes is grown on the rest skin and carried by a per-sample similarity fit to the upper scalp plus per-key root offsets, not per-sample points.
+- Hairstyles morph over a shot on timeline curves with one topology: length trims, density fades widths, cut and updo stay fixed; points keyed every 6 s, USD interpolates.
+- A shot's scalp hair is capped at 9M points over all keys; capped styles grow fewer strands widened to keep their summed width, so 30 s shots stay near 150 MB.
+- Human heroes are MPFB bodies (cmu_mb rig, CC0 skins, eyes and clothes) animated with original CMU ASF/AMC clips, built offline into the external hero library.
+- Animated heroes are point caches with samples at each frame and ±0.25, not UsdSkel, so skinned bodies, clothes and grooms share one representation.
+- Every prim whose points vary in the composed shot gets `primvars:karma:object:geosamples` 3 (scene/deformation.py); Karma renders no deformation blur without it.
+- Retargeting copies CMU world bone rotations after a rest-direction swing per bone; joints keep the target's proportions and root travel scales by hip height.
+- Hand bones follow the wrist because CMU finger channels are placeholders.
+- Human skin regions (scalp, face, brows, beard, ears, lips, body) are vertex masks scaled by the eye-to-crown distance, written as faces' shares per vertex.
+- Human clothing is skinned MPFB garments only; simulated cloth is off in the generators.
+- Animated heroes carry their own MaterialX looks; scenes reference them without overriding bindings.
+- A shot's subject size is the hero's largest bounding extent, so tall heroes are framed by height.
+- Long takes vary a human gradually instead of cutting: corner humans with one outfit are blended per sample (points, rig, skin texture) with seeded smooth weights.
+- Chained CMU clips crossfade by sign-continuous quaternion interpolation of bone world rotations; slerp of large pose differences flips direction mid-blend.
+- The sky is a camera-only 3000 m backdrop sphere (id 0, HDRI mapped like the dome), so every pixel has a deep sample and the deep flattens to the beauty everywhere.
+- Camera distance and height scale with the hero's horizontal size (2.5-11 m for a 1.6 m subject), so any creature fills a similar share of the frame.
+- Background is part of the deep: one opaque, finite-Z sample per pixel with reserved id 0 (manifest.background); depth losses ignore it, colour and coverage use it.
+- Off-stride raw deep is deleted by `prune` only when the frame's raw QA passed and every validated input (all but manifest timings) is unchanged.
+- Layer and sample alpha come from the float `coverage`, not half A, so near-opaque samples keep the visible layers behind them.
+- The flat geometry mask is a `foreground` primvar AOV (1 on geometry, 0 on the sky); deep `coverage` stays 1 on the sky for id decoding and float alpha.
+- `coverage` stays in the beauty product as well: Karma's deep product writes only AOVs that a raster product renders (husk: "Unable to find AOV coverage").
+- The camera's vertical aperture follows the output aspect (36 mm x H/W), so square pixels need no aperture conform and fy = fx.
+- Creature raw exports are reused only when job, frames, scripts, sources with every file they reference, and the probed tool build all match.
+- Sidecars are write-once: staged, then renamed to an absent samples/<frame_id>; identical repacks are no-ops, different ones refused; only offline remove-samples deletes.
+- Publishing uses rename(2), which never replaces a non-empty directory: renameat2 RENAME_NOREPLACE returns EINVAL on the NTFS-FUSE dataset mounts.
+- One writer per shot: every shot write holds an exclusive flock on <shot>/.lock; the kernel decides liveness, so no lock is broken by pid checks.
+- A locked shot is refused, never waited for; qa rejects a shot by renaming it while held, and a contender whose lock path moved refuses.
