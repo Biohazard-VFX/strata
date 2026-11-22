@@ -1,6 +1,8 @@
 # Decisions
 
-- `runtime/` owns C; `training/` owns Python; only `contract/` bridges them, so neither implementation imports the other.
+- `runtime/` owns C; `training/` and `datagen/` own Python; only `contract/` bridges them, so no implementation imports another.
+- `datagen/` is a first-class layer that depends only on the dataset contract and third-party packages; runtime and training never import datagen.
+- The model contract is distribution `strata-contract`, import `strata_contract`; the dataset contract is `strata-dataset`, import `strata_dataset`, in `contract/dataset/`.
 - Model contract v1 fixes tensor interfaces, normalization, padding, color and depth semantics; C rejects incompatible manifests and ONNX metadata before inference.
 - DP2 H+ runs at native resolution with bottom/right replicate padding to 32; DP2 does not use Depth Pro 1's resize pipeline.
 - Metric depth is `f_px / (original_width * inverse_depth)`; zero inverse remains positive infinity.

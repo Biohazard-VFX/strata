@@ -17,6 +17,7 @@ bash tools/check_format.sh
 "$python" -m pyright --project training
 "$python" -m unittest discover -s training/tests -v
 "$python" tools/check_contract.py
+"$python" tools/check_contract_packages.py
 presets=(normal sanitize)
 cpu=0
 if [[ $# -gt 0 ]]; then
