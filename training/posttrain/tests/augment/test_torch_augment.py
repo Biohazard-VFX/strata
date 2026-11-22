@@ -121,7 +121,7 @@ def test_torch_recomposition_matches_cpu(operation: str, math_device: str) -> No
     expected_record: dict[str, object] = {}
     target = deep.targets()
     expected_image, expected = recompose(
-        shot, roles, target, Donor(donor, roles), np.random.default_rng(42), config, expected_record
+        shot, target, Donor(donor, roles), np.random.default_rng(42), config, expected_record
     )
 
     def tensor_shot(value: Shot) -> TensorShot:
@@ -141,7 +141,6 @@ def test_torch_recomposition_matches_cpu(operation: str, math_device: str) -> No
     actual_record: dict[str, object] = {}
     image, actual = tensor_recompose(
         tensor_shot(shot),
-        roles,
         {k: torch.tensor(v, device=math_device) for k, v in target.arrays().items()},
         tensor_shot(donor),
         roles,

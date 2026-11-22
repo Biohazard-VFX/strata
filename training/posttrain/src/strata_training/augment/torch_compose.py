@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from strata_training.augment.deep import SPLIT_EPSILON
-from strata_training.augment.pipeline import AugmentConfig, Roles
+from strata_training.augment.pipeline import HERO_GROUP, AugmentConfig, Roles
 from strata_training.augment.torch_deep import TensorSamples, merge
 from strata_training.torch_api import api
 from strata_training.torch_layers import segment_sum
@@ -100,7 +100,6 @@ def _grade(rng: np.random.Generator, config: AugmentConfig, device: torch.device
 
 def recompose_samples(
     shot: TensorShot,
-    shot_roles: Roles,
     targets: dict[str, torch.Tensor],
     donor: TensorShot | None,
     donor_roles: Roles | None,
@@ -109,7 +108,6 @@ def recompose_samples(
     record: dict[str, Any],
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor] | TensorSamples]:
     """Borrow tensors and caller RNG; return an owned native image and matching targets."""
-    del shot_roles
     device = shot.denoised.device
     scene = torch.eye(3, device=device, dtype=torch.float64)
     if rng.random() < config.scene_grade:
@@ -125,7 +123,7 @@ def recompose_samples(
         hero = deep.roles[:, 1] > 0
         present = cast(torch.Tensor, api.unique(deep.ids[(deep.ids >= 0) & ~hero])).cpu().numpy()
         if bool(hero.any()):
-            present = np.concatenate((present, [-2]))
+            present = np.concatenate((present, [HERO_GROUP]))
         if present.size:
             count = min(
                 int(rng.integers(config.instance_count[0], config.instance_count[1] + 1)),
@@ -134,7 +132,7 @@ def recompose_samples(
             chosen = rng.choice(present, count, replace=False)
             remaining = torch.ones_like(deep.ids, dtype=torch.bool)
             for instance in chosen:
-                mask = hero if instance == -2 else (deep.ids == int(instance)) & ~hero
+                mask = hero if instance == HERO_GROUP else (deep.ids == int(instance)) & ~hero
                 mask &= remaining
                 remaining &= ~mask
                 layers.append(TensorLayer(deep.select(mask), shot, _grade(rng, config, device)))
@@ -174,7 +172,6 @@ def recompose_samples(
 
 def recompose(
     shot: TensorShot,
-    shot_roles: Roles,
     targets: dict[str, torch.Tensor],
     donor: TensorShot | None,
     donor_roles: Roles | None,
@@ -182,9 +179,7 @@ def recompose(
     config: AugmentConfig,
     record: dict[str, Any],
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    image, result = recompose_samples(
-        shot, shot_roles, targets, donor, donor_roles, rng, config, record
-    )
+    image, result = recompose_samples(shot, targets, donor, donor_roles, rng, config, record)
     return image, result.targets(targets["alpha"].shape[0]) if isinstance(
         result, TensorSamples
     ) else result

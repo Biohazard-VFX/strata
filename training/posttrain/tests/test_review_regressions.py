@@ -11,6 +11,7 @@ from strata_training.augment.deep import FIELDS, DeepSamples
 from strata_training.data.cache import prepare
 from strata_training.data.dataset import Frame
 from strata_training.data.online import OnlineLoader, image_digest, prepare_sample
+from strata_training.data.targets import composite
 from strata_training.data.torch_online import finalize, prepare_raw
 from strata_training.io import save_array, save_arrays, write_json
 
@@ -57,7 +58,7 @@ def test_stride_routing_keeps_off_stride_targets_and_seed_replay(
         },
     )
     assert [f.entry["recomposition_eligible"] for f in frames] == [True, False]
-    assert loader.eligible == (0,)
+    assert loader.eligible == frozenset({0})
     assert loader.eligible_fraction == 0.5
     selections = [(0, 0, 0), (1, 0, 0)]
 
@@ -89,7 +90,7 @@ def test_stride_routing_keeps_off_stride_targets_and_seed_replay(
     np.testing.assert_array_equal(actual.images[1].numpy(), loader.shot(1).denoised[:, :1, :1])
     torch.testing.assert_close(
         actual.target["beauty"][1],
-        torch.tensor(frames[1].arrays["target_beauty"][:, :1, :1]).float(),
+        composite(actual.target["alpha"][1], actual.target["rgb"][1]),
         atol=0,
         rtol=0,
     )
@@ -222,7 +223,7 @@ def test_torch_reducer_matches_real_render_crop() -> None:
 @pytest.mark.parametrize("mode", ["numpy", "torch"])
 def test_unlabelled_hero_role_is_graded_without_grading_nonhero(mode: str) -> None:
     from strata_training.augment.deep import Shot, flatten
-    from strata_training.augment.pipeline import AugmentConfig, recompose, roles
+    from strata_training.augment.pipeline import AugmentConfig, recompose
     from strata_training.augment.torch_compose import TensorShot, recompose_samples
     from strata_training.augment.torch_deep import TensorSamples
 
@@ -237,11 +238,9 @@ def test_unlabelled_hero_role_is_graded_without_grading_nonhero(mode: str) -> No
     )
     image = flatten(deep)[0]
     config = AugmentConfig(instance_grade=1, scene_grade=0, recompose=0, occluders=0)
-    shot_roles = roles({"instance_ids": [{"name": "not_a_hero", "first_id": 42, "count": 1}]})
     if mode == "numpy":
         _, result = recompose(
             Shot(deep, image, image),
-            shot_roles,
             deep.targets(),
             None,
             np.random.default_rng(42),
@@ -259,7 +258,7 @@ def test_unlabelled_hero_role_is_graded_without_grading_nonhero(mode: str) -> No
         )
         shot = TensorShot(tensor, torch.tensor(image), torch.tensor(image))
         _, rebuilt = recompose_samples(
-            shot, shot_roles, tensor.targets(), None, None, np.random.default_rng(42), config, {}
+            shot, tensor.targets(), None, None, np.random.default_rng(42), config, {}
         )
         assert isinstance(rebuilt, TensorSamples)
         rgb = rebuilt.targets()["rgb"].numpy()
@@ -317,7 +316,6 @@ def test_unlabelled_role_element_is_selected_without_manifest_names(mode: str) -
         shot = Shot(deep, image, image)
         recompose(
             shot,
-            shot_roles,
             deep.targets(),
             Donor(shot, shot_roles),
             np.random.default_rng(42),
@@ -335,7 +333,6 @@ def test_unlabelled_role_element_is_selected_without_manifest_names(mode: str) -
         tensor_shot = TensorShot(tensor, torch.tensor(image), torch.tensor(image))
         recompose_samples(
             tensor_shot,
-            shot_roles,
             tensor.targets(),
             tensor_shot,
             shot_roles,

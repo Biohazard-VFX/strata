@@ -7,6 +7,7 @@ from torch import nn
 
 from strata_training.data.dataset import Frame
 from strata_training.data.policy import require_supervision
+from strata_training.data.targets import composite
 from strata_training.eval.predict import predict
 from strata_training.eval.protocol import entries_for
 from strata_training.losses.deep import deep_loss
@@ -69,8 +70,7 @@ def evaluate_validation(
                 k: torch.tensor(frame.arrays[k][None]).float()
                 for k in ("inverse_depth", "alpha", "rgb", "mixed")
             }
-            beauty = frame.arrays.get("target_beauty", frame.arrays["beauty"])
-            target["beauty"] = torch.tensor(beauty[None]).float()
+            target["beauty"] = composite(target["alpha"].movedim(1, 0), target["rgb"].movedim(1, 0))
             loss, _ = deep_loss(prediction, target)
             losses.append(loss.item())
     finally:

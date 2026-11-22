@@ -54,7 +54,7 @@ def _save(
     target = root / entry["id"]
     target.mkdir(exist_ok=True)
     data = np.load(entry["cache"])
-    metric_scale = oracle_metric_scale(entry, data, focal_inv)
+    metric_scale = oracle_metric_scale(data, focal_inv)
     for level, tensor in enumerate(pyramid):
         save_array(target / f"pyramid_{level}.npy", tensor.half().cpu().numpy())
     save_array(target / "features.npy", features.half().cpu().numpy())

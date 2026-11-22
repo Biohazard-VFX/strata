@@ -17,6 +17,7 @@ from strata_training.augment.torch_compose import TensorShot, recompose_samples
 from strata_training.augment.torch_deep import TensorSamples, batch_samples
 from strata_training.augment.torch_grain import apply_grain_batch
 from strata_training.data.raw_tensor import MappedSamples, mapped_samples
+from strata_training.data.targets import composite
 from strata_training.torch_api import api
 from strata_training.types import Array
 
@@ -30,7 +31,6 @@ class TorchJob:
 
     position: int
     shot: TensorShot
-    roles: Roles
     donor: TensorShot | None
     donor_roles: Roles | None
     config: AugmentConfig
@@ -92,7 +92,6 @@ def prepare_raw(
             for key in ("inverse_depth", "alpha", "rgb")
         }
         image = _owned(loader.shot(i).denoised[:, *window])
-        beauty = _owned(frame.arrays.get("target_beauty", frame.arrays["beauty"])[:, *window])
         if rng.random() < loader.clean_fraction:
             clean.append(position)
             scale = frame.scale
@@ -120,7 +119,7 @@ def prepare_raw(
             donor: TensorShot | None = None
             donor_roles: Roles | None = None
             if config.recompose:
-                donor_i = loader.eligible[int(rng.integers(len(loader.eligible)))]
+                donor_i = loader.eligible_indices[int(rng.integers(len(loader.eligible_indices)))]
                 y, x = loader.frames[donor_i].crop(rng, size)
                 donor = _read_shot(
                     loader.shot(donor_i),
@@ -131,13 +130,13 @@ def prepare_raw(
                     loader.samples / loader.frames[donor_i].entry["id"] / "deep",
                 )
                 donor_roles = loader.roles[donor_i]
-            jobs.append(TorchJob(position, shot, loader.roles[i], donor, donor_roles, config, seed))
+            jobs.append(TorchJob(position, shot, donor, donor_roles, config, seed))
             scale = frame.scale * size / frame.base.shape[1]
         images.append(image)
         scales.append(scale)
         values = {
             **layers,
-            "beauty": beauty,
+            "beauty": composite(layers["alpha"], layers["rgb"]),
             "mixed": (layers["alpha"][0] > 0.03) & (layers["alpha"][0] < 0.97),
         }
         for key in targets:
@@ -176,7 +175,6 @@ def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch"
         images=prepared.images.clone(),
         target={k: v.clone() for k, v in prepared.target.items()},
     )
-    changed: list[int] = []
     pending: list[tuple[int, TensorSamples]] = []
     grains: list[tuple[int, GrainParams]] = []
     cameras: list[tuple[int, CameraParams]] = []
@@ -190,10 +188,8 @@ def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch"
             if k in ("inverse_depth", "alpha", "rgb")
         }
         image, result = recompose_samples(
-            job.shot, job.roles, targets, job.donor, job.donor_roles, rng, job.config, record
+            job.shot, targets, job.donor, job.donor_roles, rng, job.config, record
         )
-        if isinstance(result, TensorSamples) or "scene_gain" in record:
-            changed.append(position)
         if isinstance(result, TensorSamples):
             pending.append((position, result))
         else:
@@ -216,12 +212,9 @@ def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch"
             prepared.target[key][positions] = value.reshape(
                 *value.shape[:-2], len(pending), size, size
             ).movedim(-3, 0)
-    if changed:
-        alpha = prepared.target["alpha"][changed]
-        rgb = prepared.target["rgb"][changed]
-        through = torch.cat((torch.ones_like(alpha[:, :1]), (1 - alpha[:, :-1]).cumprod(1)), dim=1)
-        prepared.target["beauty"][changed] = (through[:, :, None] * rgb).sum(1)
-        prepared.target["mixed"][changed] = ((alpha[:, 0] > 0.03) & (alpha[:, 0] < 0.97)).float()
+    alpha = prepared.target["alpha"]
+    prepared.target["beauty"] = composite(alpha.movedim(1, 0), prepared.target["rgb"].movedim(1, 0))
+    prepared.target["mixed"] = ((alpha[:, 0] > 0.03) & (alpha[:, 0] < 0.97)).float()
     if grains:
         positions = [i for i, _ in grains]
         prepared.images[positions] = apply_grain_batch(

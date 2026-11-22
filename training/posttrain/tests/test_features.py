@@ -89,7 +89,7 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
     assert_allclose(frame.arrays["target_beauty"], denoised * 2)
     inputs, targets, _ = batch([frame], [(0, 0, 0)], 32, 0, "cpu")
     assert_allclose(inputs["image"][0].numpy(), denoised)
-    assert_allclose(targets["beauty"][0].numpy(), denoised * 2)
+    assert_allclose(targets["beauty"][0].numpy(), np.zeros_like(denoised))
     features.extract(index, root, "depthpro2-s", device="cpu")
     assert len(observed) == 1
     with np.load(cache) as data:

@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from strata_training.augment.deep import Shot, read_samples
-from strata_training.augment.pipeline import AugmentConfig, Roles, recompose
+from strata_training.augment.pipeline import AugmentConfig, recompose
 from strata_training.augment.torch_compose import TensorShot, recompose_samples
 from strata_training.augment.torch_deep import TensorSamples
 
@@ -29,11 +29,8 @@ def test_unlabelled_hero_is_graded_while_geometry_and_roles_are_preserved(
         grain=0,
         camera=0,
     )
-    roles = Roles(())
     record: dict[str, Any] = {}
-    _, target = recompose(
-        shot, roles, deep.targets(), None, np.random.default_rng(19), config, record
-    )
+    _, target = recompose(shot, deep.targets(), None, np.random.default_rng(19), config, record)
     assert -1 not in record["graded_instances"]
     assert not np.array_equal(target.rgb[0, :, 0, 0], deep.rgb[0])
     np.testing.assert_array_equal(target.alpha, deep.targets().alpha)
@@ -50,7 +47,6 @@ def test_unlabelled_hero_is_graded_while_geometry_and_roles_are_preserved(
     record = {}
     _, rebuilt = recompose_samples(
         tensor_shot,
-        roles,
         tensors.targets(),
         None,
         None,

@@ -1,13 +1,21 @@
+from typing import cast
+
 import numpy as np
+import torch
 from strata_dataset.layers import reduce_samples as contract_reduce
 from strata_dataset.roles import sky as sample_sky
 
 from strata_training.types import Array, Layers
 
 
-def composite(alpha: Array, rgb: Array) -> Array:
-    trans = np.concatenate((np.ones_like(alpha[:1]), np.cumprod(1 - alpha[:-1], axis=0)))
-    return (trans[:, None] * rgb).sum(axis=0)
+def composite[T: (Array, torch.Tensor)](alpha: T, rgb: T) -> T:
+    """Own beauty from final K-first layers; borrow NumPy arrays or device tensors."""
+    trans = alpha[0] * 0 + 1
+    result = rgb[0] * 0
+    for index in range(alpha.shape[0]):
+        result = result + trans[..., None, :, :] * rgb[index]
+        trans = trans * (1 - alpha[index])
+    return cast(T, result)
 
 
 def visible_inverse(layers: Layers) -> Array:

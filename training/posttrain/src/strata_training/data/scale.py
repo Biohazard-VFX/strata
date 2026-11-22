@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-from typing import Any
 
 import numpy as np
 
@@ -7,8 +6,7 @@ from strata_training.data.targets import visible_inverse
 from strata_training.types import Array, Layers
 
 
-def oracle_metric_scale(entry: dict[str, Any], data: Mapping[str, Array], inverse: Array) -> float:
-    del entry
+def oracle_metric_scale(data: Mapping[str, Array], inverse: Array) -> float:
     solid = (
         (data["alpha"][0] > 0.999)
         & (data["alpha"][1:].sum(axis=0) < 1e-6)

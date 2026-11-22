@@ -66,7 +66,7 @@ def test_photometric_crop_never_materializes_raw_deep(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(DeepSamples, "crop", forbidden)
     crop = shot.crop(0, 0, 24, 32)
-    sample = augment_sample(crop, ROLES, targets, None, np.random.default_rng(9), OFF)
+    sample = augment_sample(crop, targets, None, np.random.default_rng(9), OFF)
     assert_array_equal(sample.image, shot.denoised)
     assert_array_equal(sample.layers.rgb, targets.rgb)
 
@@ -96,7 +96,7 @@ def test_empty_native_sky_keeps_image_without_inventing_occluder_depth(stored_sk
     image = np.full((3, 8, 8), 0.25, dtype=np.float32)
     shot = Shot(deep, image, image)
     sample = augment_sample(
-        shot, ROLES, deep.targets(), None, np.random.default_rng(71), replace(OFF, occluders=1.0)
+        shot, deep.targets(), None, np.random.default_rng(71), replace(OFF, occluders=1.0)
     )
     assert_array_equal(sample.image, image)
     assert bool(sample.layers.alpha.any()) == stored_sky
@@ -127,7 +127,6 @@ def test_sky_depth_does_not_set_the_placement_range_of_inserted_geometry() -> No
     donor_image, _ = flatten(element)
     sample = augment_sample(
         Shot(background, image, image),
-        ROLES,
         background.targets(),
         Donor(Shot(element, donor_image, donor_image), ROLES),
         np.random.default_rng(81),
@@ -171,7 +170,7 @@ def test_photometric_augmentations_never_change_targets() -> None:
     config = replace(OFF, grain=1.0, camera=1.0, sharpen=1.0)
     for seed in range(4):
         sample = augment_sample(
-            shot, ROLES, shot.deep.targets(), None, np.random.default_rng(seed), config
+            shot, shot.deep.targets(), None, np.random.default_rng(seed), config
         )
         for name, value in reference.arrays().items():
             assert_array_equal(sample.layers.arrays()[name], value)
@@ -184,7 +183,6 @@ def test_scene_grade_changes_target_colour_with_the_input() -> None:
     reference = shot.deep.targets()
     sample = augment_sample(
         shot,
-        ROLES,
         shot.deep.targets(),
         None,
         np.random.default_rng(3),
@@ -205,7 +203,7 @@ def test_recomposition_places_the_donor_hero_in_front_with_consistent_input() ->
     shot, donor = layered_shot(3), layered_shot(4)
     config = replace(OFF, recompose=1.0, hero=1.0, element_front=1.0)
     sample = augment_sample(
-        shot, ROLES, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(5), config
+        shot, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(5), config
     )
     assert sample.record["element"] == "hero"
     assert sample.record["element_depth_scale"] < 3.0 / 6.0
@@ -227,10 +225,10 @@ def test_occluders_and_grades_rebuild_exact_targets_deterministically() -> None:
     shot, donor = layered_shot(6), layered_shot(7)
     config = replace(OFF, recompose=1.0, occluders=1.0, instance_grade=1.0, grain=1.0)
     first = augment_sample(
-        shot, ROLES, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(8), config
+        shot, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(8), config
     )
     second = augment_sample(
-        shot, ROLES, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(8), config
+        shot, shot.deep.targets(), Donor(donor, ROLES), np.random.default_rng(8), config
     )
     assert first.record == second.record
     assert_array_equal(first.image, second.image)
@@ -243,7 +241,7 @@ def test_occluders_and_grades_rebuild_exact_targets_deterministically() -> None:
 def test_clean_share_returns_the_untouched_sample() -> None:
     shot = layered_shot(9)
     sample = augment_sample(
-        shot, ROLES, shot.deep.targets(), None, np.random.default_rng(0), AugmentConfig(clean=1.0)
+        shot, shot.deep.targets(), None, np.random.default_rng(0), AugmentConfig(clean=1.0)
     )
     assert sample.record == {"clean": True}
     assert_array_equal(sample.image, shot.denoised)
@@ -255,7 +253,6 @@ def test_recomposition_rejects_a_donor_on_another_grid() -> None:
     with pytest.raises(ValueError, match="pixel grid"):
         augment_sample(
             layered_shot(1),
-            ROLES,
             layered_shot(1).deep.targets(),
             Donor(layered_shot(2, (24, 30)), ROLES),
             np.random.default_rng(0),

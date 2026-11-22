@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from strata_training.data import mapped
+from strata_training.data.targets import composite
 from strata_training.types import Array
 
 
@@ -148,16 +149,13 @@ def batch(
     targets = {
         key: tensor(
             [
-                f.arrays.get("target_beauty", f.arrays[key])[
-                    ..., y + halo : y + halo + crop, x + halo : x + halo + crop
-                ]
-                if key == "beauty"
-                else f.arrays[key][..., y + halo : y + halo + crop, x + halo : x + halo + crop]
+                f.arrays[key][..., y + halo : y + halo + crop, x + halo : x + halo + crop]
                 for f, y, x in selected
             ]
         )
-        for key in ("inverse_depth", "alpha", "rgb", "beauty", "mixed")
+        for key in ("inverse_depth", "alpha", "rgb", "mixed")
     }
+    targets["beauty"] = composite(targets["alpha"].movedim(1, 0), targets["rgb"].movedim(1, 0))
     return inputs, targets, pyramid
 
 

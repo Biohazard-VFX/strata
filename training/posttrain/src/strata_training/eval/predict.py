@@ -85,7 +85,7 @@ def _decoder_oracle_scale(model: DeepDepthPro, frame: Frame, device: torch.devic
         inverse[y : y + h, x : x + w] = (
             prior[0, 0, y - y0 : y - y0 + h, x - x0 : x - x0 + w].float().cpu().numpy()
         )
-    return oracle_metric_scale(frame.entry, frame.arrays, inverse)
+    return oracle_metric_scale(frame.arrays, inverse)
 
 
 def predict(model: nn.Module, config: dict[str, Any], frame: Frame) -> Layers:

@@ -19,6 +19,7 @@ from strata_training.augment.segmented import geometry_bounds, in_front
 from strata_training.types import Array, Layers
 
 Range = tuple[float, float]
+HERO_GROUP = -2
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,6 @@ class AugmentedSample:
 
 def augment_sample(
     shot: Shot,
-    shot_roles: Roles,
     targets: Layers,
     donor: Donor | None,
     rng: np.random.Generator,
@@ -121,13 +121,12 @@ def augment_sample(
     if rng.random() < config.clean:
         record["clean"] = True
         return AugmentedSample(shot.denoised, shot.denoised, targets, record)
-    clean, layers = recompose(shot, shot_roles, targets, donor, rng, config, record)
+    clean, layers = recompose(shot, targets, donor, rng, config, record)
     return AugmentedSample(photometric(clean, rng, config, record), clean, layers, record)
 
 
 def recompose(
     shot: Shot,
-    shot_roles: Roles,
     targets: Layers,
     donor: Donor | None,
     rng: np.random.Generator,
@@ -141,7 +140,7 @@ def recompose(
         gains = 2.0 ** np.array([stops + balance[0], stops, stops + balance[1]])
         scene = np.diag(gains)
         record["scene_gain"] = gains.tolist()
-    layers = _graded_background(shot, shot_roles, rng, config, record)
+    layers = _graded_background(shot, rng, config, record)
     if donor is not None and rng.random() < config.recompose:
         if donor.shot.denoised.shape != shot.denoised.shape:
             raise ValueError("Recomposition donors must share the pixel grid")
@@ -175,19 +174,17 @@ def grade_matrix(rng: np.random.Generator, config: AugmentConfig) -> Array:
 
 def _graded_background(
     shot: Shot,
-    shot_roles: Roles,
     rng: np.random.Generator,
     config: AugmentConfig,
     record: dict[str, Any],
 ) -> list[Layer]:
     if rng.random() >= config.instance_grade:
         return []
-    del shot_roles
     deep = shot.deep
     hero = deep.roles[:, 1] > 0
     present = np.unique(deep.ids[(deep.ids >= 0) & ~hero])
     if hero.any():
-        present = np.concatenate((present, [-2]))
+        present = np.concatenate((present, [HERO_GROUP]))
     if not present.size:
         return []
     count = min(
@@ -197,7 +194,7 @@ def _graded_background(
     layers: list[Layer] = []
     remaining = np.ones(deep.z.size, dtype=bool)
     for instance in chosen:
-        mask = hero if instance == -2 else (deep.ids == instance) & ~hero
+        mask = hero if instance == HERO_GROUP else (deep.ids == instance) & ~hero
         mask &= remaining
         remaining &= ~mask
         layers.append(Layer(deep.select(mask), shot, grade_matrix(rng, config)))

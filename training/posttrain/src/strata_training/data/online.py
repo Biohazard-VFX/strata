@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -116,6 +117,7 @@ class OnlineLoader:
         samples: Path,
         clean_fraction: float = 0.4,
         augmentation: dict[str, Any] | None = None,
+        eligibility_warning_fraction: float = 0.25,
     ) -> None:
         require_supervision([frame.entry for frame in frames], purpose="training", root=samples)
         self.frames = frames
@@ -125,10 +127,26 @@ class OnlineLoader:
             raise ValueError("Use clean_fraction, not augmentation.clean")
         self.augmentation = AugmentConfig.from_dict({**values, "clean": 0.0})
         self.samples = samples
-        self.eligible = tuple(
+        if not 0 <= eligibility_warning_fraction <= 1:
+            raise ValueError("eligibility_warning_fraction must be in [0, 1]")
+        self.eligible = frozenset(
             i for i, frame in enumerate(frames) if frame.entry["recomposition_eligible"]
         )
         self.eligible_fraction = len(self.eligible) / len(frames)
+        self.eligible_indices = tuple(sorted(self.eligible))
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "Recomposition eligible views: %d/%d (%.1f%%)",
+            len(self.eligible),
+            len(frames),
+            100 * self.eligible_fraction,
+        )
+        if self.eligible_fraction < eligibility_warning_fraction:
+            logger.warning(
+                "Recomposition eligibility %.1f%% is below configured threshold %.1f%%",
+                100 * self.eligible_fraction,
+                100 * eligibility_warning_fraction,
+            )
         self.roles: list[Roles] = []
         for frame in frames:
             root = samples / frame.entry["id"]
@@ -180,17 +198,15 @@ class OnlineLoader:
             if rng.random() < self.clean_fraction:
                 clean.append(position)
                 image = self.shot(i).denoised[:, *window]
-                beauty = frame.arrays.get("target_beauty", frame.arrays["beauty"])[:, *window]
                 scale = frame.scale
             else:
                 live.append(position)
                 if i in self.eligible:
-                    donor_i = self.eligible[int(rng.integers(len(self.eligible)))]
+                    donor_i = self.eligible_indices[int(rng.integers(len(self.eligible_indices)))]
                     y, x = self.frames[donor_i].crop(rng, size)
                     donor = Donor(self.shot(donor_i).crop(y, x, size, size), self.roles[donor_i])
                     sample = augment_sample(
                         self.shot(i).crop(top, left, size, size),
-                        self.roles[i],
                         layers,
                         donor,
                         rng,
@@ -201,19 +217,13 @@ class OnlineLoader:
                     image = photometric(
                         self.shot(i).denoised[:, *window], rng, self.augmentation, {}
                     )
-                beauty = (
-                    composite(layers.alpha, layers.rgb)
-                    if i in self.eligible
-                    else frame.arrays.get("target_beauty", frame.arrays["beauty"])[:, *window]
-                )
-
                 # Native cropping changes normalized width, not focal length in pixels.
                 scale = frame.scale * size / frame.base.shape[1]
             images.append(image)
             scales.append(scale)
             values = {
                 **layers.arrays(),
-                "beauty": beauty,
+                "beauty": composite(layers.alpha, layers.rgb),
                 "mixed": (layers.alpha[0] > 0.03) & (layers.alpha[0] < 0.97),
             }
             for key in targets:
