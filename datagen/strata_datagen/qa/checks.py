@@ -22,7 +22,7 @@ LIMITS = {
     "flatten_error": (0.0, 0.005),
     "flatten_excess": (0.0, 0.005),
     "uncovered": (0.0, 0.0),
-    "valid_id_fraction": (0.999, 1.0),
+    "valid_id_fraction": (0.99995, 1.0),
     "coverage_channel": (1.0, 1.0),
     "sky_id_in_front": (0.0, 1e-5),
     "camera_error": (0.0, 1e-3),
