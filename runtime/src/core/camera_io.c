@@ -116,6 +116,9 @@ int strata_camera_read(const char *path, struct strata_camera *camera,
 		       struct strata_pose *pose, int *has_pose,
 		       struct strata_error *err)
 {
+	struct strata_camera decoded_camera = { 0 };
+	struct strata_pose decoded_pose = { 0 };
+	int decoded_has_pose = 0;
 	struct json_object *object;
 	int ret;
 
@@ -127,7 +130,13 @@ int strata_camera_read(const char *path, struct strata_camera *camera,
 	object = read_camera(path, err);
 	if (!object)
 		return -1;
-	ret = decode_camera(object, camera, pose, has_pose, err);
+	ret = decode_camera(object, &decoded_camera, &decoded_pose,
+			    &decoded_has_pose, err);
 	json_object_put(object);
-	return ret;
+	if (ret)
+		return ret;
+	*camera = decoded_camera;
+	*pose = decoded_pose;
+	*has_pose = decoded_has_pose;
+	return 0;
 }

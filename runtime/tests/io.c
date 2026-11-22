@@ -164,6 +164,35 @@ out:
 	return ret;
 }
 
+static int rejected_camera(const char *directory)
+{
+	struct strata_camera camera = { .fx_px = 7 };
+	struct strata_pose pose = { .camera_to_world = { 7 } };
+	struct strata_error err = { { 0 } };
+	char path[4096];
+	FILE *file;
+	int has_pose = 7;
+
+	snprintf(path, sizeof(path), "%s/rejected-camera.json", directory);
+	file = fopen(path, "wb");
+	if (!file)
+		return -1;
+	fputs("{\"version\": 1, \"fx_px\": 100, \"fy_px\": 100, \"cx_px\": 1, "
+	      "\"cy_px\": 1, \"camera_to_world\": [1, 0, 0, 0, 0, 1, 0, 0, "
+	      "0, 0, 1, 0, 0, 0, 0, 1], \"unknown\": 0}",
+	      file);
+	if (fclose(file))
+		return -1;
+	if (strata_camera_read(path, &camera, &pose, &has_pose, &err) != -1 ||
+	    !strstr(err.message, "unknown camera JSON field") ||
+	    !zeroed(&camera, sizeof(camera)) || !zeroed(&pose, sizeof(pose)) ||
+	    has_pose) {
+		fprintf(stderr, "rejected camera left outputs filled\n");
+		return -1;
+	}
+	return 0;
+}
+
 static int read_text(const char *path, char *text, size_t size)
 {
 	FILE *file = fopen(path, "rb");
@@ -288,7 +317,8 @@ int main(int argc, char **argv)
 	for (size_t i = 0; i < WIDTH * HEIGHT; ++i)
 		inverse[i] = 1000 / (WIDTH * depth[i]);
 	if (read_inputs(argv[1], rgba) || write_variable(argv[1]) ||
-	    write_positions(argv[1]) || atomic_test(argv[1]))
+	    write_positions(argv[1]) || rejected_camera(argv[1]) ||
+	    atomic_test(argv[1]))
 		return 1;
 	snprintf(path, sizeof(path), "%s/depth.exr", argv[1]);
 	if (strata_write_depth(path, &result, &err))
