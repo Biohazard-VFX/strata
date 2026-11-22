@@ -17,6 +17,10 @@ def test_documented_preparation_platform_requirements() -> None:
     assert "no wall-clock timeout" in parallel
     assert "parent and each worker" in parallel
     assert "60 seconds" not in parallel
+
+
+def test_documented_digest_boot_boundary() -> None:
+    readme = (Path(__file__).resolve().parents[2] / "README.md").read_text()
     cache = " ".join(readme.split("## Target cache maintenance", 1)[1].split())
-    assert "a memo record with a missing or different boot ID is rehashed" in cache
-    assert "preparation requires Linux `/proc`" in cache
+    assert "A memo record with a missing or different boot ID is rehashed." in cache
+    assert "Preparation requires Linux `/proc`." in cache

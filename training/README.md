@@ -284,8 +284,8 @@ against the dataset contract's NumPy reducer, including real packed frames.
 
 `targets DATASET OUTPUT` memoizes source EXR digests in `OUTPUT/digests.json` using
 size, nanosecond mtime/ctime, inode, device and the Linux boot ID. Warm preparation
-reuses stable digests only within the same boot; a memo record with a missing or
-different boot ID is rehashed; preparation requires Linux `/proc`. Changed source
+reuses stable digests only within the same boot. A memo record with a missing or
+different boot ID is rehashed. Preparation requires Linux `/proc`. Changed source
 metadata or timestamps within two seconds of the last hash also force rehashing.
 The boot boundary prevents inode/ctime reuse on filesystems such as exFAT.
 Target archives remain content-addressed;
