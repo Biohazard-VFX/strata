@@ -99,7 +99,7 @@ class RetargetTest(unittest.TestCase):
         rest = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
         joints = np.array([[3, 0], [0, 3]])
         weights = np.array([[1.0, 0.0], [0.5, 0.5]])
-        out = retarget.skin(rest, joints, weights, rig, pose)[0]
+        out = retarget.skin(rest, joints, weights, rig.heads, pose)[0]
         np.testing.assert_allclose(out[0], turn @ rest[0] + [0.0, 0.0, 2.0])
         np.testing.assert_allclose(out[1], 0.5 * rest[1] + 0.5 * (turn @ rest[1] + [0.0, 0.0, 2.0]))
 

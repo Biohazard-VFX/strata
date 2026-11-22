@@ -114,34 +114,58 @@ def sample(motion: Motion, times: FloatArray) -> tuple[FloatArray, FloatArray]:
 
 
 def retarget(rig: Rig, skeleton: Skeleton, motion: Motion, times: FloatArray) -> Pose:
+    world, root = world_rotations(rig, skeleton, motion, times)
+    return Pose(
+        world, joint_heads(rig.parents, rig.heads[None], world, root * hip_scale(rig.heads, skeleton))
+    )
+
+
+def world_rotations(
+    rig: Rig, skeleton: Skeleton, motion: Motion, times: FloatArray
+) -> tuple[FloatArray, FloatArray]:
+    """Target bone world rotations (samples, bones, 3, 3) and the CMU root position per sample."""
     rotations, root = sample(motion, times)
     align = _rest_alignment(rig, skeleton)
     index = [motion.bones.index(CMU_MB[name]) for name in rig.names]
-    world = rotations[:, index] @ align[None]
-    scale = _target_hip_height(rig) / _hip_height(skeleton)
-    heads = np.zeros((len(times), len(rig.names), 3))
-    for i in range(len(rig.names)):
-        p = int(rig.parents[i])
+    return rotations[:, index] @ align[None], root
+
+
+def hip_scale(heads: FloatArray, skeleton: Skeleton) -> FloatArray:
+    """Root travel scale per rest rig (heads (..., bones, 3)): target over CMU hip height."""
+    names = tuple(CMU_MB)
+    hip = heads[..., names.index("LeftUpLeg"), 1] - heads[..., names.index("LeftFoot"), 1]
+    return np.asarray(hip / _hip_height(skeleton))[..., None]
+
+
+def joint_heads(parents: IntArray, rest_heads: FloatArray, world: FloatArray, root: FloatArray) -> FloatArray:
+    """Posed joint positions from rest heads (1 or samples, bones, 3), keeping the rig's proportions."""
+    heads = np.zeros((*world.shape[:2], 3))
+    for i in range(len(parents)):
+        p = int(parents[i])
         if p < 0:
-            heads[:, i] = root * scale
+            heads[:, i] = root
             continue
-        heads[:, i] = heads[:, p] + world[:, p] @ (rig.heads[i] - rig.heads[p])
-    return Pose(world, heads)
+        offset = rest_heads[:, i] - rest_heads[:, p]
+        heads[:, i] = heads[:, p] + np.einsum(
+            "sij,sj->si", world[:, p], np.broadcast_to(offset, (len(world), 3))
+        )
+    return heads
 
 
-def _target_hip_height(rig: Rig) -> float:
-    hip = rig.heads[rig.names.index("LeftUpLeg")]
-    ankle = rig.heads[rig.names.index("LeftFoot")]
-    return float(hip[1] - ankle[1])
+def skin(
+    rest: FloatArray, joints: IntArray, weights: FloatArray, rest_heads: FloatArray, pose: Pose
+) -> FloatArray:
+    """Linear blend skinning for every pose sample: (samples, n, 3).
 
-
-def skin(rest: FloatArray, joints: IntArray, weights: FloatArray, rig: Rig, pose: Pose) -> FloatArray:
-    """Linear blend skinning of rest points (n, 3) for every pose sample: (samples, n, 3)."""
-    out = np.zeros((len(pose.rotations), len(rest), 3))
+    Rest points are (n, 3) or (samples, n, 3); rest joint heads (bones, 3) or (samples, bones, 3).
+    """
+    points = np.broadcast_to(rest, (len(pose.rotations), *rest.shape[-2:]))
+    heads = np.broadcast_to(rest_heads, (len(pose.rotations), *rest_heads.shape[-2:]))
+    out = np.zeros(points.shape)
     for k in range(joints.shape[1]):
         bone = joints[:, k]
-        local = rest - rig.heads[bone]
-        moved = np.einsum("snij,nj->sni", pose.rotations[:, bone], local) + pose.heads[:, bone]
+        local = points - heads[:, bone]
+        moved = np.einsum("snij,snj->sni", pose.rotations[:, bone], local) + pose.heads[:, bone]
         out += weights[None, :, k, None] * moved
     return out
 

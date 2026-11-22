@@ -211,7 +211,7 @@ def _asset(recipe: Recipe, kind: str, name: str, suffix: str) -> Path:
     return recipe.mpfb_data / kind / name / f"{name}{suffix}"
 
 
-def _blender_job(recipe: Recipe, spec: HumanSpec, output: Path) -> dict[str, object]:
+def blender_job(recipe: Recipe, spec: HumanSpec, output: Path) -> dict[str, object]:
     return {
         "recipe": {
             "phenotype": spec.phenotype,
@@ -319,7 +319,7 @@ def _mhmat_textures(mhmat: Path) -> dict[str, Path]:
     return found
 
 
-def _material_file(part: RestPart, eyes: str, recipe: Recipe) -> Path:
+def material_file(part: RestPart, eyes: str, recipe: Recipe) -> Path:
     if part.kind == "body":
         return Path(part.source)
     if part.kind == "eyes":
@@ -329,7 +329,7 @@ def _material_file(part: RestPart, eyes: str, recipe: Recipe) -> Path:
     return source.parent / line.split(maxsplit=1)[1].strip()
 
 
-def _look(kind: str, folder: Path, mhmat: Path, relative_to: Path) -> materials.Look:
+def look(kind: str, folder: Path, mhmat: Path, relative_to: Path) -> materials.Look:
     maps = _mhmat_textures(mhmat)
     albedo = textures.convert(TextureMap("Albedo", maps["diffuseTexture"], 0), folder)
     normal = None
@@ -385,7 +385,9 @@ def build_clip(human: RestHuman, category: str, option: MotionOption, frames: in
         raise ValueError(f"{option.trial} from {option.start} is shorter than 24 frames")
     times = (np.arange(length, dtype=np.float64)[:, None] + SUBFRAMES[None, :]).ravel()
     pose = retarget.retarget(human.rig, skeleton, motion, start + times * mocap.FPS / FPS)
-    samples = {p.name: retarget.skin(p.points, p.joints, p.weights, human.rig, pose) for p in human.parts}
+    samples = {
+        p.name: retarget.skin(p.points, p.joints, p.weights, human.rig.heads, pose) for p in human.parts
+    }
     on_frame = np.flatnonzero(np.isclose(times, np.round(times)))
     root = pose.heads[on_frame, 0]
     lowest = min(float(s[:, :, 1].min()) for s in samples.values())
@@ -421,7 +423,7 @@ def _clip_record(clip: Clip, file: str) -> dict[str, object]:
     }
 
 
-def _parts(human: RestHuman) -> list[human_usd.MeshPart]:
+def mesh_parts(human: RestHuman) -> list[human_usd.MeshPart]:
     return [human_usd.MeshPart(p.name, p.counts, p.indices, p.uv, p.points, p.name) for p in human.parts]
 
 
@@ -489,11 +491,11 @@ def build_hero(recipe: Recipe, spec: HumanSpec, rest_file: Path, folder: Path) -
     human = load_rest(rest_file)
     usd = folder / "usd"
     looks = {
-        p.name: _look(p.kind, folder / "textures" / p.name, _material_file(p, spec.eyes, recipe), usd)
+        p.name: look(p.kind, folder / "textures" / p.name, material_file(p, spec.eyes, recipe), usd)
         for p in human.parts
     }
     regions = body_regions(human)
-    parts = _parts(human)
+    parts = mesh_parts(human)
     sewn = _sew(recipe, spec, human, folder)
     looks.update({s.part.name: s.look for s in sewn})
     body = next(p for p in human.parts if p.kind == "body")
@@ -567,7 +569,7 @@ def build_library(recipe: Recipe, library: Path, only: tuple[int, ...] | None = 
     for spec in pending:
         (library / spec.key / "build").mkdir(parents=True, exist_ok=True)
     if pending:
-        jobs = [_blender_job(recipe, s, library / s.key / "build" / "rest.npz") for s in pending]
+        jobs = [blender_job(recipe, s, library / s.key / "build" / "rest.npz") for s in pending]
         run_blender(recipe, jobs, library)
     out: list[Path] = []
     for spec in specs:

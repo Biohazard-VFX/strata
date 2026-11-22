@@ -9,7 +9,7 @@ from typing import cast
 
 from strata_datagen import files
 from strata_datagen.library import build as library_build
-from strata_datagen.library import catalogue, fetch, humans
+from strata_datagen.library import catalogue, fetch, humans, morph
 from strata_datagen.presets import PRESETS
 from strata_datagen.qa import checks, contact
 from strata_datagen.render import husk, pack
@@ -49,6 +49,14 @@ def cmd_humans(args: argparse.Namespace) -> None:
     only = None if args.only is None else tuple(args.only)
     for folder in humans.build_library(recipe, args.library, only):
         print("built", folder, flush=True)
+
+
+def cmd_morphs(args: argparse.Namespace) -> None:
+    recipe = humans.Recipe.load(args.recipe)
+    block = morph.MorphRecipe.parse(json.loads(args.recipe.read_text())["morph"])
+    catalog = cast("humans.Catalog", json.loads(recipe.mpfb_targets.read_text()))
+    for family in args.families if args.families is not None else range(block.families):
+        print("built", morph.build_family(recipe, block, family, args.library, catalog), flush=True)
 
 
 def cmd_build(args: argparse.Namespace) -> None:
@@ -130,6 +138,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--library", type=Path, required=True)
     p.add_argument("--only", type=int, nargs="*", help="human indices to build (default: all)")
     p.set_defaults(run=cmd_humans)
+    p = sub.add_parser("morphs", help="build morphing human takes (recipe block `morph`)")
+    p.add_argument("--recipe", type=Path, required=True)
+    p.add_argument("--library", type=Path, required=True)
+    p.add_argument("--families", type=int, nargs="*", help="family indices to build (default: all)")
+    p.set_defaults(run=cmd_morphs)
     p = sub.add_parser("build", help="compose shots and write the husk job list")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--presets", nargs="*", default=[], choices=sorted(PRESETS))

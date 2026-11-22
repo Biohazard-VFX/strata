@@ -33,10 +33,15 @@ Link = tuple[UsdShade.Shader, str]
 
 @dataclass(frozen=True)
 class Textures:
-    """Texture files as asset paths relative to the layer that authors the material."""
+    """Texture files as asset paths relative to the layer that authors the material.
+
+    Each albedo layer is mixed over the albedo by node `albedo_mix<i>`, whose `mix` input is 0
+    unless a caller time-samples it.
+    """
 
     albedo: str
     roughness: str | None = None
+    albedo_layers: tuple[str, ...] = ()
     normal: str | None = None
     opacity: str | None = None
 
@@ -113,6 +118,12 @@ def _image(graph: _Graph, name: str, kind: str, path: str, texcoord: Link) -> Li
 
 def _base_color(graph: _Graph, look: Look, texcoord: Link) -> Link:
     color = _image(graph, "albedo", "color3", look.textures.albedo, texcoord)
+    for index, layer in enumerate(look.textures.albedo_layers):
+        image = _image(graph, f"albedo_layer{index}", "color3", layer, texcoord)
+        mixed = graph.node(
+            f"albedo_mix{index}", "ND_mix_color3", "color3", {"mix": 0.0}, {"fg": image, "bg": color}
+        )
+        color = (mixed, "out")
     tinted = graph.node("tint", "ND_multiply_color3", "color3", {"in2": Gf.Vec3f(*look.tint)}, {"in1": color})
     if look.macro_variation <= 0.0:
         return (tinted, "out")
