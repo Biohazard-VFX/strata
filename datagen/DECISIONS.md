@@ -25,7 +25,7 @@
 - Presets are the only code that names library asset ids; generators take assets as parameters.
 - Banned identifiers are checked as SHA-256 digests so the public repo never spells them.
 - Randomness comes from named streams `sha256(seed:labels)`; fixed choices still consume their draws, so a seed gives byte-identical USD.
-- Terrain is a 300 m, 0.5 m-cell heightfield with a flattened centre for the hero and a raised rim so the horizon is a ridge.
+- Terrain is a 300 m, 0.5 m-cell heightfield with a flattened centre; beyond the scattered 60 m it flattens and sinks, so bare ground never rises into the HDRI horizon.
 - Renders are Karma XPU GPU-only and abort without a GPU; the driver retries once with the CPU device and records which ran.
 - Job lists (`jobs.json`, `jobs.sh`) hold one husk command per shot with paths relative to the build root.
 - Files are written atomically (temporary file, then rename).

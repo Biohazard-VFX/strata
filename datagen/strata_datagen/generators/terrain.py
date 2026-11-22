@@ -9,7 +9,7 @@ from pxr import Sdf, Usd, UsdGeom
 from strata_datagen.fields import Grid, Ground
 from strata_datagen.usdutil import ints, vec2f, vec3f
 
-VERSION = "terrain-0.1.0"
+VERSION = "terrain-0.2.0"
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class TerrainParams:
     erosion_iterations: int
     talus_deg: float
     flat_radius_m: float
-    rim_height_m: float
+    edge_drop_m: float
 
     def as_dict(self) -> dict[str, float | int]:
         return asdict(self)
@@ -42,7 +42,7 @@ def sample_params(rng: np.random.Generator) -> TerrainParams:
         erosion_iterations=int(rng.integers(10, 60)),
         talus_deg=float(rng.uniform(28.0, 40.0)),
         flat_radius_m=float(rng.uniform(6.0, 14.0)),
-        rim_height_m=float(rng.uniform(8.0, 30.0)),
+        edge_drop_m=float(rng.uniform(6.0, 20.0)),
     )
 
 
@@ -111,9 +111,14 @@ def _shape(raw: Grid, x: Grid, z: Grid, params: TerrainParams) -> Grid:
     radius = np.hypot(x, z)
     centre = float(np.mean(raw[radius < params.flat_radius_m]))
     flat = 1.0 - _smoothstep(params.flat_radius_m, 3.0 * params.flat_radius_m, radius)
-    shaped = raw + (centre - raw) * 0.85 * flat - centre
+    return raw + (centre - raw) * 0.85 * flat - centre
+
+
+def edge_falloff(relief: Grid, x: Grid, z: Grid, params: TerrainParams) -> Grid:
+    """Flatten the relief and sink it beyond the scattered area, so bare ground drops below the horizon."""
     half = 0.5 * params.size_m
-    return shaped + params.rim_height_m * _smoothstep(0.45 * half, 0.95 * half, radius)
+    edge = _smoothstep(0.4 * half, 0.95 * half, np.hypot(x, z))
+    return relief * (1.0 - edge) - params.edge_drop_m * edge
 
 
 def _masks(heights: Grid, cell_m: float, cover: Grid) -> dict[str, Grid]:
@@ -139,11 +144,15 @@ def build(params: TerrainParams, rng: np.random.Generator) -> Ground:
     wx = params.warp_m * fbm(noise, x * s * 0.5 + 31.7, z * s * 0.5, 3, 0.0)
     wz = params.warp_m * fbm(noise, x * s * 0.5, z * s * 0.5 - 47.3, 3, 0.0)
     raw = params.amplitude_m * fbm(noise, (x + wx) * s, (z + wz) * s, params.octaves, params.ridged)
-    heights = thermal_erosion(
+    relief = thermal_erosion(
         _shape(raw, x, z, params), params.cell_m, params.talus_deg, params.erosion_iterations
     )
     cover = 0.5 + 0.5 * fbm(noise, x * 0.08 + 101.0, z * 0.08 - 77.0, 4, 0.0)
-    return Ground(heights=heights, cell_m=params.cell_m, masks=_masks(heights, params.cell_m, cover))
+    return Ground(
+        heights=edge_falloff(relief, x, z, params),
+        cell_m=params.cell_m,
+        masks=_masks(relief, params.cell_m, cover),
+    )
 
 
 def _faces(count: int) -> NDArray[np.int64]:
