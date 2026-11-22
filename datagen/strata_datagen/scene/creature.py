@@ -10,12 +10,16 @@ from strata_datagen.generators import morph
 from strata_datagen.rng import stream
 
 Json = dict[str, object]
+COAT_LAYER = "hero_coat.usdc"
 
 
 def animate(
     stage: Usd.Stage, hero_path: str, asset: Path, *, asset_path: str, frames: tuple[int, ...], seed: int
 ) -> Json:
-    """Loop the pose's clip over the shot (handles included) and morph its coat; returns what was done."""
+    """Loop the pose's clip over the shot (handles included) and morph its coat; returns what was done.
+
+    Keyed coat widths are large, so they go to a binary sublayer beside the shot layer.
+    """
     layer = Sdf.Layer.FindOrOpen(str(asset))  # pyright: ignore[reportUnknownMemberType]
     record: Json = {}
     first, last = frames[0] - 1, frames[-1] + 1
