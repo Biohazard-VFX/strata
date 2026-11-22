@@ -217,6 +217,42 @@ class CreatureTest(unittest.TestCase):
             self.assertGreater(float(lifted[:, 1].mean()), 0.0)
 
 
+class FakeBlender:
+    """Stands in for the Blender subprocess: answers the tool probe and counts exports."""
+
+    def __init__(self, identity: dict[str, object]) -> None:
+        self.identity = identity
+        self.exports: list[dict[str, object]] = []
+
+    def __call__(self, command: list[str], script: str, job: dict[str, object], scratch: Path) -> None:
+        del command, scratch
+        if script == "tool_identity.py":
+            Path(str(job["output"])).write_text(json.dumps(self.identity))
+        else:
+            self.exports.append(job)
+
+
+BLENDER: dict[str, object] = {"blender": {"version": "5.2.0", "build_hash": "a", "binary": "b"}}
+
+
+def raw_export(root: Path) -> Path:
+    raw = root / "raw"
+    raw.mkdir()
+    (raw / "skin.npz").write_bytes(b"export")
+    return raw
+
+
+def gltf_recipe(model: Path) -> dict[str, object]:
+    return {"source": "gltf", "poses": {"walk": {"start": 1, "frames": 2}}, "job": {"model": str(model)}}
+
+
+def write_glb(path: Path, document: dict[str, object]) -> None:
+    text = json.dumps(document).encode()
+    text += b" " * (-len(text) % 4)
+    header = b"glTF" + (2).to_bytes(4, "little") + (20 + len(text)).to_bytes(4, "little")
+    path.write_bytes(header + len(text).to_bytes(4, "little") + b"JSON" + text)
+
+
 class ExportCacheTest(unittest.TestCase):
     def test_a_changed_recipe_reexports_even_with_the_same_frames(self) -> None:
         tools = creatures.Tools(["python"], ["blender"])
@@ -226,19 +262,72 @@ class ExportCacheTest(unittest.TestCase):
             return {"source": "infinigen", "poses": {"walk": {"start": 1, "frames": 2}}, "job": job}
 
         with TemporaryDirectory() as tmp:
-            raw = Path(tmp) / "raw"
-            raw.mkdir()
-            (raw / "skin.npz").write_bytes(b"export")
-            (raw / "creature.json").write_text(json.dumps({"frames": [1, 2], "factory_seed": 11}))
-            with mock.patch.object(creatures, "run_blender") as run:
+            raw = raw_export(Path(tmp))
+            blender = FakeBlender(BLENDER)
+            with mock.patch.object(creatures, "run_blender", blender):
                 creatures.export_raw(recipe(11), tools, raw)
                 creatures.export_raw(recipe(11), tools, raw)
-                self.assertEqual(run.call_count, 1)
+                self.assertEqual(len(blender.exports), 1)
                 creatures.export_raw(recipe(999), tools, raw)
-                self.assertEqual(run.call_count, 2)
-                self.assertEqual(run.call_args.args[2]["factory_seed"], 999)
+                self.assertEqual(len(blender.exports), 2)
+                self.assertEqual(blender.exports[-1]["factory_seed"], 999)
                 creatures.export_raw(recipe(999), creatures.Tools(["other-python"], ["blender"]), raw)
-                self.assertEqual(run.call_count, 3)
+                self.assertEqual(len(blender.exports), 3)
+
+    def test_a_rebuilt_tool_behind_the_same_command_reexports(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw = raw_export(root)
+            model = root / "animal.gltf"
+            model.write_text(json.dumps({"asset": {"version": "2.0"}}))
+            tools = creatures.Tools(["python"], ["blender"])
+            blender = FakeBlender(BLENDER)
+            with mock.patch.object(creatures, "run_blender", blender):
+                creatures.export_raw(gltf_recipe(model), tools, raw)
+                creatures.export_raw(gltf_recipe(model), tools, raw)
+                self.assertEqual(len(blender.exports), 1)
+                rebuilt: dict[str, object] = {
+                    "blender": {"version": "5.2.0", "build_hash": "c", "binary": "d"}
+                }
+                blender.identity = rebuilt
+                creatures.export_raw(gltf_recipe(model), tools, raw)
+                self.assertEqual(len(blender.exports), 2)
+
+    def test_editing_a_file_the_gltf_references_reexports(self) -> None:
+        for name, glb in (("buffer", False), ("texture", False), ("glb texture", True)):
+            with self.subTest(name), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                raw = raw_export(root)
+                (root / "mesh data.bin").write_bytes(bytes(12))
+                (root / "skin.png").write_bytes(b"png-1")
+                document: dict[str, object] = {
+                    "asset": {"version": "2.0"},
+                    "buffers": [{"uri": "mesh%20data.bin", "byteLength": 12}, {"byteLength": 4}],
+                    "images": [{"uri": "skin.png"}, {"uri": "data:image/png;base64,AA=="}],
+                }
+                model = root / ("animal.glb" if glb else "animal.gltf")
+                if glb:
+                    write_glb(model, document)
+                else:
+                    model.write_text(json.dumps(document))
+                edited = root / ("mesh data.bin" if name == "buffer" else "skin.png")
+                blender = FakeBlender(BLENDER)
+                with mock.patch.object(creatures, "run_blender", blender):
+                    creatures.export_raw(gltf_recipe(model), creatures.Tools(["python"], ["blender"]), raw)
+                    edited.write_bytes(edited.read_bytes() + b"edit")
+                    creatures.export_raw(gltf_recipe(model), creatures.Tools(["python"], ["blender"]), raw)
+                self.assertEqual(len(blender.exports), 2)
+
+    def test_a_missing_referenced_file_stops_the_export(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw = raw_export(root)
+            model = root / "animal.gltf"
+            model.write_text(json.dumps({"buffers": [{"uri": "gone.bin", "byteLength": 4}]}))
+            blender = FakeBlender(BLENDER)
+            with mock.patch.object(creatures, "run_blender", blender), self.assertRaises(FileNotFoundError):
+                creatures.export_raw(gltf_recipe(model), creatures.Tools(["python"], ["blender"]), raw)
+            self.assertEqual(blender.exports, [])
 
 
 if __name__ == "__main__":

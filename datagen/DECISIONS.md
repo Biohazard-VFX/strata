@@ -72,4 +72,4 @@
 - The flat geometry mask is a `foreground` primvar AOV (1 on geometry, 0 on the sky); deep `coverage` stays 1 on the sky for id decoding and float alpha.
 - `coverage` stays in the beauty product as well: Karma's deep product writes only AOVs that a raster product renders (husk: "Unable to find AOV coverage").
 - The camera's vertical aperture follows the output aspect (36 mm x H/W), so square pixels need no aperture conform and fy = fx.
-- Creature raw exports are reused only when a fingerprint of recipe job, frames, export scripts, source files and tool command matches.
+- Creature raw exports are reused only when job, frames, scripts, sources with every file they reference, and the probed tool build all match.

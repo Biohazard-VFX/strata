@@ -15,11 +15,13 @@ axes when the body has no head region), provenance {source, license, redistribut
 import hashlib
 import json
 import shutil
+import struct
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from urllib.parse import unquote, urlsplit
 
 import numpy as np
 from pxr import Sdf, UsdGeom
@@ -388,30 +390,74 @@ class Tools:
 
 EXPORT_SCRIPTS = {"infinigen": "infinigen_creature.py", "gltf": "gltf_creature.py"}
 EXPORT_RECORD = "export.json"
+TOOL_PROBE = "tool_identity.py"
+GLB_MAGIC = b"glTF"
+GLB_JSON = 0x4E4F534A
 
 
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def export_fingerprint(recipe: Json, tools: Tools, frames: list[int]) -> str:
-    """Everything a raw export depends on: recipe job, frames, export scripts, source files, tools."""
+def _gltf_document(path: Path) -> Json:
+    data = path.read_bytes()
+    if data[:4] != GLB_MAGIC:
+        return cast("Json", json.loads(data))
+    length, kind = struct.unpack_from("<II", data, 12)
+    if kind != GLB_JSON:
+        raise ValueError(f"{path}: first GLB chunk is not JSON")
+    return cast("Json", json.loads(data[20 : 20 + length]))
+
+
+def gltf_references(path: Path) -> dict[str, str]:
+    """Digests of every external file (buffers, images) a glTF or GLB references, by its URI."""
+    document = _gltf_document(path)
+    entries = [e for key in ("buffers", "images") for e in cast("list[Json]", document.get(key, []))]
+    uris = [str(e["uri"]) for e in entries if "uri" in e and not str(e["uri"]).startswith("data:")]
+    remote = [uri for uri in uris if urlsplit(uri).scheme]
+    if remote:
+        raise ValueError(f"{path}: references files that are not local: {remote}")
+    return {uri: _digest(path.parent / unquote(uri)) for uri in uris}
+
+
+def _command(source: object, tools: Tools) -> list[str]:
+    if source == "infinigen":
+        return tools.infinigen
+    return [*tools.blender, "-b", "--factory-startup", "--python"]
+
+
+def tool_identity(source: object, tools: Tools, scratch: Path) -> Json:
+    """What the export tool is, not what it is called: build ids and binary or package digests."""
+    output = scratch / "tool_identity.json"
+    output.unlink(missing_ok=True)
+    job: Json = {"infinigen": source == "infinigen", "output": str(output)}
+    run_blender(_command(source, tools), TOOL_PROBE, job, scratch)
+    return cast("Json", json.loads(output.read_text()))
+
+
+def export_fingerprint(recipe: Json, command: list[str], tool: Json, frames: list[int]) -> str:
+    """Everything a raw export depends on: job, frames, scripts, sources and their files, tool identity."""
     job = cast("Json", recipe["job"])
     script = EXPORT_SCRIPTS["infinigen" if recipe["source"] == "infinigen" else "gltf"]
-    inputs = {key: _digest(Path(str(job[key]))) for key in ("model", "animation") if job.get(key) is not None}
+    inputs = {
+        key: {"file": _digest(Path(str(job[key]))), "references": gltf_references(Path(str(job[key])))}
+        for key in ("model", "animation")
+        if job.get(key) is not None
+    }
     record = {
         "source": recipe["source"],
         "job": job,
         "frames": frames,
         "scripts": {name: _digest(BLENDER_DIR / name) for name in (script, "creature_export.py")},
         "inputs": inputs,
-        "tool": tools.infinigen if recipe["source"] == "infinigen" else tools.blender,
+        "command": command,
+        "tool": tool,
     }
     return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
 
 
 def export_raw(recipe: Json, tools: Tools, raw_dir: Path) -> None:
-    """Run the Blender export unless raw_dir holds one made from exactly this recipe and these tools."""
+    """Run the Blender export unless raw_dir holds one made from exactly these inputs and this tool."""
     frames = sorted(
         {
             start + i
@@ -420,7 +466,9 @@ def export_raw(recipe: Json, tools: Tools, raw_dir: Path) -> None:
             for i in range(int(cast("int", p.get("frames", 1))))
         }
     )
-    fingerprint = export_fingerprint(recipe, tools, frames)
+    command = _command(recipe["source"], tools)
+    tool = tool_identity(recipe["source"], tools, raw_dir.parent)
+    fingerprint = export_fingerprint(recipe, command, tool, frames)
     record = raw_dir / EXPORT_RECORD
     if (
         (raw_dir / "skin.npz").exists()
@@ -430,15 +478,8 @@ def export_raw(recipe: Json, tools: Tools, raw_dir: Path) -> None:
         return
     record.unlink(missing_ok=True)
     job = {**cast("Json", recipe["job"]), "frames": frames, "output": str(raw_dir)}
-    if recipe["source"] == "infinigen":
-        run_blender(tools.infinigen, EXPORT_SCRIPTS["infinigen"], job, raw_dir.parent)
-    else:
-        run_blender(
-            [*tools.blender, "-b", "--factory-startup", "--python"],
-            EXPORT_SCRIPTS["gltf"],
-            job,
-            raw_dir.parent,
-        )
+    script = EXPORT_SCRIPTS["infinigen" if recipe["source"] == "infinigen" else "gltf"]
+    run_blender(command, script, job, raw_dir.parent)
     files.write_text(record, json.dumps({"fingerprint": fingerprint}) + "\n")
 
 
