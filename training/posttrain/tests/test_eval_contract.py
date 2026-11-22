@@ -1,12 +1,8 @@
-from pathlib import Path
-
 import numpy as np
-import pytest
 import torch
 from numpy.testing import assert_allclose
 
 from strata_training.baselines.deep import fake_deep, two_layer
-from strata_training.data.exr import read_deep, write_deep
 from strata_training.eval.boundaries import boundary_f1, directed_boundary_counts, silhouette_recall
 from strata_training.eval.calibration import calibration, tracked_depth_jitter
 from strata_training.eval.runner import Collected, collect
@@ -121,20 +117,3 @@ def test_three_native_stride_gradients_ignore_offsets_not_edges() -> None:
     step = truth.clone()
     step[..., 8:] += 1
     assert gradient_loss(step, truth, valid).item() > 0
-
-
-@pytest.mark.parametrize("coverage", [0.5, 1e-5])
-def test_deep_exr_round_trip_retains_conditional_colors_and_empty_pixels(
-    tmp_path: Path, coverage: float
-) -> None:
-    inverse = np.array([[[0.5, 0]], [[0.25, 0]]], dtype=np.float32)
-    alpha = np.array([[[coverage, 0]], [[1, 0]]], dtype=np.float32)
-    rgb = np.array(
-        [[[[0.5, 0]], [[0, 0]], [[0, 0]]], [[[0, 0]], [[0, 0]], [[1, 0]]]], dtype=np.float32
-    )
-    path = tmp_path / "deep.exr"
-    write_deep(path, Layers(inverse, alpha, rgb))
-    restored = read_deep(path, layers=2)
-    assert_allclose(restored.inverse_depth, inverse)
-    assert_allclose(restored.alpha, alpha)
-    assert_allclose(restored.rgb, rgb)

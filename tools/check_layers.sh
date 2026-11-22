@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 python3 - <<'PY'
 from pathlib import Path
 import re
+import ast
 import sys
 import subprocess
 
@@ -68,6 +69,19 @@ for directory,forbidden,message in LAYERS:
 for directory in PROJECTS:
     errors += project_violations(directory)
 errors += lock_violations()
+for path in Path('training/posttrain/src').rglob('*.py'):
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and node.value == 'legacy_data':
+            errors.append(f'{path}: legacy training inputs are forbidden')
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == 'read_deep' or (node.name == 'read_rgb' and any(arg.arg == 'legacy' for arg in node.args.kwonlyargs)):
+                errors.append(f'{path}: legacy training readers are forbidden')
+for path in Path('training/posttrain/configs').glob('*.json'):
+    if path.name.startswith(('h_', 's_')):
+        errors.append(f'{path}: legacy training configs are forbidden')
+if Path('training/eval/v004_split.json').exists():
+    errors.append('legacy evaluation split is forbidden')
 for name in ('build','training/.venv','datagen/.venv'):
     if subprocess.run(['git','check-ignore','--no-index','-q','--',name]).returncode != 0:
         errors.append(f'.gitignore must ignore {name} as a directory or a symlink')

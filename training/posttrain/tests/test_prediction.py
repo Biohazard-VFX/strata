@@ -39,7 +39,7 @@ def test_oracle_inputs_and_frozen_ood_calibration_preserve_training_provenance(
         raw_metric_scale=1.0,
     )
     index, protocol = tmp_path / "index.json", tmp_path / "protocol.json"
-    write_json(index, [{"id": "ood", "cache": str(cache), "legacy_data": None, "split": "train"}])
+    write_json(index, [{"id": "ood", "cache": str(cache), "split": "train"}])
     write_json(
         protocol,
         {

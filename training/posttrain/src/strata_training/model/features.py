@@ -47,24 +47,17 @@ def _save(
     entry: dict[str, Any],
     root: Path,
     pyramid: list[torch.Tensor],
-    features: torch.Tensor | None,
+    features: torch.Tensor,
     focal_inv: Array,
     clip_ids: list[str],
 ) -> None:
     target = root / entry["id"]
     target.mkdir(exist_ok=True)
     data = np.load(entry["cache"])
-    legacy = Path(entry["legacy_data"]) if entry["legacy_data"] else None
     metric_scale = oracle_metric_scale(entry, data, focal_inv)
     for level, tensor in enumerate(pyramid):
         save_array(target / f"pyramid_{level}.npy", tensor.half().cpu().numpy())
-    if features is None:
-        if legacy is None:
-            raise ValueError("Reusing features requires a legacy source")
-        if not (target / "features.npy").exists():
-            (target / "features.npy").symlink_to(legacy / "features.npy")
-    else:
-        save_array(target / "features.npy", features.half().cpu().numpy())
+    save_array(target / "features.npy", features.half().cpu().numpy())
     camera = camera_frames(Path(entry["manifest"]).parent)[entry["frame"]]
     raw_scale = float(camera["width"]) / float(camera["fx"])
     write_json(target / "context.json", {"clip_ids": clip_ids})
@@ -134,26 +127,15 @@ def extract(
                 pyramid = model.pyramid(normalized)
                 for i, entry in enumerate(clip):
                     frame_pyramid = [p[i : i + 1] for p in pyramid]
-                    if (
-                        preset == "depthpro2-h"
-                        and entry["legacy_data"]
-                        and len(clip) == 1
-                        and denoises[i] is None
-                    ):
-                        inverse = np.load(Path(entry["legacy_data"]) / "dp2.npz")["inverse_depth"]
-                        full_features = None
-                    else:
-                        features = model.decode(frame_pyramid)
-                        with torch.autocast(device, enabled=False):
-                            inverse = (
-                                model.deep_head.inverse_head(features.float())[
-                                    0, 0, :height, :width
-                                ]
-                                .float()
-                                .cpu()
-                                .numpy()
-                            )
-                        full_features = features[0, :, :height, :width]
+                    features = model.decode(frame_pyramid)
+                    with torch.autocast(device, enabled=False):
+                        inverse = (
+                            model.deep_head.inverse_head(features.float())[0, 0, :height, :width]
+                            .float()
+                            .cpu()
+                            .numpy()
+                        )
+                    full_features = features[0, :, :height, :width]
                     _save(
                         entry,
                         output,

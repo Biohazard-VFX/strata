@@ -55,7 +55,7 @@ def test_decoder_oracle_aligns_current_scalar_before_nonlinear_head(tmp_path: Pa
         inverse_depth=np.full((32, 32), 0.125),
         metric_scale=0.0625,
     )
-    entry = {"id": "frame", "cache": str(cache), "legacy_data": None}
+    entry = {"id": "frame", "cache": str(cache)}
     model = ScalarDecoder()
     raw = predict(
         model, {"mode": "decoder", "scale_mode": "raw", "layers": 4}, Frame(entry, root, "raw")

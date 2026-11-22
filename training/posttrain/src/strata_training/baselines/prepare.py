@@ -43,11 +43,7 @@ def prepare_baselines(
         for radius in (6, 16):
             path = target / f"r{radius}.npz"
             if not path.exists():
-                if entry["legacy_data"]:
-                    source = np.load(Path(entry["legacy_data"]) / f"analytic_r{radius}.npz")
-                    a, f, b = source["alpha"], source["inv_fg"], source["inv_bg"]
-                else:
-                    a, f, b = analytic(base["inverse_depth"], radius)
+                a, f, b = analytic(base["inverse_depth"], radius)
                 save_arrays(path, alpha=a, inv_fg=f, inv_bg=b)
             if entry["id"] in train_ids:
                 predicted[radius].append(np.load(path)["alpha"])

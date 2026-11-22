@@ -89,6 +89,11 @@ BASE.update({
     'datagen/pyproject.toml': project('strata-datagen',['numpy','strata-dataset'],{'strata-dataset':'../contract/dataset'}),
 })
 CASES = [
+    ('legacy training input', {'training/posttrain/src/unit.py': 'value = entry["legacy_data"]\n'}, 'legacy training inputs'),
+    ('legacy training reader', {'training/posttrain/src/unit.py': 'def read_deep(path): pass\n'}, 'legacy training readers'),
+    ('legacy RGB option', {'training/posttrain/src/unit.py': 'def read_rgb(path, *, legacy=False): pass\n'}, 'legacy training readers'),
+    ('legacy training config', {'training/posttrain/configs/h_head.json': '{}'}, 'legacy training configs'),
+    ('legacy evaluation split', {'training/eval/v004_split.json': '{}'}, 'legacy evaluation split'),
     ('public hosts', {'hosts/nuke/unit.cpp':'#include "strata.h"\n#include <DDImage/DeepFilterOp.h>\n', 'hosts/comfyui/nodes.py':'import ctypes\n'}, None),
     ('core ORT', {'runtime/src/core/unit.c':'#include <onnxruntime_c_api.h>\n'}, 'core cannot include'),
     ('CLI private', {'runtime/src/cli/unit.c':'#include "../core/private.h"\n','runtime/src/core/private.h':''}, 'may only include strata.h'),

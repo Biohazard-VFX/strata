@@ -56,7 +56,6 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
         "split": "train",
         "cache": str(cache),
         "manifest": str(tmp_path / "manifest.json"),
-        "legacy_data": None,
     }
     index = tmp_path / "index.json"
     write_json(index, [entry])
