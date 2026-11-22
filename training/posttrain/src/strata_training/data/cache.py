@@ -1,5 +1,9 @@
+import fcntl
 import hashlib
 import json
+import shutil
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +20,79 @@ from strata_training.types import Array, Layers, fp16_safe
 CACHE_VERSION = "targets-content-v1"
 
 
+@contextmanager
+def cache_lock(output: Path, *, shared: bool) -> Generator[None]:
+    """Hold a shared training lease or exclusive offline writer lease; never wait on users."""
+    with (output / ".cache.lock").open("a+b") as lock:
+        try:
+            fcntl.flock(lock, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ValueError(
+                "Target cache is in use; stop training before offline maintenance"
+            ) from error
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+class Digests:
+    def __init__(self, output: Path) -> None:
+        self.path = output / "digests.json"
+        self.records: dict[str, Any] = (
+            json.loads(self.path.read_text()) if self.path.exists() else {}
+        )
+
+    def digest(self, path: Path) -> str:
+        stat = path.stat()
+        key = [stat.st_size, stat.st_mtime_ns, stat.st_ino]
+        name = str(path.resolve())
+        record = self.records.get(name)
+        if record is not None and record["stat"] == key:
+            return str(record["sha256"])
+        with path.open("rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+        after = path.stat()
+        if [after.st_size, after.st_mtime_ns, after.st_ino] != key:
+            raise ValueError("Source changed while hashing target cache input")
+        self.records[name] = {"stat": key, "sha256": digest}
+        return digest
+
+    def save(self) -> None:
+        write_json(self.path, self.records)
+
+
+def prune(output: Path) -> list[Path]:
+    """Exclusively remove unreferenced target archives and mappings, never source data."""
+    with cache_lock(output, shared=False):
+        entries = json.loads((output / "index.json").read_text())
+        referenced = {Path(entry["cache"]).resolve() for entry in entries}
+        if any(path.parent != output.resolve() for path in referenced):
+            raise ValueError("Target index references caches outside its directory")
+        removed: list[Path] = []
+        for path in sorted(output.iterdir()):
+            archive = path.with_suffix("") if path.name.endswith(".npz.mmap") else path
+            if archive.suffix != ".npz" or archive.resolve() in referenced:
+                continue
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed.append(path)
+        return removed
+
+
 def content_identity(
-    shot: Path, manifest: dict[str, Any], camera: dict[str, Any], frame: int, layers: int
+    shot: Path,
+    manifest: dict[str, Any],
+    camera: dict[str, Any],
+    frame: int,
+    layers: int,
+    memo: Digests,
 ) -> str:
     hashes: dict[str, str] = {}
     for name in ("layers", "beauty"):
-        with (shot / name / f"{frame:04d}.exr").open("rb") as source:
-            hashes[name] = hashlib.file_digest(source, "sha256").hexdigest()
+        hashes[name] = memo.digest(shot / name / f"{frame:04d}.exr")
     record = {
         "version": CACHE_VERSION,
         "layers": layers,
@@ -36,6 +106,12 @@ def content_identity(
 
 def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]]:
     output.mkdir(parents=True, exist_ok=True)
+    with cache_lock(output, shared=False):
+        return _prepare(dataset, output, layers)
+
+
+def _prepare(dataset: Path, output: Path, layers: int) -> list[dict[str, Any]]:
+    memo = Digests(output)
     entries: list[dict[str, Any]] = []
     manifests = sorted(dataset.glob("*/manifest.json"))
     ranked = sorted(manifests, key=lambda p: hashlib.sha256(p.parent.name.encode()).digest())
@@ -57,7 +133,7 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
             raise ValueError("Shot split must be train or test")
         for frame, camera in sorted(camera_frames(shot).items()):
             identifier = f"{shot.name}_{int(frame):04d}"
-            identity = content_identity(shot, manifest, camera, int(frame), layers)
+            identity = content_identity(shot, manifest, camera, int(frame), layers, memo)
             cache = output / f"{identifier}.{identity}.npz"
             reusable = False
             if cache.exists():
@@ -110,6 +186,7 @@ def prepare(dataset: Path, output: Path, layers: int = 4) -> list[dict[str, Any]
             )
     if not entries:
         raise ValueError(f"No shot manifests found in {dataset}")
+    memo.save()
     write_json(output / "index.json", entries)
     return entries
 

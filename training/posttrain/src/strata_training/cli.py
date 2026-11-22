@@ -1,13 +1,15 @@
 import argparse
 import json
+import logging
 from pathlib import Path
 
-from strata_training.data.cache import prepare
+from strata_training.data.cache import prepare, prune
 from strata_training.eval.protocol import freeze
 from strata_training.torch_api import api
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(prog="strata-train")
     parser.add_argument("--threads", type=int)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -15,6 +17,8 @@ def main() -> None:
     targets.add_argument("dataset", type=Path)
     targets.add_argument("output", type=Path)
     targets.add_argument("--layers", type=int, default=4)
+    pruning = sub.add_parser("cache-prune")
+    pruning.add_argument("output", type=Path)
     split = sub.add_parser("freeze")
     split.add_argument("index", type=Path)
     split.add_argument("output", type=Path)
@@ -56,6 +60,8 @@ def main() -> None:
         api.set_num_threads(args.threads)
     if args.command == "targets":
         print(json.dumps({"frames": len(prepare(args.dataset, args.output, args.layers))}))
+    elif args.command == "cache-prune":
+        print(json.dumps({"removed": [str(path) for path in prune(args.output)]}))
     elif args.command == "freeze":
         print(json.dumps(freeze(args.index, args.output)))
     elif args.command == "features":

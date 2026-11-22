@@ -20,8 +20,7 @@ The tests protect independently computed compositing/depth values, occlusion/emp
 New ingestion accepts only `strata-dataset-0.4.0` through the shared records check.
 The historical v004 converter is removed: older images lack linear role channels
 and both identity checks, so relabelling their JSON cannot produce conformant data.
-Re-render or drop old shots, and rebuild old role caches. Historical cached-model
-configs and frozen evaluation protocols remain available for research reproduction.
+Re-render or drop old shots, and rebuild old role caches. Training configs, readers and evaluation labels must describe the current contract.
 
 Run `bash tools/check_training.sh` from the checkout root for the isolated
 post-training lint, strict types and CPU tests. It generates a tiny packed shot with
@@ -271,3 +270,21 @@ it from per-object selection and grading. Sky masking uses the foreground channe
 not an id or a depth threshold. Geometry and sky both retain colour/alpha targets;
 only sky inverse depth is zero. The Torch reducer is training-owned and tested
 against the dataset contract's NumPy reducer, including real packed frames.
+
+## Target cache maintenance
+
+`targets DATASET OUTPUT` memoizes source EXR digests in `OUTPUT/digests.json` using
+size, nanosecond mtime and inode. Warm preparation reuses those digests, while
+changed source metadata forces hashing again. Target archives remain content-addressed;
+preparation never overwrites arrays held by an existing frame mapping.
+
+Run `strata-train cache-prune OUTPUT` offline to remove target NPZ archives and NPY
+mapping directories not referenced by `OUTPUT/index.json`. Both preparation and pruning
+require an exclusive file lock. Training holds shared locks on its training and validation
+target caches for the whole run, so offline maintenance refuses while either is in use.
+
+Loader startup logs the fraction of producer-published, recomposition-eligible views.
+`eligibility_warning_fraction` sets the warning threshold (default `0.25`, in `[0, 1]`).
+Ineligible views use photometric-only inputs. Every clean, augmented and off-stride view
+uses the composite of its final K-layer targets for beauty supervision, including cached
+training and validation; rendered or denoised beauty remains an input, not a loss target.

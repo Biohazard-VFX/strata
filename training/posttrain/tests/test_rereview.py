@@ -1,4 +1,6 @@
+from io import BufferedReader
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -73,6 +75,99 @@ def test_removed_parameters_are_absent() -> None:
     assert "entry" not in inspect.signature(oracle_metric_scale).parameters
 
 
+def test_warm_prepare_memoizes_exr_digests(
+    packed_shot: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from strata_training.data import cache
+
+    output = tmp_path / "targets"
+    original = cache.hashlib.file_digest
+    calls: list[str] = []
+
+    def counted(source: BufferedReader, digest: str) -> Any:
+        calls.append(str(source.name))
+        return original(source, digest)
+
+    monkeypatch.setattr(cache.hashlib, "file_digest", counted)
+    entries = cache.prepare(packed_shot.parent, output)
+    assert len(calls) == 4
+    calls.clear()
+    assert cache.prepare(packed_shot.parent, output) == entries
+    assert calls == []
+    source = packed_shot / "beauty/0001.exr"
+    import os
+
+    stat = source.stat()
+    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+    assert cache.prepare(packed_shot.parent, output) == entries
+    assert calls == [str(source)]
+    calls.clear()
+    replacement = source.with_suffix(".new.exr")
+    replacement.write_bytes(source.read_bytes())
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+    replacement.replace(source)
+    assert cache.prepare(packed_shot.parent, output) == entries
+    assert calls == [str(source)]
+    calls.clear()
+    source.write_bytes(source.read_bytes() + b"\x00")
+    updated = cache.prepare(packed_shot.parent, output)
+    assert updated[0]["cache"] != entries[0]["cache"]
+    assert calls == [str(source)]
+
+
+def test_offline_prune_removes_only_unreferenced_cache_files(
+    packed_shot: Path, tmp_path: Path
+) -> None:
+    from strata_training.data import cache
+
+    output = tmp_path / "targets"
+    entries = cache.prepare(packed_shot.parent, output)
+    orphan = output / "obsolete.deadbeef.npz"
+    np.savez(orphan, alpha=np.ones(1))
+    from strata_training.data.mapped import unpack
+
+    mapping = unpack(orphan)
+    retained = unpack(Path(entries[0]["cache"]))
+    unrelated = output / "keep.json"
+    unrelated.write_text("{}")
+    with cache.cache_lock(output, shared=True), pytest.raises(ValueError, match="in use"):
+        cache.prune(output)
+    assert orphan.exists()
+    assert mapping.exists()
+    assert cache.prune(output) == [orphan, mapping]
+    assert not orphan.exists()
+    assert not mapping.exists()
+    assert unrelated.exists()
+    assert retained.exists()
+    assert all(Path(entry["cache"]).exists() for entry in entries)
+    assert cache.prune(output) == []
+
+
+def test_train_holds_target_cache_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from strata_training import train
+    from strata_training.data import cache
+    from strata_training.io import write_json
+
+    output = tmp_path / "targets"
+    output.mkdir()
+    write_json(output / "index.json", [])
+    config = tmp_path / "config.json"
+    write_json(config, {"index": str(output / "index.json")})
+    calls: list[bool] = []
+
+    def running(path: Path) -> dict[str, bool]:
+        assert path == config
+        with pytest.raises(ValueError, match="in use"):
+            cache.prune(output)
+        calls.append(True)
+        return {"done": True}
+
+    monkeypatch.setattr(train, "_train", running, raising=False)
+    assert train.train(config) == {"done": True}
+    assert calls == [True]
+    assert cache.prune(output) == []
+
+
 def test_loader_reports_eligibility_and_configurable_warning(
     packed_shot: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -92,6 +187,7 @@ def test_loader_reports_eligibility_and_configurable_warning(
     for threshold in (-0.1, 1.1, float("nan")):
         with pytest.raises(ValueError, match="eligibility_warning_fraction"):
             OnlineLoader(frames, samples, eligibility_warning_fraction=threshold)
+
 
 
 def test_hero_group_marker_is_named_once() -> None:
@@ -120,6 +216,32 @@ def test_hero_group_marker_is_named_once() -> None:
                 ]
                 markers.append(module.__name__)
     assert markers == [pipeline.__name__]
+
+
+def test_cache_prune_cli_obeys_cross_process_training_lock(
+    packed_shot: Path, tmp_path: Path
+) -> None:
+    import subprocess
+    import sys
+
+    from strata_training.data.cache import cache_lock, prepare
+
+    output = tmp_path / "targets"
+    entries = prepare(packed_shot.parent, output)
+    orphan = output / "unused.npz"
+    np.savez(orphan, value=1)
+    command = [sys.executable, "-m", "strata_training.cli", "cache-prune", str(output)]
+    with cache_lock(output, shared=True):
+        blocked = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert blocked.returncode != 0
+    assert "in use" in blocked.stderr
+    assert orphan.exists()
+    success = subprocess.run(command, capture_output=True, text=True, check=True)
+    import json
+
+    assert json.loads(success.stdout) == {"removed": [str(orphan)]}
+    assert not orphan.exists()
+    assert all(Path(entry["cache"]).exists() for entry in entries)
 
 
 def test_shared_composite_matches_independent_layer_weights(math_device: str) -> None:
