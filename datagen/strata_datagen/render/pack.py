@@ -2,7 +2,7 @@
 
 Packing never removes raw deep: it is QA evidence, and only `qa.checks.prune` removes it, after the
 frame has passed raw QA. Sidecars are write-once: a frame's directory is published whole and never
-changed; only the offline `remove_samples` deletes it.
+changed; only the offline `remove_samples` deletes it. Every change holds the shot's writer lock.
 """
 
 import json
@@ -19,6 +19,7 @@ from numpy.typing import NDArray
 
 from strata_contract import samples as contract_samples
 from strata_contract.layers import Layers, reduce_samples
+from strata_datagen import shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators.lighting import SKY_ID
 from strata_datagen.qa.deep import instance_ids
@@ -174,25 +175,27 @@ def remove_samples(shot: Path, frames: range) -> list[int]:
     """Offline: delete the published sidecars of `frames` and abandoned staging; readers must be stopped."""
     plan = ShotFrames.load(shot)
     removed: list[int] = []
-    for frame in frames:
-        published = plan.sample_dir(shot, frame)
-        if not published.exists(follow_symlinks=False):
-            continue
-        doomed = _staging(published)
-        doomed.parent.mkdir(parents=True, exist_ok=True)
-        published.rename(doomed)
-        removed.append(frame)
-    if (shot / STAGING).is_dir():
-        shutil.rmtree(shot / STAGING)
+    with shotlock.held(shot):
+        for frame in frames:
+            published = plan.sample_dir(shot, frame)
+            if not published.exists(follow_symlinks=False):
+                continue
+            doomed = _staging(published)
+            doomed.parent.mkdir(parents=True, exist_ok=True)
+            published.rename(doomed)
+            removed.append(frame)
+        if (shot / STAGING).is_dir():
+            shutil.rmtree(shot / STAGING)
     return removed
 
 
 def pack(shot: Path, frames: range) -> None:
     """Write targets for `frames` and sidecars for their recomposition frames; never removes raw deep."""
     plan = ShotFrames.load(shot)
-    for frame in frames:
-        name = f"{frame:04d}.exr"
-        frame_samples = samples(read_deep(shot / "deep" / name))
-        write_layers(layers(frame_samples), shot / "layers" / name)
-        if plan.recomposition(frame):
-            write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))
+    with shotlock.held(shot):
+        for frame in frames:
+            name = f"{frame:04d}.exr"
+            frame_samples = samples(read_deep(shot / "deep" / name))
+            write_layers(layers(frame_samples), shot / "layers" / name)
+            if plan.recomposition(frame):
+                write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))

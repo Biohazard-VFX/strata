@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 from strata_contract import samples as contract_samples
 from strata_datagen.exr import read_deep
 from strata_datagen.render import pack
-from tests.concurrency import FIRST, FRAMES, Paused, at_call, outcome, pack_shot, pausing, run
+from tests.concurrency import FIRST, FRAMES, Paused, at_call, outcome, pack_paused, pack_shot, pausing, run
 from tests.fixtures import SKY, Sample, write_beauty, write_deep, write_shot
 
 if TYPE_CHECKING:
@@ -97,6 +97,22 @@ class PublicationTest(unittest.TestCase):
         self.assertFalse(published(self.shot).exists())
         pack.pack(self.shot, FRAMES)
         self.assertEqual(contract_samples.load(published(self.shot))["ids"].tolist(), [0, 1, 0, 0])
+
+    def test_concurrent_packers_never_replace_or_delete_a_published_frame(self) -> None:
+        pack.pack(self.shot, FRAMES)
+        first = contract_samples.read(published(self.shot))
+        rerender(self.shot, SECOND)
+        writer = Paused(pack_paused, str(self.shot))
+        try:
+            second = run(pack_shot, str(self.shot))
+        finally:
+            outcome = writer.finish()
+        self.assertTrue(second.startswith("ShotLockedError"), second)
+        self.assertTrue(outcome.startswith("ValueError") and "immutable" in outcome, outcome)
+        kept = contract_samples.read(published(self.shot))
+        self.assertEqual(kept.identity, first.identity)
+        self.assertTrue(arrays_equal(kept.arrays, first.arrays))
+        self.assertEqual(staging_left(self.shot), [])
 
     def test_a_reader_never_mixes_or_loses_a_frame_while_another_pack_runs(self) -> None:
         pack.pack(self.shot, FRAMES)

@@ -12,7 +12,7 @@ from jsonschema import Draft202012Validator
 
 import validate
 from strata_contract import samples as contract_samples
-from strata_datagen import cli
+from strata_datagen import cli, shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators import lighting
 from strata_datagen.qa import checks
@@ -231,6 +231,7 @@ class SidecarTest(unittest.TestCase):
                     pack.pack(shot, range(1, 2))
                 self.assertFalse((shot / "samples" / "s_0001").exists())
                 self.assertEqual(list((shot / pack.STAGING).iterdir()), [])
+                self.assertFalse((shot / shotlock.LOCK).exists())
                 pack.pack(shot, range(1, 2))
                 self.assertEqual(contract_samples.errors(shot / "samples" / "s_0001", (1, 3)), [])
 

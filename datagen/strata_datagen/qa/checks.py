@@ -3,7 +3,8 @@
 Raw deep is checked before anything is removed: `accept` records each frame's raw QA result with the
 identity of every input it validated (`inputs`), `prune` removes off-stride raw deep only from
 accepted frames whose inputs are unchanged, and `check_shot` re-checks every packed target and holds
-pruned frames to a recorded acceptance whose inputs, all but the removed deep, still match.
+pruned frames to a recorded acceptance whose inputs, all but the removed deep, still match. `accept`
+and `prune` hold the shot's writer lock.
 """
 
 import hashlib
@@ -17,7 +18,7 @@ import OpenEXR
 from numpy.typing import NDArray
 
 from strata_contract import samples as contract_samples
-from strata_datagen import files
+from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M, SKY_ID
 from strata_datagen.qa.deep import flatten, instance_ids
@@ -294,6 +295,11 @@ def accept(shot: Path, frames: range) -> list[FrameResult]:
 
     A frame whose raw deep is already pruned is checked against its recorded acceptance, never re-recorded.
     """
+    with shotlock.held(shot):
+        return _accept(shot, frames)
+
+
+def _accept(shot: Path, frames: range) -> list[FrameResult]:
     records, ranges = _records(shot)
     results: list[FrameResult] = []
     for frame in frames:
@@ -322,6 +328,11 @@ def accept(shot: Path, frames: range) -> list[FrameResult]:
 
 def prune(shot: Path, frames: range) -> list[int]:
     """Delete off-stride raw deep of accepted frames whose every input is unchanged since QA."""
+    with shotlock.held(shot):
+        return _prune(shot, frames)
+
+
+def _prune(shot: Path, frames: range) -> list[int]:
     plan = pack.ShotFrames.load(shot)
     removable: list[Path] = []
     refused: list[str] = []

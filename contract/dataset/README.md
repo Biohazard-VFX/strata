@@ -25,7 +25,7 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   qa.json           optional: the generator's acceptance report
 ```
 
-Entries whose names start with a dot (`.staging/`) belong to the writer; readers ignore them.
+Entries whose names start with a dot (`.lock`, `.staging/`) belong to the writer; readers ignore them.
 
 Frames are numbered from 1 and zero-padded to four digits, at 24 fps. `manifest.render.frames` is the
 rendered range: most shots are 8-frame clips, a minority are 24-96-frame sequences.

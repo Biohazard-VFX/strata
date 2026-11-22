@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
+import numpy as np
+
 from strata_datagen.render import pack
 from tests.fixtures import SKY, Sample
 
@@ -51,6 +53,12 @@ def pausing(owner: object, name: str, entered: "Event", proceed: "Event") -> Abs
 
 def pack_shot(shot: str, results: "Queue[str]") -> None:
     results.put(outcome(lambda: pack.pack(Path(shot), FRAMES)))
+
+
+def pack_paused(shot: str, entered: "Event", proceed: "Event", results: "Queue[str]") -> None:
+    """Pack, stopping inside the shot's writer section when the sidecars are first encoded."""
+    with pausing(np, "save", entered, proceed):
+        results.put(outcome(lambda: pack.pack(Path(shot), FRAMES)))
 
 
 def run(target: Callable[..., None], *args: object) -> str:
