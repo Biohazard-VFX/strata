@@ -11,12 +11,12 @@ import numpy as np
 from jsonschema import Draft202012Validator
 
 import validate
-from strata_contract import samples as contract_samples
 from strata_datagen import cli
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators import lighting
 from strata_datagen.qa import checks
 from strata_datagen.render import pack
+from strata_dataset import samples as contract_samples
 from tests.concurrency import free
 from tests.fixtures import SKY, Sample, frame_record, write_beauty, write_deep, write_shot
 

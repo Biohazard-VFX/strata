@@ -10,7 +10,7 @@ dependencies = [
   "OpenEXR>=3.3",
   "pillow>=11.3",
   "scipy>=1.18.1",
-  "strata-contract",
+  "strata-dataset",
   "usd-core>=25.5",
 ]
 
@@ -18,7 +18,7 @@ dependencies = [
 strata-datagen = "strata_datagen.cli:main"
 
 [tool.uv.sources]
-strata-contract = { path = "../contract/dataset", editable = true }
+strata-dataset = { path = "../contract/dataset", editable = true }
 
 [dependency-groups]
 dev = [
@@ -53,7 +53,7 @@ ignore = ["PLR2004", "S603", "S607", "TRY003", "EM101", "EM102", "D203", "D213",
 "strata_datagen/cli.py" = ["T201"]
 "**/validate.py" = ["T201"]
 "blender/*" = ["T201", "INP001"]
-"../contract/dataset/strata_contract/segmented.py" = ["ANN401", "C901", "PLR0912", "PLR0915", "PLR0917"]
+"../contract/dataset/strata_dataset/segmented.py" = ["ANN401", "C901", "PLR0912", "PLR0915", "PLR0917"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

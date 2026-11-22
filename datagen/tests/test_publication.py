@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from strata_contract import samples as contract_samples
 from strata_datagen.exr import read_deep
 from strata_datagen.render import pack
+from strata_dataset import samples as contract_samples
 from tests.concurrency import FIRST, FRAMES, Paused, at_call, outcome, pack_paused, pack_shot, pausing, run
 from tests.fixtures import SKY, Sample, write_beauty, write_deep, write_shot
 

@@ -562,21 +562,6 @@ wheels = [
 ]
 
 [[package]]
-name = "strata-contract"
-version = "0.1.0"
-source = { editable = "../contract/dataset" }
-dependencies = [
-    { name = "numba" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numba", specifier = ">=0.61" },
-    { name = "numpy", specifier = ">=2.0" },
-]
-
-[[package]]
 name = "strata-datagen"
 version = "0.1.0"
 source = { editable = "." }
@@ -587,7 +572,7 @@ dependencies = [
     { name = "openexr" },
     { name = "pillow" },
     { name = "scipy" },
-    { name = "strata-contract" },
+    { name = "strata-dataset" },
     { name = "usd-core" },
 ]
 
@@ -606,7 +591,7 @@ requires-dist = [
     { name = "openexr", specifier = ">=3.3" },
     { name = "pillow", specifier = ">=11.3" },
     { name = "scipy", specifier = ">=1.18.1" },
-    { name = "strata-contract", editable = "../contract/dataset" },
+    { name = "strata-dataset", editable = "../contract/dataset" },
     { name = "usd-core", specifier = ">=25.5" },
 ]
 
@@ -615,6 +600,21 @@ dev = [
     { name = "pyright", specifier = "==1.1.414" },
     { name = "ruff", specifier = "==0.17.6" },
     { name = "types-usd", specifier = ">=24.5.2" },
+]
+
+[[package]]
+name = "strata-dataset"
+version = "0.1.0"
+source = { editable = "../contract/dataset" }
+dependencies = [
+    { name = "numba" },
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numba", specifier = ">=0.61" },
+    { name = "numpy", specifier = ">=2.0" },
 ]
 
 [[package]]

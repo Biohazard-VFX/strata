@@ -12,7 +12,7 @@ import numpy as np
 import OpenEXR
 from jsonschema import Draft202012Validator
 
-from strata_contract import samples
+from strata_dataset import samples
 
 SCHEMA = cast("dict[str, object]", json.loads((Path(__file__).parent / "schema.json").read_text()))
 BEAUTY = {

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from strata_contract import segmented
+from strata_dataset import segmented
 
 Array = NDArray[np.float64]
 LAYERS = 4

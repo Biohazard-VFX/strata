@@ -3,8 +3,8 @@ from pathlib import Path
 
 import numpy as np
 
-from strata_contract.layers import reduce_samples
 from strata_datagen.render import husk
+from strata_dataset.layers import reduce_samples
 
 
 class LayerRuleTest(unittest.TestCase):

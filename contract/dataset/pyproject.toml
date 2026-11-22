@@ -1,5 +1,5 @@
 [project]
-name = "strata-contract"
+name = "strata-dataset"
 version = "0.1.0"
 description = "Strata dataset contract: schema, validator and the K-layer target rule"
 requires-python = ">=3.12"

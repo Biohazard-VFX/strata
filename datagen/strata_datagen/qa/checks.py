@@ -17,12 +17,12 @@ import numpy as np
 import OpenEXR
 from numpy.typing import NDArray
 
-from strata_contract import samples as contract_samples
 from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M, SKY_ID
 from strata_datagen.qa.deep import flatten, instance_ids
 from strata_datagen.render import pack
+from strata_dataset import samples as contract_samples
 
 VALIDATION = "raw-qa-1"
 LUMA = (0.2126, 0.7152, 0.0722)

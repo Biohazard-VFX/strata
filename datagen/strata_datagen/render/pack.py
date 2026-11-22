@@ -17,12 +17,12 @@ import numpy as np
 import OpenEXR
 from numpy.typing import NDArray
 
-from strata_contract import samples as contract_samples
-from strata_contract.layers import Layers, reduce_samples
 from strata_datagen import shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.generators.lighting import SKY_ID
 from strata_datagen.qa.deep import instance_ids
+from strata_dataset import samples as contract_samples
+from strata_dataset.layers import Layers, reduce_samples
 
 DEEP_STRIDE = 24
 STAGING = ".staging"

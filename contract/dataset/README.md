@@ -81,7 +81,7 @@ Multi-part scanline EXR, one part per AOV, all at the camera resolution:
 
 Scanline EXR with, for each layer k in 0..3 (front to back), float32 `L<k>.invdepth` (1/metres,
 visible-coverage-weighted), `L<k>.A` (the layer's conditional alpha) and `L<k>.R/G/B`
-(premultiplied colour composited within the layer). They are `strata_contract.layers.reduce_samples`
+(premultiplied colour composited within the layer). They are `strata_dataset.layers.reduce_samples`
 applied to every deep sample of the frame, sky included, with `sky` = (id == 0): samples of visible
 coverage at most 1e-12 are dropped, the rest split at the largest three log-depth gaps above
 ln(1.15) and merge front to back. Any layer holding visible sky keeps its alpha and colour and has
@@ -92,10 +92,10 @@ alpha 1, the sky colour and inverse depth 0. Training reads these for every fram
 ## samples/<shot_id>_NNNN/
 
 The raw samples of a recomposition frame (every frame on the deep stride from the first frame),
-as uncompressed C-order NPY (`strata_contract.samples`). A frame directory is write-once: it appears
+as uncompressed C-order NPY (`strata_dataset.samples`). A frame directory is write-once: it appears
 whole, by one rename, and is never changed afterwards; only an offline removal deletes it. It is a
 real directory, never a symlink. `identity.json` records the SHA-256 of every file below, and its
-own SHA-256 is the frame's identity (recorded by raw QA). `strata_contract.samples.read` opens the
+own SHA-256 is the frame's identity (recorded by raw QA). `strata_dataset.samples.read` opens the
 directory once, reads every file through that handle and verifies each against `identity.json`:
 
 | file | dtype, shape | meaning |

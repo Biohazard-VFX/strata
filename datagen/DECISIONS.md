@@ -1,5 +1,6 @@
 # Decisions
 
+- Datagen imports Strata code only from `strata_dataset` (`../contract/dataset`); the model contract, training and runtime stay out of its environment.
 - USD is authored with usd-core in a uv project, not Houdini's pxr, so datagen is typed, testable without a license and runs unchanged on render nodes.
 - Materials are MaterialX standard_surface UsdShade networks on `outputs:mtlx:surface`; node ids and inputs are validated against the MaterialX library.
 - Roughness and metallic AOVs are `inputs:aov:<name>` on the surface shader, rendered as raw render vars.
@@ -40,7 +41,7 @@
 - Farm nodes never write a local shot: downloaded output enters only via `ingest`, staged in the shot and renamed in under the lock.
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
-- Every frame gets float32 sky-inclusive K=4 targets (strata_contract.layers, sky masked); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.
+- Every frame gets float32 sky-inclusive K=4 targets (strata_dataset.layers, sky masked); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.
 - Thin structures are self-authored: flexible elements (cable, fence wire, twine, rope) as linear BasisCurves, rigid ones (posts, rails, bars) as tube meshes.
 - Thin-structure widths are drawn in pixels of a 1280-wide frame, main elements 0.15-5 px and members at most 24 px unless a kind's physical minimum is wider.
 - Thin structures sit in a depth band (foreground, between camera and subject, background) and are rejected if they come near any camera position or the subject.
