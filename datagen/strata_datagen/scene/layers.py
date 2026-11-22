@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from strata_datagen.generators.scatter import Layer, Prototype
+from strata_datagen.generators.scatter import Layer, Prototype, fits
 from strata_datagen.library.catalogue import Library, Model
 
 
@@ -36,19 +36,23 @@ Material = Callable[[Model], str]
 Asset = Callable[[Model], str]
 
 
+def _footprint(model: Model) -> float:
+    return max(model.size_m[0], model.size_m[2], 1e-3)
+
+
 def _prototypes(models: list[Model], material: Material, asset: Asset) -> tuple[Prototype, ...]:
     return tuple(
-        Prototype(m.key, asset(m), material(m), max(m.size_m[0], m.size_m[2], 1e-3), max(m.size_m[1], 1e-3))
-        for m in models
+        Prototype(m.key, asset(m), material(m), _footprint(m), max(m.size_m[1], 1e-3)) for m in models
     )
 
 
-def _choose(library: Library, role: str, count: int, rng: np.random.Generator) -> list[Model]:
-    candidates = library.role(role)
+def _choose(library: Library, rule: LayerRule, rng: np.random.Generator) -> list[Model]:
+    """Pick up to rule.assets library assets, keeping the variations that fit the footprint range."""
+    candidates = [m for m in library.role(rule.role) if fits(_footprint(m), rule.footprint_range_m)]
     ids = sorted({m.asset_id for m in candidates})
     if not ids:
         return []
-    picked = set(rng.choice(ids, min(count, len(ids)), replace=False).tolist())
+    picked = set(rng.choice(ids, min(rule.assets, len(ids)), replace=False).tolist())
     return [m for m in candidates if m.asset_id in picked]
 
 
@@ -62,7 +66,7 @@ def layer(
     material: Material,
     asset: Asset,
 ) -> Layer | None:
-    models = _choose(library, rule.role, rule.assets, rng)
+    models = _choose(library, rule, rng)
     if not models:
         return None
     return Layer(

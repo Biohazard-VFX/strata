@@ -10,7 +10,8 @@ from pxr import Sdf, Usd, UsdGeom, UsdShade
 from strata_datagen.fields import Ground
 from strata_datagen.usdutil import FloatArray, ints, quath, vec3f
 
-VERSION = "scatter-0.1.0"
+VERSION = "scatter-0.2.0"
+NATIVE_SCALE = (0.5, 2.0)
 
 
 @dataclass(frozen=True)
@@ -29,8 +30,9 @@ class Layer:
     """One instancer: prototypes, where they may grow, and how densely.
 
     Instances fill a disk of radius_m around centre, accepted with probability equal to the
-    product of the named ground masks. Each instance's footprint is drawn log-uniformly from
-    footprint_range_m, and it sinks by sink_fraction of its height.
+    product of the named ground masks. Each instance's footprint is drawn log-uniformly from the
+    part of footprint_range_m its prototype reaches within NATIVE_SCALE of its native size, and it
+    sinks by sink_fraction of its height.
     """
 
     name: str
@@ -60,6 +62,12 @@ class Instances:
 
     def __len__(self) -> int:
         return int(self.positions.shape[0])
+
+
+def fits(footprint_m: float, footprint_range_m: tuple[float, float]) -> bool:
+    """Whether a model reaches the footprint range without leaving NATIVE_SCALE of its native size."""
+    low, high = footprint_range_m
+    return footprint_m * NATIVE_SCALE[0] <= high and footprint_m * NATIVE_SCALE[1] >= low
 
 
 def _candidates(layer: Layer, rng: np.random.Generator) -> FloatArray:
@@ -122,7 +130,10 @@ def place(ground: Ground, layer: Layer, exclusions: Sequence[Disk], rng: np.rand
     proto = rng.integers(0, len(layer.prototypes), count)
     footprint = np.array([p.footprint_m for p in layer.prototypes])[proto]
     height = np.array([p.height_m for p in layer.prototypes])[proto]
-    low, high = np.log(layer.footprint_range_m[0]), np.log(layer.footprint_range_m[1])
+    if not all(fits(p.footprint_m, layer.footprint_range_m) for p in layer.prototypes):
+        raise ValueError(f"{layer.name}: a prototype cannot reach {layer.footprint_range_m} m")
+    low = np.log(np.maximum(layer.footprint_range_m[0], footprint * NATIVE_SCALE[0]))
+    high = np.log(np.minimum(layer.footprint_range_m[1], footprint * NATIVE_SCALE[1]))
     scale = np.exp(rng.uniform(low, high, count)) / footprint
     y = ground.height(xz[:, 0], xz[:, 1]) - layer.sink_fraction * height * scale
     normals = ground.normal(xz[:, 0], xz[:, 1]).reshape(-1, 3)
