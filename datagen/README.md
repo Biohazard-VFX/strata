@@ -24,7 +24,6 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   (`strata_contract.layers`, in `../contract/dataset`) and raw deep kept on a frame stride.
 - `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).
 - `blender/`: FBX to USD conversion, MPFB human export and creature export, run inside Blender.
-- `garments/`: GarmentCode pattern export, run in GarmentCode's Python; `houdini/`: Vellum drape, run in hython.
 
 ## Use
 
@@ -76,8 +75,7 @@ the upper scalp per clip sample, plus each root's remaining offset at every hair
 hero library (recipe fields are documented in `strata_datagen/library/humans.py`). Per human it runs
 MPFB in Blender (body, skin, eyes, CC0 clothes, `cmu_mb` rig), retargets one CMU clip per category
 (walk, run, gesture, dance, turn) and writes `hero.json`, `usd/rest.usdc`, `usd/<clip>.usdc` and
-`textures/`. Humans in the recipe's `garmentcode` range wear a GarmentCode garment sewn and draped in
-Houdini Vellum instead of MPFB tops and bottoms. List the keys under `heroes` in `sources.json` and
+`textures/`. Humans wear skinned MPFB clothing. List the keys under `heroes` in `sources.json` and
 `prepare` copies them; shots pick a clip at least as long as the shot and place it on the terrain.
 
 Animated `hero.json` (a hero with `clips` instead of `poses`):
@@ -88,7 +86,7 @@ Animated `hero.json` (a hero with `clips` instead of `poses`):
 | `rest` | rest-pose USD (bind pose, MPFB parts only), default prim `/hero` |
 | `clips.<name>` | `file`, `category`, `frames` (usable frames), `first_frame` (1: time code 0 and `frames + 1` are blur handles), `fps`, `subframes` (sample offsets, -0.25/0/0.25), `speed_mps`, `bounds_min`/`bounds_max` (body extent around the root, feet at y = 0), `track` (root position per time code), `source` |
 | `skin_prim` | the skin mesh, `/hero/body`; topology is constant over time |
-| `parts` | every mesh prim with its `kind` (`body`, `eyes`, `garment`, `garment_sim`) and source asset |
+| `parts` | every mesh prim with its `kind` (`body`, `eyes`, `garment`) and source asset |
 | `regions` | `scalp`, `face`, `brows`, `beard`, `ears`, `lips`, `body` (see Hero regions); scalp, face, ears and body partition the head and body, brows lie in the face, beard covers the lower face and throat |
 | `forward`, `facial_hair` | `[0, 0, 1]`; beards allowed when every corner is male and past the teen ages |
 | `rest_primvar` | `rest`: bind-pose points on every part, for binding grooms in rest space and following the animated points |

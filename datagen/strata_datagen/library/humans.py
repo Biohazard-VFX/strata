@@ -11,9 +11,7 @@ Recipe fields:
   outfits: {sex: {full, tops, bottoms, shoes: [mhclo id]}}, a full garment or a top and bottom, plus shoes;
   eyes: [eye mhmat id]; clip_frames;
   motions: {category: [{trial, start}]} (start is the first 120 fps source frame);
-  licenses: [{source, license}] copied into every hero.json, one line per source;
-  garmentcode (optional): GarmentRecipe fields; humans in its index range wear only shoes from the
-  MPFB pools plus one GarmentCode design per sex, simulated in Vellum for every clip.
+  licenses: [{source, license}] copied into every hero.json, one line per source.
 """
 
 import json
@@ -27,7 +25,7 @@ import numpy as np
 
 from strata_datagen import files, regions
 from strata_datagen.generators import materials
-from strata_datagen.library import garments, human_regions, human_usd, mocap, retarget, textures
+from strata_datagen.library import human_regions, human_usd, mocap, retarget, textures
 from strata_datagen.library.megascans import TextureMap
 from strata_datagen.rng import stream
 from strata_datagen.usdutil import FloatArray, IntArray
@@ -83,17 +81,9 @@ class Recipe:
     clip_frames: int
     motions: dict[str, tuple[MotionOption, ...]]
     licenses: tuple[dict[str, str], ...]
-    garmentcode: garments.GarmentRecipe | None = None
 
     def indices(self) -> tuple[int, ...]:
-        extra = (
-            ()
-            if self.garmentcode is None
-            else tuple(
-                range(self.garmentcode.first_index, self.garmentcode.first_index + self.garmentcode.count)
-            )
-        )
-        return tuple(range(self.count)) + extra
+        return tuple(range(self.count))
 
     @staticmethod
     def load(path: Path) -> "Recipe":
@@ -122,9 +112,6 @@ class Recipe:
                 for category, options in motions.items()
             },
             licenses=tuple(cast("list[dict[str, str]]", raw["licenses"])),
-            garmentcode=None
-            if "garmentcode" not in raw
-            else garments.GarmentRecipe.parse(cast("dict[str, object]", raw["garmentcode"])),
         )
 
 
@@ -137,7 +124,6 @@ class HumanSpec:
     eyes: str
     outfit: tuple[str, ...]
     motions: dict[str, MotionOption]
-    garments: tuple[Path, ...] = ()
 
 
 def _pick[T](rng: np.random.Generator, options: tuple[T, ...]) -> T:
@@ -202,12 +188,8 @@ def sample(recipe: Recipe, index: int, catalog: Catalog) -> HumanSpec:
     eyes = _pick(rng, recipe.eyes)
     outfit = _outfit(recipe.outfits[skin.sex], rng)
     motions = {c: _pick(rng, recipe.motions[c]) for c in CATEGORIES}
-    sewn: tuple[Path, ...] = ()
-    if recipe.garmentcode is not None and recipe.garmentcode.applies(index):
-        sewn = (_pick(rng, recipe.garmentcode.designs[skin.sex]),)
-        outfit = outfit[-1:]
     key = f"{recipe.key_prefix}{index:04d}"
-    return HumanSpec(key, skin, phenotype, targets, eyes, outfit, motions, sewn)
+    return HumanSpec(key, skin, phenotype, targets, eyes, outfit, motions)
 
 
 def _asset(recipe: Recipe, kind: str, name: str, suffix: str) -> Path:
@@ -444,66 +426,6 @@ def mesh_parts(human: RestHuman) -> list[human_usd.MeshPart]:
     return [human_usd.MeshPart(p.name, p.counts, p.indices, p.uv, p.points, p.name) for p in human.parts]
 
 
-@dataclass(frozen=True)
-class Sewn:
-    """A GarmentCode garment: flat panels with seams, its mesh part and its fabric look."""
-
-    recipe: garments.GarmentRecipe
-    design: str
-    panels: Path
-    part: human_usd.MeshPart
-    look: materials.Look
-
-
-def _sew(recipe: Recipe, spec: HumanSpec, human: RestHuman, folder: Path) -> list[Sewn]:
-    if not spec.garments or recipe.garmentcode is None:
-        return []
-    gc = recipe.garmentcode
-    body = next(p for p in human.parts if p.kind == "body")
-    sex = spec.skin.sex
-    template = cast("dict[str, float]", json.loads(gc.templates[sex].read_text())["body"])
-    heads = {name: human.rig.heads[i] for i, name in enumerate(human.rig.names)}
-    build = folder / "build"
-    garments.write_measurements(build / "body.yaml", garments.measure(body.points, heads, template))
-    jobs: list[dict[str, object]] = [
-        {
-            "body": str(build / "body.yaml"),
-            "design": str(design),
-            "name": design.stem,
-            "output": str(build / f"panels_{design.stem}.npz"),
-            "resolution_cm": gc.resolution_cm,
-        }
-        for design in spec.garments
-    ]
-    garments.run_panels(gc, jobs, build)
-    out: list[Sewn] = []
-    for index, design in enumerate(spec.garments):
-        panels = build / f"panels_{design.stem}.npz"
-        with np.load(panels) as data:
-            triangles = data["triangles"].astype(np.int64)
-            uv, points = data["uv"].astype(np.float64), data["points"].astype(np.float64)
-        name = f"sewn{index}"
-        texture = garments.fabric_texture(
-            folder / "textures" / name / "albedo.jpg", stream(recipe.seed, "fabric", spec.key, design.stem)
-        )
-        part = human_usd.MeshPart(
-            name, np.full(len(triangles), 3), triangles.ravel(), uv[triangles.ravel()], points, name
-        )
-        look = materials.Look(
-            materials.Textures(texture.relative_to(folder / "usd", walk_up=True).as_posix()),
-            roughness=0.85,
-            specular=0.3,
-        )
-        out.append(Sewn(gc, design.stem, panels, part, look))
-    return out
-
-
-def _triangles(part: RestPart) -> IntArray:
-    starts = np.concatenate([[0], np.cumsum(part.counts)[:-1]])
-    fan = [(s, s + k, s + k + 1) for s, n in zip(starts, part.counts, strict=True) for k in range(1, n - 1)]
-    return part.indices[np.asarray(fan, dtype=np.int64)]
-
-
 def build_hero(recipe: Recipe, spec: HumanSpec, rest_file: Path, folder: Path) -> dict[str, object]:
     human = load_rest(rest_file)
     usd = folder / "usd"
@@ -513,40 +435,17 @@ def build_hero(recipe: Recipe, spec: HumanSpec, rest_file: Path, folder: Path) -
     }
     regions = body_regions(human)
     parts = mesh_parts(human)
-    sewn = _sew(recipe, spec, human, folder)
-    looks.update({s.part.name: s.look for s in sewn})
-    body = next(p for p in human.parts if p.kind == "body")
     rest = {p.name: p.points[None] for p in human.parts}
     human_usd.write(usd / "rest.usdc", parts=parts, samples=rest, times=None, looks=looks, regions=regions)
     clips: dict[str, object] = {}
-    frames = min([recipe.clip_frames] + [s.recipe.clip_frames for s in sewn])
     for category in CATEGORIES:
-        clip = build_clip(human, category, spec.motions[category], frames, recipe.cmu)
-        samples = dict(clip.samples)
-        for item in sewn:
-            scratch = folder / "build" / f"drape_{clip.name}_{item.part.name}"
-            scratch.mkdir(parents=True, exist_ok=True)
-            samples[item.part.name] = garments.drape(
-                item.recipe,
-                item.panels,
-                (body.points, _triangles(body)),
-                (clip.times, clip.samples["body"]),
-                scratch=scratch,
-            )
+        clip = build_clip(human, category, spec.motions[category], recipe.clip_frames, recipe.cmu)
         file = usd / f"{clip.name}.usdc"
-        clip_parts = parts + [s.part for s in sewn]
         human_usd.write(
-            file, parts=clip_parts, samples=samples, times=clip.times, looks=looks, regions=regions
+            file, parts=parts, samples=clip.samples, times=clip.times, looks=looks, regions=regions
         )
         clips[clip.name] = _clip_record(clip, file.relative_to(folder).as_posix())
-    record = manifest(spec, human, clips, recipe.licenses)
-    record["parts"].update(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        {
-            f"{human_usd.ROOT}/{s.part.name}": {"kind": "garment_sim", "source": f"GarmentCode {s.design}"}
-            for s in sewn
-        }
-    )
-    return record
+    return manifest(spec, human, clips, recipe.licenses)
 
 
 def manifest(

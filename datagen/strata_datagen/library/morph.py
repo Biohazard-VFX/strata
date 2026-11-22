@@ -60,8 +60,7 @@ def corner_specs(
     specs = [humans.sample(recipe, first + k, catalog) for k in range(morph.corners)]
     key = f"{recipe.key_prefix}morph{family:03d}"
     return [
-        replace(s, key=f"{key}_c{k}", outfit=specs[0].outfit, eyes=specs[0].eyes, garments=())
-        for k, s in enumerate(specs)
+        replace(s, key=f"{key}_c{k}", outfit=specs[0].outfit, eyes=specs[0].eyes) for k, s in enumerate(specs)
     ]
 
 
