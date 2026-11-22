@@ -125,6 +125,31 @@ class CreatureTest(unittest.TestCase):
         )
         self.assertGreater(float(still[-1, :, 1].mean() - still[0, :, 1].mean()), 0.0)
 
+    def test_bare_creature_prepares_without_groom(self) -> None:
+        raw = box_raw(1)
+        rest = creatures.orient(raw, None, 1.0)[0]
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "bare"
+            creatures.write_pose(folder / "poses" / "rest.usdc", raw, rest[None])
+            skin = groom.Skin(rest, raw.triangles, raw.corner_st)
+            front = creatures.front_vertex(raw, rest)
+            field = coat.field(skin, raw.regions, raw.names, front)
+            hero = {
+                "key": "bare",
+                "poses": {"rest": "poses/rest.usdc"},
+                "skin_prim": creatures.SKIN_PRIM,
+                "albedo": "a.png",
+                "coat": creatures.sample_coat(["bare"], field, rest, front, "bare"),
+                "source": "test",
+                "license": "test",
+            }
+            (folder / "hero.json").write_text(json.dumps(hero))
+            prepared = coat.prepare_pose(heroes.load(folder), "rest", Path(tmp) / "rest.usdc")
+            stage = Usd.Stage.Open(str(prepared.file))
+            self.assertEqual(prepared.hairs, 0)
+            self.assertTrue(stage.GetPrimAtPath("/hero/skin"))
+            self.assertFalse(stage.GetPrimAtPath("/hero/groom"))
+
     def test_capped_coats_thin_out_and_thicken(self) -> None:
         raw = box_raw(1)
         rest = creatures.orient(raw, None, 1.0)[0]

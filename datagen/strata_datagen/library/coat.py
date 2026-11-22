@@ -273,8 +273,8 @@ def _feathers(f: Field, layer: FeatherLayer, density: float, rng: np.random.Gene
     )
 
 
-def grow(f: Field, coat: Coat, density: float, key: str) -> groom.Groom:
-    """Every fur layer and feather layer of the coat as one groom bound to the full skin."""
+def grow(f: Field, coat: Coat, density: float, key: str) -> groom.Groom | None:
+    """Every fur layer and feather layer of the coat as one groom bound to the full skin; None if bare."""
     parts: list[groom.Groom] = []
     for layer in coat.fur:
         part, kept = select(f, layer.regions, layer.zone)
@@ -282,6 +282,8 @@ def grow(f: Field, coat: Coat, density: float, key: str) -> groom.Groom:
         grown = groom.build(part, shapes, _scaled(layer.groom, density), stream(0, "coat", key, layer.name))
         parts.append(groom.Groom(grown.curves, grown.widths, grown.st, kept[grown.face], grown.weights))
     parts.extend(_feathers(f, layer, density, stream(0, "coat", key, layer.name)) for layer in coat.feathers)
+    if not parts:
+        return None
     return groom.Groom(
         np.concatenate([p.curves for p in parts]),
         np.concatenate([p.widths for p in parts]),
@@ -365,12 +367,13 @@ def prepare_pose(manifest: heroes.HeroManifest, pose: str, output: Path) -> hero
     samples = _skin_samples(source, manifest.skin_prim)
     density = coat.animated_density if samples else 1.0
     hair = grow(field(skin, regions, names, coat.front_vertex), coat, density, f"{manifest.key}:{pose}")
-    posed = [(time, deform(hair, skin.triangles, skin.points, frame)) for time, frame in samples]
     output.parent.mkdir(parents=True, exist_ok=True)
     stage = new_stage(output)
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/hero").GetPrim())
     _author_skin(stage, skin, samples)
-    _author_groom(stage, hair, posed)
+    if hair is not None:
+        posed = [(time, deform(hair, skin.triangles, skin.points, frame)) for time, frame in samples]
+        _author_groom(stage, hair, posed)
     stage.GetRootLayer().Save()
     every = [skin.points, *(p for _, p in samples)]
     low = np.min([p.min(axis=0) for p in every], axis=0)
@@ -379,5 +382,5 @@ def prepare_pose(manifest: heroes.HeroManifest, pose: str, output: Path) -> hero
         output,
         (float(low[0]), float(low[1]), float(low[2])),
         (float(high[0]), float(high[1]), float(high[2])),
-        len(hair.curves),
+        0 if hair is None else len(hair.curves),
     )
