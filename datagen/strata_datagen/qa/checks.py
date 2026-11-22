@@ -1,9 +1,9 @@
 """Per-shot acceptance checks; a shot that fails any check is rejected from the dataset.
 
-Raw deep is checked before anything is removed: `accept` records each frame's raw QA result with
-digests of its deep and targets, `prune` removes off-stride raw deep only from accepted frames whose
-files are unchanged, and `check_shot` re-checks every packed target and holds pruned frames to their
-recorded acceptance.
+Raw deep is checked before anything is removed: `accept` records each frame's raw QA result with the
+identity of every input it validated (`inputs`), `prune` removes off-stride raw deep only from
+accepted frames whose inputs are unchanged, and `check_shot` re-checks every packed target and holds
+pruned frames to a recorded acceptance whose inputs, all but the removed deep, still match.
 """
 
 import hashlib
@@ -23,6 +23,7 @@ from strata_datagen.generators.lighting import BACKDROP_M, SKY_ID
 from strata_datagen.qa.deep import flatten, instance_ids
 from strata_datagen.render import pack
 
+VALIDATION = "raw-qa-1"
 LUMA = (0.2126, 0.7152, 0.0722)
 LIMITS = {
     "median_luma": (0.02, 1.5),
@@ -184,6 +185,39 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _canonical(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _tree(directory: Path) -> str | None:
+    if not directory.is_dir():
+        return None
+    found = sorted(p for p in directory.rglob("*") if p.is_file())
+    return _canonical({p.relative_to(directory).as_posix(): digest(p) for p in found})
+
+
+def inputs(shot: Path, frame: int) -> dict[str, str | None]:
+    """Identity of everything raw QA of `frame` reads; manifest `timings` is bookkeeping, not input."""
+    paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
+    manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
+    camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
+    records = cast("list[dict[str, object]]", camera.pop("frames"))
+    return {
+        "validation": _canonical({"version": VALIDATION, "limits": LIMITS, "deep_keys": DEEP_KEYS}),
+        "manifest": _canonical({k: v for k, v in manifest.items() if k != "timings"}),
+        "camera": _canonical({**camera, "frame": [r for r in records if r["frame"] == frame]}),
+        "beauty": digest(paths["beauty"]) if paths["beauty"].exists() else None,
+        "deep": digest(paths["deep"]) if paths["deep"].exists() else None,
+        "targets": digest(paths["layers"]) if paths["layers"].exists() else None,
+        "samples": _tree(plan.sample_dir(shot, frame)) if plan.recomposition(frame) else None,
+    }
+
+
+def changed_inputs(record: dict[str, object], current: dict[str, str | None]) -> list[str]:
+    recorded = cast("dict[str, str | None]", record.get("inputs", {}))
+    return [name for name, value in current.items() if name not in recorded or recorded[name] != value]
+
+
 def _paths(shot: Path, frame: int) -> dict[str, Path]:
     name = f"{frame:04d}.exr"
     return {folder: shot / folder / name for folder in ("beauty", "deep", "layers")} | {
@@ -216,8 +250,8 @@ def _accepted(shot: Path, frame: int) -> tuple[dict[str, float], list[str]]:
         return {}, ["no raw deep and no raw acceptance"]
     record = cast("dict[str, object]", json.loads(paths["acceptance"].read_text()))
     failures = [] if record["passed"] else ["raw acceptance failed"]
-    if paths["layers"].exists() and record["layers_sha256"] != digest(paths["layers"]):
-        failures.append("targets changed since raw acceptance")
+    changed = [name for name in changed_inputs(record, inputs(shot, frame)) if name != "deep"]
+    failures += [f"{name} changed since raw acceptance" for name in changed]
     metrics = cast("dict[str, float]", record["metrics"])
     return {k: v for k, v in metrics.items() if k in DEEP_KEYS}, failures
 
@@ -259,7 +293,7 @@ def _records(shot: Path) -> tuple[dict[int, dict[str, object]], list[tuple[int, 
 
 
 def accept(shot: Path, frames: range) -> list[FrameResult]:
-    """Raw QA of rendered, packed frames; records each result with digests of its deep and targets.
+    """Raw QA of rendered, packed frames; records each result with the identity of its inputs.
 
     A frame whose raw deep is already pruned is checked against its recorded acceptance, never re-recorded.
     """
@@ -267,6 +301,7 @@ def accept(shot: Path, frames: range) -> list[FrameResult]:
     results: list[FrameResult] = []
     for frame in frames:
         paths = _paths(shot, frame)
+        checked = inputs(shot, frame)
         result = check_frame(shot, frame, records[frame], ranges)
         results.append(result)
         if not paths["deep"].exists():
@@ -279,8 +314,7 @@ def accept(shot: Path, frames: range) -> list[FrameResult]:
                     "passed": not result.failures,
                     "failures": result.failures,
                     "metrics": result.metrics,
-                    "deep_sha256": digest(paths["deep"]),
-                    "layers_sha256": digest(paths["layers"]) if paths["layers"].exists() else None,
+                    "inputs": checked,
                 },
                 indent=1,
             )
@@ -290,7 +324,7 @@ def accept(shot: Path, frames: range) -> list[FrameResult]:
 
 
 def prune(shot: Path, frames: range) -> list[int]:
-    """Delete off-stride raw deep of accepted frames whose deep and targets are unchanged since QA."""
+    """Delete off-stride raw deep of accepted frames whose every input is unchanged since QA."""
     plan = pack.ShotFrames.load(shot)
     removable: list[Path] = []
     refused: list[str] = []
@@ -298,22 +332,18 @@ def prune(shot: Path, frames: range) -> list[int]:
         paths = _paths(shot, frame)
         if plan.recomposition(frame) or not paths["deep"].exists():
             continue
-        record = (
+        record: dict[str, object] = (
             cast("dict[str, object]", json.loads(paths["acceptance"].read_text()))
             if paths["acceptance"].exists()
             else {"passed": False}
         )
-        if not (
-            record["passed"]
-            and paths["layers"].exists()
-            and record.get("deep_sha256") == digest(paths["deep"])
-            and record.get("layers_sha256") == digest(paths["layers"])
-        ):
-            refused.append(str(frame))
+        changed = changed_inputs(record, inputs(shot, frame))
+        if not record["passed"] or changed or not paths["layers"].exists():
+            refused.append(f"{frame} ({', '.join(changed) or 'not accepted'})")
         else:
             removable.append(paths["deep"])
     if refused:
-        raise ValueError(f"raw deep kept: frames {', '.join(refused)} have no matching passed acceptance")
+        raise ValueError(f"raw deep kept: frames {'; '.join(refused)} have no matching passed acceptance")
     for path in removable:
         path.unlink()
     return [int(p.stem) for p in removable]

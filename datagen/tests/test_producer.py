@@ -1,8 +1,10 @@
+import json
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from typing import cast
+from unittest import mock
 
 import numpy as np
 from jsonschema import Draft202012Validator
@@ -82,6 +84,49 @@ class RawEvidenceTest(unittest.TestCase):
             pack.write_layers(pack.layers(pack.samples(_sky_everywhere(shot))), shot / "layers" / "0002.exr")
             failures = shot_failures(shot)
             self.assertTrue(any(f.startswith("frame 2: target_mismatch") for f in failures), failures)
+
+    def test_changed_id_ranges_void_the_acceptance_and_keep_the_raw_deep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "s"
+            write_shot(shot, [CLEAN, CLEAN], stride=24)
+            pack.pack(shot, range(1, 3))
+            self.assertEqual([r.failures for r in checks.accept(shot, range(1, 3))], [[], []])
+            _drop_hero_ids(shot)
+            with self.assertRaisesRegex(ValueError, r"2 \(manifest\)"):
+                checks.prune(shot, range(1, 3))
+            self.assertTrue((shot / "deep" / "0002.exr").exists())
+            failures = shot_failures(shot)
+            self.assertTrue(any(f.startswith("frame 2: valid_id_fraction=0.8") for f in failures), failures)
+
+    def test_a_pruned_frame_fails_once_any_validation_input_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "s"
+            write_shot(shot, [CLEAN, CLEAN], stride=24)
+            pack.pack(shot, range(1, 3))
+            checks.accept(shot, range(1, 3))
+            self.assertEqual(checks.prune(shot, range(1, 3)), [2])
+            manifest = (shot / "manifest.json").read_text()
+            camera = (shot / "camera.json").read_text()
+            self.assertEqual(shot_failures(shot), [])
+            _drop_hero_ids(shot)
+            self.assertIn("frame 2: manifest changed since raw acceptance", shot_failures(shot))
+            timed = {**json.loads(manifest), "timings": {"device": "cpu"}}
+            (shot / "manifest.json").write_text(json.dumps(timed))
+            self.assertEqual(shot_failures(shot), [])
+            records = json.loads(camera)
+            records["frames"][1]["focus_distance_m"] = 2.1
+            (shot / "camera.json").write_text(json.dumps(records))
+            self.assertIn("frame 2: camera changed since raw acceptance", shot_failures(shot))
+            (shot / "camera.json").write_text(camera)
+            with mock.patch.dict(checks.LIMITS, {"valid_id_fraction": (0.5, 1.0)}):
+                self.assertIn("frame 2: validation changed since raw acceptance", shot_failures(shot))
+            self.assertEqual(shot_failures(shot), [])
+
+
+def _drop_hero_ids(shot: Path) -> None:
+    manifest = json.loads((shot / "manifest.json").read_text())
+    manifest["instance_ids"] = [r for r in manifest["instance_ids"] if r["name"] != "hero_skin"]
+    (shot / "manifest.json").write_text(json.dumps(manifest))
 
 
 def _sky_everywhere(shot: Path) -> Deep:

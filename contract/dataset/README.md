@@ -20,7 +20,7 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   deep/0001.exr ... 0024.exr     raw deep, kept on the frame stride (`manifest.render.deep_stride`)
   layers/0001.exr ... 0024.exr   K = 4 sky-inclusive layer targets for every frame
   samples/<shot_id>_NNNN/        raw-sample sidecars of every recomposition frame (the deep stride)
-  qa/NNNN.json      raw QA acceptance of each frame (digests of its deep and targets)
+  qa/NNNN.json      raw QA acceptance of each frame (identity of every input it validated)
   scene/            optional: the USD the shot was rendered from (reproducibility, not training input)
   qa.json           optional: the generator's acceptance report
 ```
