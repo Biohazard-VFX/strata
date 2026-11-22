@@ -49,6 +49,10 @@ class Look:
     roughness: float = 0.6
     tint: tuple[float, float, float] = (1.0, 1.0, 1.0)
     macro_variation: float = 0.0
+    subsurface: float = 0.0
+    subsurface_radius: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    subsurface_scale_m: float = 0.0
+    specular: float = 0.5
 
 
 @cache
@@ -144,7 +148,7 @@ def _surface_links(graph: _Graph, look: Look, texcoord: Link) -> dict[str, Link]
         alpha = _image(graph, "opacity_map", "float", look.textures.opacity, texcoord)
         opacity = graph.node("opacity", "ND_convert_float_color3", "color3", None, {"in": alpha})
         links["opacity"] = (opacity, "out")
-    if look.foliage:
+    if look.foliage or look.subsurface > 0.0:
         links["subsurface_color"] = base
     return links
 
@@ -162,9 +166,17 @@ def author(stage: Usd.Stage, path: str, look: Look) -> UsdShade.Material:
     links = _surface_links(graph, look, texcoord)
     metallic = graph.node("metallic", "ND_constant_float", "float", {"value": 0.0})
     links["metalness"] = (metallic, "out")
-    values: dict[str, Value] = {"base": 1.0, "specular": 0.5}
+    values: dict[str, Value] = {"base": 1.0, "specular": look.specular}
     if look.foliage:
         values.update({"thin_walled": True, "subsurface": 0.35})
+    if look.subsurface > 0.0:
+        values.update(
+            {
+                "subsurface": look.subsurface,
+                "subsurface_radius": Gf.Vec3f(*look.subsurface_radius),
+                "subsurface_scale": look.subsurface_scale_m,
+            }
+        )
     surface = graph.node("surface", "ND_standard_surface_surfaceshader", "surfaceshader", values, links)
     _export_aovs(surface, links["specular_roughness"], links["metalness"])
     material.CreateSurfaceOutput("mtlx").ConnectToSource(surface.ConnectableAPI(), "out")
