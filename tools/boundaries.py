@@ -33,6 +33,7 @@ MACHINERY = ('importlib', 'runpy', 'imp', 'zipimport', 'pkgutil', 'site', 'built
 MACHINERY_MODULES = ('importlib', 'importlib.util', 'builtins')
 SAFE_MACHINERY = ('importlib.resources', 'importlib.metadata')
 PATH_STATE = ('sys.path', 'sys.meta_path', 'sys.path_hooks', 'sys.path_importer_cache')
+BLENDER = 'datagen/blender'
 OWN_DIRECTORY = ast.dump(ast.parse('sys.path.insert(0, str(Path(__file__).resolve().parent))', mode='eval').body)
 
 
@@ -165,7 +166,7 @@ def import_violations(path, forbidden, message):
     exempt = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and ast.dump(node) == OWN_DIRECTORY and names.get('sys') == 'sys' \
-                and names.get('Path') == 'pathlib.Path':
+                and names.get('Path') == 'pathlib.Path' and Path(path).parent == Path(BLENDER):
             exempt.add(node.func.value)
     errors = []
     for node in ast.walk(tree):

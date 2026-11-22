@@ -136,6 +136,8 @@ CASES = [
     ('own directory and rooted dynamic imports', {'datagen/blender/unit.py':OWN_DIRECTORY_SCRIPT,
                                                   'datagen/strata_datagen/unit.py':'from . import other\nfrom .other import x\n'}, None),
     ('other directory on sys.path', {'datagen/blender/unit.py':OWN_DIRECTORY_SCRIPT.replace('.parent))','.parents[2]))')}, 'sys.path changes'),
+    ('own directory outside Blender scripts', {'datagen/strata_datagen/unit.py':OWN_DIRECTORY_SCRIPT}, 'sys.path changes'),
+    ('own directory in a Blender subdirectory', {'datagen/blender/sub/unit.py':OWN_DIRECTORY_SCRIPT}, 'sys.path changes'),
     ('review: dev group and list source', {'datagen/pyproject.toml':REVIEW_DATAGEN}, 'may not depend on strata-contract (dependency-groups.dev)'),
     ('list-valued forbidden source', {'datagen/pyproject.toml':REVIEW_DATAGEN.replace(', "strata-contract"]',']')}, 'may not source strata-contract'),
     ('optional extra requires training', {'datagen/pyproject.toml':project('strata-datagen',['strata-dataset'],{'strata-dataset':'../contract/dataset'}) + '[project.optional-dependencies]\nfit = ["strata-train>=0"]\n'}, 'may not depend on strata-train (optional-dependencies.fit)'),
