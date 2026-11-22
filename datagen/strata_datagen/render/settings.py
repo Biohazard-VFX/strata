@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from pxr import Gf, Sdf, Usd, UsdRender
 
-VERSION = "render-settings-0.2.0"
+VERSION = "render-settings-0.3.0"
 SETTINGS_PATH = "/Render/settings"
 
 
@@ -36,6 +36,7 @@ DENOISER = json.dumps(
 )
 DEEP_AOVS = ("C", "instance_id", "coverage")
 DEEP_COMPRESSION = 5
+DEEP_Z_BIAS_M = 0.0
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ def _deep(stage: Usd.Stage, frames: tuple[int, ...], variables: list[Sdf.Path]) 
     prim = deep.GetPrim()
     prim.CreateAttribute("karma:product:dcmcompression", Sdf.ValueTypeNames.Int).Set(DEEP_COMPRESSION)
     prim.CreateAttribute("karma:product:dcmofsize", Sdf.ValueTypeNames.Int).Set(1)
-    prim.CreateAttribute("karma:product:dcmzbias", Sdf.ValueTypeNames.Float).Set(0.001)
+    prim.CreateAttribute("karma:product:dcmzbias", Sdf.ValueTypeNames.Float).Set(DEEP_Z_BIAS_M)
     return deep
 
 

@@ -166,6 +166,13 @@ class SettingsTest(unittest.TestCase):
                 ('["ubox",{}]', '["minmax",{"mode":"zmin"}]'),
             )
 
+    def test_deep_never_merges_samples_across_depths(self) -> None:
+        stage = Usd.Stage.CreateInMemory()
+        settings.author(stage, "/cam", settings.RenderConfig(64, 36, 8, (1,), motion_blur=False, depth_of_field=False))
+        deep = stage.GetPrimAtPath("/Render/products/deep")
+        self.assertEqual(deep.GetAttribute("karma:product:dcmzbias").Get(), 0.0)
+        self.assertEqual(deep.GetAttribute("karma:product:dcmcompression").Get(), 5)
+
 
 if __name__ == "__main__":
     unittest.main()
