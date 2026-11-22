@@ -114,6 +114,7 @@ def write_shot(shot: Path, frames: list[list[Sample | list[Sample]]], stride: in
         "contract": CONTRACT_VERSION,
         "shot_id": shot.name,
         "instance_ids": [
+            {"name": "sky", "first_id": 0, "count": 1},
             {"name": "terrain", "first_id": 1, "count": 1},
             {"name": "hero_skin", "first_id": 2, "count": 1},
         ],

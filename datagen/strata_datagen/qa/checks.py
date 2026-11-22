@@ -97,7 +97,7 @@ def deep_metrics(
     alpha_error = 1.0
     if "coverage" in deep.channels:
         ids = instance_ids(deep)
-        for low, high in ((SKY_ID, SKY_ID + 1), *ranges):
+        for low, high in ranges:
             valid |= (ids >= low) & (ids < high)
         near_sky = float(((ids == SKY_ID) & (z < SKY_MIN_Z_M)).mean())
         difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]

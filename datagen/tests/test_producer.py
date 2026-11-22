@@ -5,10 +5,13 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
+from jsonschema import Draft202012Validator
 
+import validate
 from strata_contract import samples as contract_samples
 from strata_datagen import cli
 from strata_datagen.exr import Deep, read_deep, read_flat
+from strata_datagen.generators import lighting
 from strata_datagen.qa import checks
 from strata_datagen.render import husk, pack
 from tests.fixtures import SKY, Sample, frame_record, write_beauty, write_deep, write_shot
@@ -153,6 +156,13 @@ class SidecarTest(unittest.TestCase):
             self.assertTrue(any(f.startswith("frame 1: samples_mismatch") for f in failures), failures)
             shutil.rmtree(shot / "samples")
             self.assertTrue(any("frame 1: s_0001: missing" in f for f in shot_failures(shot)))
+
+
+class SchemaTest(unittest.TestCase):
+    def test_the_manifest_sky_id_range_is_valid(self) -> None:
+        schema = {**validate.SCHEMA, "$ref": "#/$defs/id_range"}
+        sky = {"name": "sky", "first_id": lighting.SKY_ID, "count": 1}
+        self.assertEqual(list(Draft202012Validator(schema).iter_errors(sky)), [])
 
 
 class IntrinsicsTest(unittest.TestCase):

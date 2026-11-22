@@ -59,7 +59,7 @@
       "required": ["name", "first_id", "count"],
       "properties": {
         "name": {"type": "string"},
-        "first_id": {"type": "integer", "minimum": 1},
+        "first_id": {"type": "integer", "minimum": 0},
         "count": {"type": "integer", "minimum": 1},
         "prototypes": {"type": "array", "items": {"type": "string"}}
       }
