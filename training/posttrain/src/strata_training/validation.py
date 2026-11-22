@@ -66,11 +66,11 @@ def evaluate_validation(
             prediction = {k: torch.as_tensor(v[None]).float() for k, v in result.arrays().items()}
             prediction["alpha_logits"] = torch.logit(prediction["alpha"].clamp(1e-7, 1 - 1e-7))
             target = {
-                k: torch.as_tensor(frame.arrays[k][None]).float()
+                k: torch.tensor(frame.arrays[k][None]).float()
                 for k in ("inverse_depth", "alpha", "rgb", "mixed")
             }
             beauty = frame.arrays.get("target_beauty", frame.arrays["beauty"])
-            target["beauty"] = torch.as_tensor(beauty[None]).float()
+            target["beauty"] = torch.tensor(beauty[None]).float()
             loss, _ = deep_loss(prediction, target)
             losses.append(loss.item())
     finally:

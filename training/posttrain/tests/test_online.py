@@ -134,6 +134,52 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
     torch.testing.assert_close(changed.target["alpha"], torch.as_tensor(target[:, :, :32])[None])
     torch.testing.assert_close(changed.target["rgb"], torch.full((1, 4, 3, 32, 32), 0.2))
     assert changed.scales.item() == 0.5
+    from strata_training.data.workers import LoadedBatch, NativeBatches, batches
+
+    config: dict[str, Any] = {
+        "seed": 311,
+        "crop": 32,
+        "halo": 0,
+        "batch_size": 2,
+        "steps": 6,
+        "mode": "head",
+        "device": "cpu",
+        "loader_workers": 0,
+        "loader_prefetch": 2,
+    }
+    online = OnlineLoader(
+        [frame],
+        samples,
+        0.4,
+        {
+            "recompose": 0,
+            "occluders": 0,
+            "instance_grade": 0,
+            "scene_grade": 1,
+            "grain": 0,
+            "camera": 0,
+        },
+    )
+    sequential: list[LoadedBatch] = list(batches(NativeBatches([frame], online, [[0]], config)))
+    parallel: list[LoadedBatch] = list(
+        batches(NativeBatches([frame], online, [[0]], {**config, "loader_workers": 2}))
+    )
+    resumed: list[LoadedBatch] = list(batches(NativeBatches([frame], online, [[0]], config, 3)))
+    assert len({float(row.prepared.images.mean()) for row in sequential if row.prepared}) > 1
+    for expected, actual in [
+        *zip(sequential, parallel, strict=True),
+        *zip(sequential[3:], resumed, strict=True),
+    ]:
+        a, b = expected.prepared, actual.to("cpu").prepared
+        assert a is not None
+        assert b is not None
+        assert (a.clean, a.live, a.selections) == (b.clean, b.live, b.selections)
+        torch.testing.assert_close(a.images, b.images, rtol=0, atol=0)
+        for key, value in a.target.items():
+            torch.testing.assert_close(value, b.target[key], rtol=0, atol=0)
+        for key, value in (a.cached_inputs or {}).items():
+            assert b.cached_inputs is not None
+            torch.testing.assert_close(value, b.cached_inputs[key], rtol=0, atol=0)
     assert sorted(p.name for p in (samples / "sample").iterdir()) == [
         "deep",
         "denoised.npy",

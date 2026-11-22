@@ -125,7 +125,7 @@ def predict(model: nn.Module, config: dict[str, Any], frame: Frame) -> Layers:
                 features = torch.as_tensor(
                     np.array(frame.features[:, y0:y1, x0:x1]), device=device
                 ).float()[None]
-                base = torch.as_tensor(frame.base[y0:y1, x0:x1], device=device).float()[None, None]
+                base = torch.tensor(frame.base[y0:y1, x0:x1], device=device).float()[None, None]
                 output = cast(dict[str, torch.Tensor], model(features, image, base))
         h, w = (
             min(y1 - y, height - y, 128 if decoder else 256),

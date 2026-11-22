@@ -81,10 +81,40 @@ def test_frame_pickle_and_crop_reads_are_bounded_and_exact(tmp_path: Path) -> No
             np.testing.assert_array_equal(value.numpy()[0], archive[key])
     restored = pickle.loads(pickle.dumps(frame))
     assert restored.crop(np.random.default_rng(3), 32) == frame.crop(np.random.default_rng(3), 32)
+    save_arrays(Path(entry["cache"]), mixed=np.zeros((32, 32), dtype=bool))
+    with pytest.raises(ValueError, match="Source cache changed"):
+        Frame(entry, Path(config["features"]))
 
 
-def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) -> None:
+def test_worker_batches_and_resumed_steps_are_identical(tmp_path: Path) -> None:
+    from strata_training.config import training_defaults
+    from strata_training.data.dataset import Frame
+    from strata_training.data.workers import NativeBatches, batches
+
+    config, _ = _configuration(tmp_path)
+    config = training_defaults(config)
+    entry = json.loads(Path(config["index"]).read_text())[0]
+    frames = [Frame(entry, Path(config["features"]))]
+    expected = list(batches(NativeBatches(frames, None, [[0]], config)))
+    parallel = list(batches(NativeBatches(frames, None, [[0]], {**config, "loader_workers": 2})))
+    resumed = list(batches(NativeBatches(frames, None, [[0]], config, 2)))
+    for reference, actual in zip(expected, parallel, strict=True):
+        assert reference.selections == actual.selections
+        for key, value in reference.inputs.items():
+            torch.testing.assert_close(value, actual.inputs[key], rtol=0, atol=0)
+        for key, value in reference.target.items():
+            torch.testing.assert_close(value, actual.target[key], rtol=0, atol=0)
+    for reference, actual in zip(expected[2:], resumed, strict=True):
+        assert reference.selections == actual.selections
+        for key, value in reference.target.items():
+            torch.testing.assert_close(value, actual.target[key], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path, workers: int) -> None:
     config, path = _configuration(tmp_path)
+    config["loader_workers"] = workers
+    write_json(path, config)
     report = train(path)
     assert report["train_frames"] == 1
     history = json.loads((tmp_path / "run/history.json").read_text())

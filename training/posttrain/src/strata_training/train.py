@@ -9,10 +9,11 @@ import torch
 from torch import nn
 
 from strata_training.config import training_defaults, validate_config
-from strata_training.data.dataset import Frame, batch, normalization
+from strata_training.data.dataset import Frame, normalization
 from strata_training.data.online import OnlineLoader
 from strata_training.data.policy import require_supervision
 from strata_training.data.sequences import clip_indices
+from strata_training.data.workers import NativeBatches, batches
 from strata_training.eval.protocol import entries_for
 from strata_training.io import write_json
 from strata_training.losses.deep import deep_loss
@@ -28,6 +29,7 @@ from strata_training.validation import evaluate_validation, validation_frames
 def train(config_path: Path) -> dict[str, Any]:
     config = training_defaults(json.loads(config_path.read_text()))
     config["objective"] = "coverage-bce-logits-v1"
+    config["sampling"] = "step-seed-v1"
     validate_config(config)
     device = config.get("device", "cuda")
     api.manual_seed(config["seed"])
@@ -109,6 +111,7 @@ def train(config_path: Path) -> dict[str, Any]:
             "protocol",
             "features",
             "objective",
+            "sampling",
             "learning_rate",
             "decoder_learning_rate",
             "warmup_steps",
@@ -188,24 +191,17 @@ def train(config_path: Path) -> dict[str, Any]:
     running: list[float] = []
     last_step = start_step
     stopped = False
+    stream = iter(batches(NativeBatches(frames, online, clips, config, start_step)))
     for step in range(start_step + 1, config["steps"] + 1):
-        selections: list[tuple[int, int, int]] = []
-        while len(selections) < config["batch_size"]:
-            clip = clips[int(rng.integers(len(clips)))]
-            coordinates = frames[clip[0]].crop(rng, crop + 2 * halo)
-            selections.extend(
-                (i, *coordinates) for i in clip[: config["batch_size"] - len(selections)]
-            )
-        inputs: dict[str, torch.Tensor] = {}
-        pyramid: list[torch.Tensor] = []
         loading_start = time.monotonic()
-        prepared = online.prepare(selections, rng, crop, halo, device) if online else None
-        if prepared is None:
-            inputs, target, pyramid = batch(
-                frames, selections, crop, halo, device=device, decoder=decoder
-            )
-        else:
-            target = prepared.target
+        loaded = next(stream).to(device)
+        selections = loaded.selections
+        inputs, target, pyramid, prepared = (
+            loaded.inputs,
+            loaded.target,
+            loaded.pyramid,
+            loaded.prepared,
+        )
         loader_seconds = time.monotonic() - loading_start
         optimizer.zero_grad(set_to_none=True)
         multiplier = learning_rate_multiplier(step, config["steps"], config.get("warmup_steps", 0))

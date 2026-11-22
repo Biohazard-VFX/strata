@@ -151,6 +151,29 @@ are written. `augmentation` passes explicit settings to `AugmentConfig.from_dict
 use top-level `clean_fraction`, not `augmentation.clean`. Logs include loader seconds
 and clean/live counts. CPU-heavy augmentation is not silently pre-baked.
 
+### Parallel CPU preparation
+
+Set `loader_workers` to a nonnegative integer (default 0) and `loader_prefetch` to a
+positive number of batches per worker (default 2). With workers enabled, training
+uses spawned, persistent PyTorch DataLoader workers, prefetches both augmentation
+and clean feature/pyramid crops on CPU, pins completed batches for CUDA, and only
+transfers tensors in the training process. No encoder/model object is sent to a
+worker. Spawn avoids forking an initialized CUDA runtime. Choose the worker count
+and BLAS thread policy explicitly for the deployment; the package does not impose
+machine-specific thread counts. Peak image memory scales with workers × prefetch ×
+batch/crop size and raw sample density, not frame count. Metadata still scales
+linearly with the number of index records.
+
+Sampling is intentionally versioned as `step-seed-v1`: each absolute training step
+uses `SeedSequence([seed, step])`. Crop selection and augmentation draws within a
+step remain sequential and unchanged. This makes outputs independent of worker
+count, queue scheduling and prefetch position, including resumed runs. It does
+change the old single-global-RNG training trajectory; resume refuses checkpoints
+without the matching sampling version rather than pretending to continue their
+sequence. Calling `OnlineLoader.prepare` with the same selections and RNG retains
+its existing per-view semantics. `loader_seconds` now measures the main process's
+wait plus device transfer; overlapped worker CPU time is not added to it.
+
 ### Memory-mapped training caches
 
 The first `Frame` construction migrates each compressed target/base NPZ to a sibling
@@ -178,4 +201,6 @@ supervision. Preparation can inspect/cache them, but training rejects their
 `compact_scene_only` index entries. The producer must publish sky-inclusive targets
 (or an explicit background target representation) before long-shot training can be
 qualified. Raw-deep augmentation also requires real deep samples; missing stride
-frames are not converted into invented per-sample identities.
+frames are not converted into invented per-sample identities. See
+`PRODUCER_CONTRACT.md` for the exact required per-frame sky targets, dtypes,
+sample-offset/identity sidecars and publication layout.

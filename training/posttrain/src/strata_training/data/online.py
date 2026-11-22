@@ -58,6 +58,8 @@ class PreparedBatch:
     selections: list[tuple[int, int, int]]
     scales: torch.Tensor
     normalized: torch.Tensor | None
+    cached_inputs: dict[str, torch.Tensor] | None = None
+    cached_pyramid: list[torch.Tensor] | None = None
 
 
 def _tensor(values: list[Array], device: str) -> torch.Tensor:
@@ -216,7 +218,10 @@ class OnlineLoader:
         device = prepared.images.device.type
         clean_inputs: dict[str, torch.Tensor] = {}
         clean_pyramid: list[torch.Tensor] = []
-        if prepared.clean:
+        if prepared.clean and prepared.cached_inputs is not None:
+            clean_inputs = prepared.cached_inputs
+            clean_pyramid = prepared.cached_pyramid or []
+        elif prepared.clean:
             clean_inputs, _, clean_pyramid = batch(
                 self.frames,
                 [prepared.selections[i] for i in prepared.clean],
