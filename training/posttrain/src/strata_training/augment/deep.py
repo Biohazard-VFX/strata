@@ -34,13 +34,14 @@ class DeepSamples:
         return np.repeat(np.arange(self.shape[0] * self.shape[1]), self.counts)
 
     def select(self, keep: Array) -> "DeepSamples":
-        return from_unsorted(
+        counts = np.bincount(self.pixel[keep], minlength=self.shape[0] * self.shape[1])
+        return DeepSamples(
             self.shape,
-            self.pixel[keep],
-            self.z[keep],
-            self.alpha[keep],
-            self.rgb[keep],
-            self.ids[keep],
+            np.concatenate(([0], np.cumsum(counts))),
+            np.asarray(self.z[keep]),
+            np.asarray(self.alpha[keep]),
+            np.asarray(self.rgb[keep]),
+            np.asarray(self.ids[keep]),
         )
 
     def crop(self, top: int, left: int, height: int, width: int) -> "DeepSamples":
@@ -77,10 +78,17 @@ class DeepSamples:
         )
 
 
+def depth_order(pixel: Array, z: Array) -> Array:
+    key = (pixel.astype(np.int64) << 32) | z.astype(np.float32).view(np.uint32).astype(np.int64)
+    return np.argsort(key, kind="stable")
+
+
 def from_unsorted(
     shape: tuple[int, int], pixel: Array, z: Array, alpha: Array, rgb: Array, ids: Array
 ) -> DeepSamples:
-    order = np.lexsort((z, pixel))
+    if np.any(z <= 0):
+        raise ValueError("Deep sample depths must be positive")
+    order = depth_order(pixel, z)
     counts = np.bincount(pixel, minlength=shape[0] * shape[1])
     return DeepSamples(
         shape,
@@ -130,7 +138,7 @@ def merge(parts: Sequence[DeepSamples]) -> tuple[DeepSamples, Array]:
     labels = np.concatenate([np.full(p.z.size, i) for i, p in enumerate(parts)])
     pixel = np.concatenate([p.pixel for p in parts])
     z = np.concatenate([p.z for p in parts])
-    order = np.lexsort((labels, z, pixel))
+    order = depth_order(pixel, z)
     counts = np.bincount(pixel, minlength=shape[0] * shape[1])
     merged = DeepSamples(
         shape,
@@ -213,8 +221,11 @@ def compose(layers: Sequence[Layer], environment: Shot, environment_matrix: Arra
         environment, (environment.noisy - own_rgb) * through, (1 - own_coverage) * through
     )
     image += np.tensordot(environment_matrix, residual, axes=1)
-    graded = np.stack([layer.matrix for layer in layers])[labels]
-    colours = np.einsum("nij,nj->ni", graded, merged.rgb.astype(np.float64)).astype(np.float32)
+    colours = np.array(merged.rgb, dtype=np.float32)
+    for g, layer in enumerate(layers):
+        if not np.array_equal(layer.matrix, np.eye(3)):
+            mask = labels == g
+            colours[mask] = colours[mask] @ layer.matrix.T.astype(np.float32)
     samples = DeepSamples(merged.shape, merged.offsets, merged.z, merged.alpha, colours, merged.ids)
     return Composition(samples, image.astype(np.float32), labels)
 
