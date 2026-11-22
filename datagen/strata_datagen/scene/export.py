@@ -1,10 +1,15 @@
-"""Per-shot records of the dataset contract: camera.json and manifest.json."""
+"""Per-shot records of the dataset contract: camera.json and manifest.json.
+
+The manifest is written only for a composed scene whose rendered surfaces carry the id and role
+primvars of its declared id ranges (`scene.audit`), so a shot with wrong tags is never rendered.
+"""
 
 import json
 from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
+from pxr import Usd
 
 from strata_datagen import files
 from strata_datagen.generators import (
@@ -21,6 +26,7 @@ from strata_datagen.generators import (
 )
 from strata_datagen.library.catalogue import Library, Provenance
 from strata_datagen.render import settings
+from strata_datagen.scene import audit
 from strata_datagen.scene.compose import FIRST_SCATTER_ID, TERRAIN_ID, RenderParams, Shot, samples_for
 from strata_datagen.scene.spec import RECIPE_VERSION
 from strata_dataset import records
@@ -167,6 +173,10 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
 
 
 def write(shot: Shot, library: Library, render: RenderParams) -> None:
+    """camera.json and manifest.json; raises ValueError, writing neither, if the scene fails its tag audit."""
+    errors = audit.tag_errors(Usd.Stage.Open(str(shot.scene_dir / "shot.usda")), _ids(shot))
+    if errors:
+        raise ValueError(f"{shot.spec.shot_id}: {'; '.join(errors[:8])}")
     shot.directory.mkdir(parents=True, exist_ok=True)
     for name, record in (
         ("camera.json", camera_record(shot, render)),

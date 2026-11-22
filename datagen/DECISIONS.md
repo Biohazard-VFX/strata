@@ -8,6 +8,7 @@
 - Deep carries `C`, `instance_id` and a float `coverage` (constant 1 on every surface, sky too): it is the sample's float alpha and id = round(instance_id / coverage); Karma stores A as half.
 - Roles are linear deep and beauty channels (`foreground`, `hero`, `fur`: per-surface 0/1 primvars times alpha), exact through Karma's summing merges; roles never come from ids.
 - Each surface's role primvars follow its manifest id range name via strata_dataset.roles.membership, the one rule shared by authoring and the contract.
+- No manifest is written until the composed stage passes scene.audit: every rendered Gprim and PointInstancer authors the id and role primvars of its id range; Karma renders absent ones as 0.
 - Instance ids are best-effort, for per-object use only: kept if the quotient is near-integer and two hashes from different mixers and keys (`instance_check`, `instance_check2`) match, else -1.
 - Id check tolerance is 2^-14 against ~1e-5 float noise; if the two hashes act as independent uniforms (tested on all ids), a merge with mislabelled share m passes with p <= (2^-13/m)^2.
 - Ids stay below 2^15 so round(instance_id / coverage) is exact under float32 accumulation; authoring an id outside [0, 2^15) fails the build.
