@@ -10,7 +10,7 @@ extern "C" {
 
 /* Calls without a context are reentrant on distinct output objects. */
 
-/* Filled outputs: zeroed or a prior output (freed first); empty on failure. */
+/* Filled outputs: zeroed or a prior output (freed first); zero on failure. */
 
 /* Owns sessions and scratch; serialize calls, contexts are independent. */
 typedef struct strata_context strata_context;

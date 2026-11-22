@@ -55,6 +55,7 @@ static void provided(strata_context *ctx, float *network)
 						  .cy_px = .75f,
 						  .sensor_width_mm = 36,
 						  .sensor_height_mm = 24 } };
+	struct strata_image wide = image;
 	struct strata_result result = { 0 };
 	struct strata_error err = { { 0 } };
 	struct strata_camera *camera = &result.frame.camera;
@@ -62,6 +63,7 @@ static void provided(strata_context *ctx, float *network)
 	EXPECT(strata_run(ctx, &frame, &result, &err) == -1);
 	EXPECT(strstr(err.message, "focal source") != NULL);
 	frame.camera.focal_source = STRATA_FOCAL_PROVIDED;
+	wide.width = 8000;
 	if (!EXPECT(!strata_run(ctx, &frame, &result, &err)))
 		return;
 	*network = result.network_inverse_depth[0];
@@ -81,8 +83,17 @@ static void provided(strata_context *ctx, float *network)
 		       result.network_inverse_depth[0] == *network);
 	frame.camera.focal_source = STRATA_FOCAL_UNSET;
 	EXPECT(strata_run(ctx, &frame, &result, &err) == -1);
-	EXPECT(!result.network_inverse_depth && !result.width &&
-	       !result.frame.camera.fx_px);
+	EXPECT_ZERO(result);
+	frame.camera.focal_source = STRATA_FOCAL_PROVIDED;
+	EXPECT(!strata_run(ctx, &frame, &result, &err));
+	frame.image = &wide;
+	EXPECT(strata_run(ctx, &frame, &result, &err) == -1);
+	EXPECT(strstr(err.message, "dimensions") != NULL);
+	EXPECT_ZERO(result);
+	frame.image = &image;
+	EXPECT(!strata_run(ctx, &frame, &result, &err));
+	EXPECT(strata_run(ctx, NULL, &result, &err) == -1);
+	EXPECT_ZERO(result);
 	strata_result_free(&result);
 }
 
@@ -97,6 +108,7 @@ static void estimated(strata_context *ctx)
 
 	frame.camera.cx_px = 1;
 	EXPECT(strata_run(ctx, &frame, &result, &err) == -1);
+	EXPECT_ZERO(result);
 	frame.camera.cx_px = 0;
 	if (EXPECT(!strata_run(ctx, &frame, &result, &err))) {
 		EXPECT(result.frame.camera.focal_source ==

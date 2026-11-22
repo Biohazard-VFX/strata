@@ -64,39 +64,35 @@ static int allocate_positions(int w, int h, size_t count,
 			      struct strata_positions *positions,
 			      struct strata_error *err)
 {
-	int ret = -1;
+	struct strata_positions out = { 0 };
 
-	if (strata_dimensions(w, h, err) || strata_pose_validate(pose, err))
-		return -1;
-	positions->frame = *frame;
-	if (camera)
-		positions->frame.camera = *camera;
-	if (strata_camera_validate(&positions->frame.camera, 1, err))
+	if (strata_dimensions(w, h, err) || strata_pose_validate(pose, err) ||
+	    strata_camera_validate(camera ? camera : &frame->camera, 1, err))
 		return -1;
 	if (count > SIZE_MAX / (3 * sizeof(float)))
 		return strata_fail(err, "position allocation overflow");
-	positions->width = w;
-	positions->height = h;
-	positions->layer_count = 1;
-	positions->point_count = count;
-	positions->space = pose ? STRATA_SPACE_WORLD : STRATA_SPACE_CAMERA;
+	out.width = w;
+	out.height = h;
+	out.layer_count = 1;
+	out.point_count = count;
+	out.space = pose ? STRATA_SPACE_WORLD : STRATA_SPACE_CAMERA;
+	out.frame = *frame;
+	if (camera)
+		out.frame.camera = *camera;
 	if (pose)
-		positions->pose = *pose;
+		out.pose = *pose;
 	else {
 		for (size_t i = 0; i < 4; ++i)
-			positions->pose.camera_to_world[i * 5] = 1;
+			out.pose.camera_to_world[i * 5] = 1;
 	}
-	positions->xyz = calloc(count ? count : 1, 3 * sizeof(float));
-	positions->valid = calloc(count ? count : 1, sizeof(uint8_t));
-	if (!positions->xyz || !positions->valid) {
-		strata_fail(err, "out of memory");
-		goto out;
+	out.xyz = calloc(count ? count : 1, 3 * sizeof(float));
+	out.valid = calloc(count ? count : 1, sizeof(uint8_t));
+	if (!out.xyz || !out.valid) {
+		strata_positions_free(&out);
+		return strata_fail(err, "out of memory");
 	}
-	ret = 0;
-out:
-	if (ret)
-		strata_positions_free(positions);
-	return ret;
+	*positions = out;
+	return 0;
 }
 
 static void unproject(struct strata_positions *positions, size_t point,

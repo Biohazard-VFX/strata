@@ -7,9 +7,30 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include "expect.h"
 
 #define WIDTH 7
 #define HEIGHT 19
+
+static int truncated(const char *directory)
+{
+	char path[4096], bytes[65536];
+	FILE *file;
+	size_t count;
+
+	snprintf(path, sizeof(path), "%s/input.exr", directory);
+	file = fopen(path, "rb");
+	if (!file)
+		return -1;
+	count = fread(bytes, 1, sizeof(bytes), file);
+	fclose(file);
+	snprintf(path, sizeof(path), "%s/truncated.exr", directory);
+	file = fopen(path, "wb");
+	if (!file)
+		return -1;
+	count = fwrite(bytes, 1, count - 16, file);
+	return fclose(file) || !count ? -1 : 0;
+}
 
 static int read_inputs(const char *directory, const float *expected)
 {
@@ -50,8 +71,15 @@ static int read_inputs(const char *directory, const float *expected)
 		}
 	}
 	snprintf(path, sizeof(path), "%s/missing.exr", directory);
-	if (strata_image_read(path, &image, &err) != -1 || image.rgba ||
-	    image.width)
+	if (strata_image_read(path, &image, &err) != -1 ||
+	    !zeroed(&image, sizeof(image)))
+		goto out;
+	snprintf(path, sizeof(path), "%s/%s", directory, names[0]);
+	if (strata_image_read(path, &image, &err) || truncated(directory))
+		goto out;
+	snprintf(path, sizeof(path), "%s/truncated.exr", directory);
+	if (strata_image_read(path, &image, &err) != -1 ||
+	    !zeroed(&image, sizeof(image)))
 		goto out;
 	ret = 0;
 out:

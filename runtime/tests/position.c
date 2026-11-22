@@ -97,8 +97,10 @@ static void invalid_test(void)
 	float q[] = { NAN, 0, INFINITY, -1 };
 	struct strata_result depth = { .width = 2,
 				       .height = 2,
+				       .frame.index = 99,
 				       .frame.camera = camera,
 				       .network_inverse_depth = q };
+	struct strata_pose skewed = { { 0 } };
 	struct strata_positions positions = { 0 };
 	struct strata_error err = { { 0 } };
 
@@ -112,12 +114,58 @@ static void invalid_test(void)
 	depth.frame.camera.fx_px = 0;
 	EXPECT(strata_unproject_depth(&depth, NULL, NULL, &positions, &err) ==
 	       -1);
-	EXPECT(!positions.xyz && !positions.valid && !positions.point_count);
+	EXPECT_ZERO(positions);
 	depth.frame.camera.fx_px = 2;
+	EXPECT(!strata_unproject_depth(&depth, NULL, NULL, &positions, &err));
+	EXPECT(strata_unproject_depth(&depth, NULL, &skewed, &positions,
+				      &err) == -1);
+	EXPECT(strstr(err.message, "affine") != NULL);
+	EXPECT_ZERO(positions);
 	depth.frame.camera.focal_source = STRATA_FOCAL_UNSET;
 	EXPECT(strata_unproject_depth(&depth, NULL, NULL, &positions, &err) ==
 	       -1);
 	EXPECT(strstr(err.message, "focal source") != NULL);
+	EXPECT_ZERO(positions);
+	EXPECT(strata_unproject_depth(NULL, NULL, NULL, &positions, &err) ==
+	       -1);
+	EXPECT_ZERO(positions);
+}
+
+static void invalid_override_test(void)
+{
+	uint32_t counts[] = { 1 };
+	float z[] = { 2 }, rgba[] = { 0, 0, 0, 1 };
+	struct strata_deep_result deep = { .width = 1,
+					   .height = 1,
+					   .frame.index = 7,
+					   .frame.camera = camera,
+					   .sample_count = 1,
+					   .counts = counts,
+					   .rgba = rgba,
+					   .z = z,
+					   .zback = z };
+	struct strata_camera flat = camera;
+	struct strata_positions positions = { 0 };
+	struct strata_layers layers = { 0 };
+	struct strata_error err = { { 0 } };
+
+	flat.fy_px = 0;
+	EXPECT(!strata_unproject_deep(&deep, NULL, NULL, &positions, &err));
+	EXPECT(strata_unproject_deep(&deep, &flat, NULL, &positions, &err) ==
+	       -1);
+	EXPECT_ZERO(positions);
+	if (!EXPECT(!strata_deep_to_layers(&deep, 2, &layers, &err)))
+		return;
+	EXPECT(!strata_unproject_layers(&layers, NULL, NULL, &positions, &err));
+	EXPECT(strata_unproject_layers(&layers, &flat, NULL, &positions,
+				       &err) == -1);
+	EXPECT_ZERO(positions);
+	layers.layer_count = 0;
+	EXPECT(strata_unproject_layers(&layers, NULL, NULL, &positions, &err) ==
+	       -1);
+	EXPECT_ZERO(positions);
+	layers.layer_count = 2;
+	strata_layers_free(&layers);
 }
 
 int main(void)
@@ -125,5 +173,6 @@ int main(void)
 	plane_test();
 	deep_layers_test();
 	invalid_test();
+	invalid_override_test();
 	return failures != 0;
 }
