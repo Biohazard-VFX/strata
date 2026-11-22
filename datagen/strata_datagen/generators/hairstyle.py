@@ -1,22 +1,27 @@
-"""Seeded human hairstyles grown on a head's scalp and face regions.
+"""Seeded human hairstyles grown on a head's scalp and face regions, morphing smoothly over a shot.
 
 A style is a cut (buzz to long), a texture (straight to coily), an updo (ponytail, bun, braid,
 pigtails), flyaways and frizz, an optional wet look, facial hair and a melanin hair colour. Down styles
 grow guide strands under gravity against the skin and interpolate dense strands from them; updos
 lay every strand along the scalp to a tie and on into a tail, plait or bun.
+
+Within a shot the cut and updo stay fixed while length, curl, frizz, clumping, density and melanin drift
+as smooth seeded functions of time. Strand count and samples per strand never change: strands are
+shaped once at their longest, then trimmed and textured per key time, and density thins by fading
+widths to zero, so time-sampled points interpolate and motion blur and deep stay valid.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
 from pxr import Sdf, Usd, UsdGeom
 from scipy.spatial import KDTree
 
-from strata_datagen import strands
+from strata_datagen import strands, timeline
 from strata_datagen.usdutil import FloatArray, IntArray, floats, ints, vec3f
 
-VERSION = "hairstyle-0.1.0"
+VERSION = "hairstyle-0.2.0"
 REGIONS = ("scalp", "brows", "lashes", "beard")
 CUTS = ("buzz", "short", "medium", "long")
 CUT_WEIGHTS = (0.12, 0.3, 0.28, 0.3)
@@ -42,6 +47,10 @@ CURL = {
     "curly": (0.004, 0.01, 15.0, 35.0),
     "coily": (0.0015, 0.004, 60.0, 150.0),
 }
+DRIFTED = ("length", "curl", "frizz", "clump", "density", "melanin", "facial_length")
+DRIFT_MAX = (0.35, 0.5, 0.8, 0.4, 0.35, 0.15, 0.4)
+KEY_SECONDS = 3.0
+FADE = 0.05
 SKIN_OFFSET_M = 0.002
 MAX_POINTS = 6_000_000
 
@@ -63,6 +72,24 @@ class Colour:
     melanin: float
     redness: float
     randomize: float
+
+
+@dataclass(frozen=True)
+class Drift:
+    """Per DRIFTED parameter a timeline curve of offsets (relative; absolute for melanin)."""
+
+    curves: tuple[timeline.Curve, ...]
+    wave_m: float
+    wave_turns_per_m: float
+
+    def wave(self, name: str, seconds: float) -> float:
+        return float(self.curves[DRIFTED.index(name)](np.array([seconds]))[0])
+
+    def span(self, name: str) -> float:
+        return float(np.abs(self.curves[DRIFTED.index(name)].keys).max())
+
+
+STILL = Drift(tuple(timeline.Curve(np.zeros(4), 1.0) for _ in DRIFTED), 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -90,11 +117,12 @@ class Style:
     facial_colour: Colour
     brows: bool
     lashes: bool
+    drift: Drift = STILL
 
 
 @dataclass(frozen=True)
 class StrandSet:
-    """Curves sharing one sample count: (curves, samples, 3) points and per-point widths."""
+    """Curves sharing one sample count per key time: (keys, curves, samples, 3) points and widths."""
 
     name: str
     curves: FloatArray
@@ -104,7 +132,58 @@ class StrandSet:
 @dataclass(frozen=True)
 class Hairstyle:
     style: Style
+    seconds: tuple[float, ...]
     sets: tuple[StrandSet, ...]
+
+
+def _drift(rng: np.random.Generator, duration_s: float) -> Drift:
+    curves = tuple(
+        timeline.curve(rng, duration_s, float(rng.uniform(8.0, 20.0)), -a, a)
+        for a in (float(rng.uniform(0.0, m)) for m in DRIFT_MAX)
+    )
+    wave = float(rng.uniform(0.002, 0.006)) if rng.random() < 0.4 else 0.0
+    return Drift(curves, wave, float(rng.uniform(3.0, 8.0)))
+
+
+def record(style: Style) -> dict[str, object]:
+    """The style as JSON-ready values, drift curves as their keys and periods."""
+    out = asdict(style)
+    out["drift"] = {
+        "curves": {
+            n: {"keys": c.keys.tolist(), "period_s": c.period_s}
+            for n, c in zip(DRIFTED, style.drift.curves, strict=True)
+        },
+        "wave_m": style.drift.wave_m,
+        "wave_turns_per_m": style.drift.wave_turns_per_m,
+    }
+    return out
+
+
+def at(style: Style, seconds: float) -> Style:
+    """The style `seconds` into the shot; straight hair may blend into waves and back."""
+    d = style.drift
+    swell = max(0.0, d.wave("curl", seconds) / max(d.span("curl"), 1e-9))
+    curled = style.curl_radius_m > 0.0
+    colour = replace(
+        style.colour, melanin=float(np.clip(style.colour.melanin + d.wave("melanin", seconds), 0.0, 1.0))
+    )
+    return replace(
+        style,
+        length_m=style.length_m * (1.0 + d.wave("length", seconds)),
+        curl_radius_m=style.curl_radius_m * (1.0 + d.wave("curl", seconds)) if curled else d.wave_m * swell,
+        curl_turns_per_m=style.curl_turns_per_m if curled else d.wave_turns_per_m,
+        frizz_m=style.frizz_m * (1.0 + d.wave("frizz", seconds)),
+        clump=float(np.clip(style.clump * (1.0 + d.wave("clump", seconds)), 0.0, 0.98)),
+        density_per_cm2=style.density_per_cm2 * (1.0 + d.wave("density", seconds)),
+        colour=colour,
+        facial_length_m=style.facial_length_m * (1.0 + d.wave("facial_length", seconds)),
+    )
+
+
+def key_seconds(duration_s: float) -> tuple[float, ...]:
+    """Key times every KEY_SECONDS plus the last instant; points between keys interpolate linearly."""
+    keys = np.arange(0.0, duration_s, KEY_SECONDS).tolist()
+    return (*keys, duration_s) if duration_s > 0.0 else (0.0,)
 
 
 def _pick(rng: np.random.Generator, options: tuple[str, ...], weights: tuple[float, ...]) -> str:
@@ -127,7 +206,9 @@ def _facial_colour(rng: np.random.Generator, hair: Colour) -> Colour:
     return Colour(hair.name, melanin, hair.redness, hair.randomize)
 
 
-def sample(rng: np.random.Generator, regions: tuple[str, ...], *, facial_hair: bool) -> Style:
+def sample(
+    rng: np.random.Generator, regions: tuple[str, ...], *, facial_hair: bool, duration_s: float = 0.0
+) -> Style:
     """Draw a style; every draw happens whatever the head offers, so a seed keeps its other choices."""
     cut = _pick(rng, CUTS, CUT_WEIGHTS)
     texture = _pick(rng, TEXTURES, TEXTURE_WEIGHTS)
@@ -175,6 +256,7 @@ def sample(rng: np.random.Generator, regions: tuple[str, ...], *, facial_hair: b
         facial_colour=facial_colour,
         brows="brows" in regions,
         lashes="lashes" in regions,
+        drift=_drift(rng, duration_s),
     )
 
 
@@ -431,7 +513,62 @@ def _strand_count(style: Style, head: Head, samples: int) -> int:
     return max(64, min(wanted, MAX_POINTS // samples))
 
 
-def _down(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator) -> StrandSet:
+@dataclass(frozen=True)
+class _Base:
+    """Strands shaped once at the longest the shot reaches, with what each key needs to finish them."""
+
+    curves: FloatArray
+    roots: FloatArray
+    keep: FloatArray
+    rank: FloatArray
+    split: int
+    taper: float
+    seed: int
+
+
+def _base(
+    curves: FloatArray,
+    roots: FloatArray,
+    split: int,
+    taper: float,
+    rng: np.random.Generator,
+    *,
+    ragged: bool,
+) -> _Base:
+    """Ragged ends vary strand lengths by up to 10%; tied strands keep equal lengths."""
+    keep = rng.uniform(0.9, 1.0, len(curves)) if ragged else np.ones(len(curves))
+    return _Base(curves, roots, keep, rng.random(len(curves)), split, taper, int(rng.integers(2**31)))
+
+
+def _visible(rank: FloatArray, share: float) -> FloatArray:
+    """Strands whose rank exceeds the visible share fade out through their width."""
+    x = np.clip((share - rank) / FADE + 0.5, 0.0, 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
+def _finish(
+    skin: _Skin, base: _Base, style: Style, envelope: Style, *, down: bool
+) -> tuple[FloatArray, FloatArray]:
+    """One key of a strand set: shaped past `split` (an updo's tie), faded by density.
+
+    Strands are trimmed to the key's length and textured with the shot's fixed random draws.
+    """
+    rng = np.random.default_rng(base.seed)
+    share = style.length_m / envelope.length_m
+    fixed, loose = base.curves[:, : base.split], base.curves[:, base.split :]
+    loose = strands.trim(loose, base.keep * share)
+    textured = style if down else replace(style, clump=style.clump * 0.5)
+    loose = _texture(loose, loose[:, 0], textured, rng, start=0.08 if down else 0.02)
+    curves = np.concatenate([fixed, loose], axis=1)
+    curves = _flyaways(curves, style, rng)
+    if down:
+        curves = skin.push(curves, SKIN_OFFSET_M * 0.5)
+    curves[:, 0] = base.roots
+    widths = _widths(curves, style.width_m, np.random.default_rng(base.seed + 1), taper=base.taper)
+    return curves, widths * _visible(base.rank, style.density_per_cm2 / envelope.density_per_cm2)[:, None]
+
+
+def _down(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator) -> _Base:
     weight = head.regions["scalp"]
     samples = _samples(style, style.length_m, 6 if style.cut == "buzz" else 32)
     count = _strand_count(style, head, samples)
@@ -454,21 +591,15 @@ def _down(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.G
     )
     roots, _ = _sample_region(head, skin, weight, count, rng)
     part = _part_x(style)
-    side = (
-        (_local(frame, roots)[:, 0] > part).astype(np.int64) if style.part != "none" else np.zeros(count, int)
-    )
+    split = style.part != "none"
+    side = (_local(frame, roots)[:, 0] > part).astype(np.int64) if split else np.zeros(count, int)
     guide_side = (
         (_local(frame, guide_roots)[:, 0] > part).astype(np.int64)
-        if style.part != "none"
+        if split
         else np.zeros(len(guide_roots), int)
     )
     curves = _interpolate(roots, guide_roots, guides, side, guide_side)
-    curves = strands.trim(curves, rng.uniform(0.9, 1.0, count))
-    curves = _texture(curves, roots, style, rng, start=0.08)
-    curves = _flyaways(curves, style, rng)
-    curves = skin.push(curves, SKIN_OFFSET_M * 0.5)
-    curves[:, 0] = roots
-    return StrandSet("scalp", curves, _widths(curves, style.width_m, rng))
+    return _base(curves, roots, 0, 0.25, rng, ragged=True)
 
 
 def _ties(style: Style, frame: _Frame) -> FloatArray:
@@ -557,7 +688,7 @@ def _tail(
     return tail, tail[:, 0]
 
 
-def _updo(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator) -> StrandSet:
+def _updo(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator) -> _Base:
     weight = head.regions["scalp"]
     scalp_samples, tail_samples = 16, _samples(style, style.length_m, 32)
     count = _strand_count(style, head, scalp_samples + tail_samples)
@@ -572,12 +703,7 @@ def _updo(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.G
         tail, start = _tail(axis, len(mine), style, rng)
         path = _scalp_paths(skin, frame, roots[mine], start, scalp_samples)
         out[mine] = np.concatenate([path, tail[:, 1:]], axis=1)
-    start = (scalp_samples - 1) / (out.shape[1] - 1)
-    tight = replace(style, clump=style.clump * 0.5)
-    out = _texture(out, roots, tight, rng, start=start)
-    out = _flyaways(out, style, rng)
-    out[:, 0] = roots
-    return StrandSet("scalp", out, _widths(out, style.width_m, rng, taper=0.15))
+    return _base(out, roots, scalp_samples - 1, 0.15, rng, ragged=False)
 
 
 def _facial(
@@ -617,6 +743,7 @@ def _facial(
 
 
 def _beard(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.Generator) -> StrandSet:
+    """Beard strands at the longest the shot reaches; keys trim them back."""
     stubble = style.facial == "stubble"
     samples = 4 if stubble else _samples(style, style.facial_length_m, 12)
     beard = _facial(
@@ -647,17 +774,51 @@ def _beard(head: Head, skin: _Skin, frame: _Frame, style: Style, rng: np.random.
     return StrandSet("beard", skin.push(curves, SKIN_OFFSET_M * 0.5), beard.widths)
 
 
-def build(head: Head, style: Style, rng: np.random.Generator) -> Hairstyle:
+def _envelope(style: Style, keys: list[Style]) -> Style:
+    """The longest, densest and most-curled state, which fixes counts and samples for the whole shot."""
+    return replace(
+        style,
+        length_m=max(k.length_m for k in keys),
+        density_per_cm2=max(k.density_per_cm2 for k in keys),
+        curl_turns_per_m=max(k.curl_turns_per_m for k in keys),
+        curl_radius_m=max(k.curl_radius_m for k in keys),
+        facial_length_m=max(k.facial_length_m for k in keys),
+    )
+
+
+def _still(strand_set: StrandSet, keys: int) -> StrandSet:
+    return StrandSet(
+        strand_set.name,
+        np.repeat(strand_set.curves[None], keys, axis=0),
+        np.repeat(strand_set.widths[None], keys, axis=0),
+    )
+
+
+def build(
+    head: Head, style: Style, rng: np.random.Generator, seconds: tuple[float, ...] = (0.0,)
+) -> Hairstyle:
+    """Strands at each key time (seconds into the shot), with one topology for all keys."""
     skin = _Skin(head)
     frame = _frame(head)
-    scalp = (
-        _down(head, skin, frame, style, rng) if style.updo == "down" else _updo(head, skin, frame, style, rng)
-    )
-    sets = [scalp]
+    keys = [at(style, t) for t in seconds]
+    envelope = _envelope(style, keys)
+    down = style.updo == "down"
+    base = (_down if down else _updo)(head, skin, frame, envelope, rng)
+    shaped = [_finish(skin, base, key, envelope, down=down) for key in keys]
+    sets = [StrandSet("scalp", np.stack([c for c, _ in shaped]), np.stack([w for _, w in shaped]))]
     if style.facial != "none":
-        sets.append(_beard(head, skin, frame, style, rng))
-    if style.brows:
+        beard = _beard(head, skin, frame, envelope, rng)
+        share = [k.facial_length_m / envelope.facial_length_m for k in keys]
         sets.append(
+            StrandSet(
+                "beard",
+                np.stack([strands.trim(beard.curves, np.full(len(beard.curves), s)) for s in share]),
+                np.repeat(beard.widths[None], len(keys), axis=0),
+            )
+        )
+    facial: list[StrandSet] = []
+    if style.brows:
+        facial.append(
             _facial(
                 head,
                 skin,
@@ -672,7 +833,7 @@ def build(head: Head, style: Style, rng: np.random.Generator) -> Hairstyle:
             )
         )
     if style.lashes:
-        sets.append(
+        facial.append(
             _facial(
                 head,
                 skin,
@@ -686,24 +847,35 @@ def build(head: Head, style: Style, rng: np.random.Generator) -> Hairstyle:
                 rng=rng,
             )
         )
-    return Hairstyle(style, tuple(sets))
+    sets.extend(_still(f, len(keys)) for f in facial)
+    return Hairstyle(style, seconds, tuple(sets))
 
 
-def author(stage: Usd.Stage, path: str, hairstyle: Hairstyle) -> dict[str, UsdGeom.BasisCurves]:
-    """One linear BasisCurves prim per strand set under `path`, with vertex widths."""
+def author(
+    stage: Usd.Stage, path: str, hairstyle: Hairstyle, codes: tuple[float, ...] = ()
+) -> dict[str, UsdGeom.BasisCurves]:
+    """One linear BasisCurves prim per strand set under `path`.
+
+    Points, widths and extents are time-sampled at `codes` (one per key), or defaults for a single key.
+    """
     UsdGeom.Xform.Define(stage, path)
+    times = [Usd.TimeCode(c) for c in codes] if codes else [Usd.TimeCode.Default()]
     out: dict[str, UsdGeom.BasisCurves] = {}
     for strand_set in hairstyle.sets:
-        count, samples, _ = strand_set.curves.shape
+        _, count, samples, _ = strand_set.curves.shape
         curves = UsdGeom.BasisCurves.Define(stage, f"{path}/{strand_set.name}")
         curves.CreateTypeAttr(UsdGeom.Tokens.linear)
         curves.CreateCurveVertexCountsAttr(ints(np.full(count, samples)))
-        curves.CreatePointsAttr(vec3f(strand_set.curves.reshape(-1, 3)))
-        curves.CreateWidthsAttr(floats(strand_set.widths.ravel()))
         curves.SetWidthsInterpolation(UsdGeom.Tokens.vertex)
-        curves.CreateExtentAttr(
-            UsdGeom.Curves.ComputeExtent(curves.GetPointsAttr().Get(), curves.GetWidthsAttr().Get())
+        points, widths, extent = (
+            curves.CreatePointsAttr(),
+            curves.CreateWidthsAttr(),
+            curves.CreateExtentAttr(),
         )
+        for time, key_points, key_widths in zip(times, strand_set.curves, strand_set.widths, strict=True):
+            points.Set(vec3f(key_points.reshape(-1, 3)), time)
+            widths.Set(floats(key_widths.ravel()), time)
+            extent.Set(UsdGeom.Curves.ComputeExtent(points.Get(time), widths.Get(time)), time)
         curves.GetPrim().CreateAttribute("strata:hairstyle", Sdf.ValueTypeNames.String).Set(VERSION)
         out[strand_set.name] = curves
     return out

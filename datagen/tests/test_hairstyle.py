@@ -9,6 +9,7 @@ import numpy as np
 from pxr import Sdf, Usd, UsdGeom
 from scipy.spatial import KDTree
 
+from strata_datagen import timeline
 from strata_datagen.generators import hairstyle
 from strata_datagen.library import heroes
 from strata_datagen.library.catalogue import Hero, HeroHair, HeroPose, Library, Provenance
@@ -68,7 +69,11 @@ def build(drawn: hairstyle.Style) -> hairstyle.Hairstyle:
 
 
 def scalp(built: hairstyle.Hairstyle) -> hairstyle.StrandSet:
-    return next(s for s in built.sets if s.name == "scalp")
+    return first_key(next(s for s in built.sets if s.name == "scalp"))
+
+
+def first_key(strand_set: hairstyle.StrandSet) -> hairstyle.StrandSet:
+    return hairstyle.StrandSet(strand_set.name, strand_set.curves[0], strand_set.widths[0])
 
 
 class SampleTest(unittest.TestCase):
@@ -91,7 +96,8 @@ class SampleTest(unittest.TestCase):
             full = hairstyle.sample(stream(seed, "hairstyle"), hairstyle.REGIONS, facial_hair=True)
             self.assertEqual((bare.facial, bare.brows, bare.lashes), ("none", False, False))
             self.assertEqual(barred.facial, "none")
-            self.assertEqual(replace(bare, facial=full.facial, brows=True, lashes=True), full)
+            completed = replace(bare, facial=full.facial, brows=True, lashes=True)
+            self.assertEqual(hairstyle.record(completed), hairstyle.record(full))
 
 
 class BuildTest(unittest.TestCase):
@@ -106,7 +112,7 @@ class BuildTest(unittest.TestCase):
         marks = regions(head().points)
         for seed in (2, 4, 17, 51):
             built = build(style(seed))
-            for strand_set in built.sets:
+            for strand_set in map(first_key, built.sets):
                 with self.subTest(seed=seed, region=strand_set.name):
                     radius = np.linalg.norm(strand_set.curves - CENTRE, axis=-1)
                     np.testing.assert_allclose(radius[:, 0], RADIUS, atol=0.004)
@@ -115,7 +121,7 @@ class BuildTest(unittest.TestCase):
                     self.assertTrue((marks[strand_set.name][nearest].max(axis=1) > 0.0).all())
 
     def test_widths_taper_to_the_tip(self) -> None:
-        for strand_set in build(style(5)).sets:
+        for strand_set in map(first_key, build(style(5)).sets):
             self.assertTrue((strand_set.widths > 0).all())
             self.assertTrue((strand_set.widths[:, -1] < strand_set.widths[:, 0]).all())
 
@@ -127,10 +133,11 @@ class BuildTest(unittest.TestCase):
         self.assertLess(low["long"], low["short"] - 0.2)
 
     def test_ponytail_gathers_at_one_tie(self) -> None:
-        tied = scalp(build(style(17, updo="ponytail", length_m=0.4)))
-        spread = tied.curves[:, 15].std(axis=0)
-        loose = scalp(build(style(17, updo="down", length_m=0.4))).curves[:, 8].std(axis=0)
-        self.assertLess(float(np.linalg.norm(spread)), 0.3 * float(np.linalg.norm(loose)))
+        def tightest(updo: str) -> float:
+            curves = scalp(build(style(17, updo=updo, length_m=0.4))).curves
+            return float(np.linalg.norm(curves.std(axis=0), axis=-1).min())
+
+        self.assertLess(tightest("ponytail"), 0.3 * tightest("down"))
 
     def test_curls_lengthen_the_path_of_the_same_cut(self) -> None:
         def path(texture: str, radius: float, turns: float) -> float:
@@ -145,11 +152,62 @@ class BuildTest(unittest.TestCase):
         built = build(style(52))
         stage = Usd.Stage.CreateInMemory()
         prims = hairstyle.author(stage, "/hair", built)
-        for strand_set in built.sets:
+        for strand_set in map(first_key, built.sets):
             curves = prims[strand_set.name]
             counts = np.asarray(curves.GetCurveVertexCountsAttr().Get())
             self.assertEqual(counts.tolist(), [strand_set.curves.shape[1]] * len(strand_set.curves))
             self.assertEqual(len(curves.GetWidthsAttr().Get()), strand_set.widths.size)
+            self.assertEqual(curves.GetPointsAttr().GetNumTimeSamples(), 0)
+
+
+def drifting(seed: int, **changes: object) -> hairstyle.Style:
+    """A style whose every drifting parameter swings well past its normal range over 30 s."""
+    rng = stream(seed, "drift")
+    curves = tuple(timeline.curve(rng, 30.0, 10.0, -1.6 * m, 1.6 * m) for m in hairstyle.DRIFT_MAX)
+    return replace(style(seed, **changes), drift=hairstyle.Drift(curves, 0.0, 0.0))
+
+
+class MorphTest(unittest.TestCase):
+    """A shot's hairstyle changes over time with one topology, so keys interpolate."""
+
+    def test_keys_share_topology_and_roots(self) -> None:
+        built = hairstyle.build(head(), drifting(37, updo="down"), stream(0, "b"), (0.0, 6.0, 12.0))
+        for strand_set in built.sets:
+            self.assertEqual(strand_set.curves.shape[0], 3)
+            np.testing.assert_array_equal(strand_set.curves[0, :, 0], strand_set.curves[2, :, 0])
+
+    def test_change_is_smooth_in_time_and_large_over_the_shot(self) -> None:
+        built = hairstyle.build(head(), drifting(37, updo="down"), stream(0, "b"), (0.0, 1.0 / 24.0, 15.0))
+        curves = scalp_keys(built)
+        step = np.abs(curves[1] - curves[0]).max()
+        span = np.abs(curves[2] - curves[0]).max()
+        self.assertLess(step, 0.004)
+        self.assertGreater(span, 10.0 * step)
+
+    def test_length_follows_the_drift_and_density_fades_widths(self) -> None:
+        drawn = drifting(17, updo="ponytail", length_m=0.4)
+        times = tuple(float(t) for t in np.linspace(0.0, 30.0, 7))
+        built = hairstyle.build(head(), drawn, stream(0, "b"), times)
+        keys = next(s for s in built.sets if s.name == "scalp")
+        lengths = np.linalg.norm(np.diff(keys.curves, axis=2), axis=-1).sum(axis=2).mean(axis=1)
+        wanted = np.array([hairstyle.at(drawn, t).length_m for t in times])
+        self.assertGreater(float(np.corrcoef(lengths, wanted)[0, 1]), 0.95)
+        hidden = (keys.widths.max(axis=2) < 1e-9).mean(axis=1)
+        density = np.array([hairstyle.at(drawn, t).density_per_cm2 for t in times])
+        self.assertGreater(hidden.max(), 0.05)
+        self.assertLess(float(np.corrcoef(hidden, density)[0, 1]), -0.9)
+
+    def test_author_time_samples_every_key(self) -> None:
+        built = hairstyle.build(head(), drifting(52), stream(0, "b"), (0.0, 3.0))
+        stage = Usd.Stage.CreateInMemory()
+        prims = hairstyle.author(stage, "/hair", built, (1.0, 73.0))
+        for curves in prims.values():
+            self.assertEqual(curves.GetPointsAttr().GetTimeSamples(), [1.0, 73.0])
+            self.assertEqual(curves.GetWidthsAttr().GetTimeSamples(), [1.0, 73.0])
+
+
+def scalp_keys(built: hairstyle.Hairstyle) -> FloatArray:
+    return next(s for s in built.sets if s.name == "scalp").curves
 
 
 def corners(q: FloatArray) -> IntArray:
