@@ -8,8 +8,11 @@ import sys
 from pathlib import Path
 from typing import cast
 
+import numpy as np
 import OpenEXR
 from jsonschema import Draft202012Validator
+
+from strata_contract import samples
 
 SCHEMA = cast("dict[str, object]", json.loads((Path(__file__).parent / "schema.json").read_text()))
 BEAUTY = {
@@ -21,6 +24,7 @@ BEAUTY = {
     "Z": {"Z.Z"},
     "instance_id": {"instance_id.instance_id"},
     "denoised": {"denoised.R", "denoised.G", "denoised.B", "denoised.A"},
+    "foreground": {"foreground.foreground"},
     "coverage": {"coverage.coverage"},
 }
 DEEP = {"R", "G", "B", "A", "Z", "ZBack", "instance_id", "coverage"}
@@ -54,9 +58,12 @@ def _beauty_errors(path: Path, size: tuple[int, int]) -> list[str]:
 
 
 def _layer_errors(path: Path, size: tuple[int, int]) -> list[str]:
-    part = OpenEXR.File(str(path), header_only=True).parts[0]
-    missing = LAYERS - _channels(part.header)
+    part = OpenEXR.File(str(path), separate_channels=True).parts[0]
+    missing = LAYERS - set(part.channels)
     errors = [f"{path.name}: layer targets lack {sorted(missing)}"] if missing else []
+    narrow = sorted(n for n in LAYERS - missing if part.channels[n].pixels.dtype != np.float32)
+    if narrow:
+        errors.append(f"{path.name}: layer channels must be float32: {narrow}")
     return errors if _size(part.header) == size else [*errors, f"{path.name}: layer resolution differs"]
 
 
@@ -82,6 +89,8 @@ def validate(shot: Path) -> list[str]:
     errors = _schema_errors(manifest, "manifest") + _schema_errors(camera, "camera")
     if errors:
         return errors
+    render = cast("dict[str, object]", manifest["render"])
+    first, stride = cast("list[int]", render["frames"])[0], cast("int", render["deep_stride"])
     deep_frames = 0
     for record in cast("list[dict[str, int]]", camera["frames"]):
         name = f"{record['frame']:04d}.exr"
@@ -92,6 +101,11 @@ def validate(shot: Path) -> list[str]:
         if (shot / "deep" / name).is_file():
             deep_frames += 1
             errors += _deep_errors(shot / "deep" / name, size)
+        if (record["frame"] - first) % stride == 0:
+            directory = shot / "samples" / samples.frame_id(str(manifest["shot_id"]), record["frame"])
+            errors += samples.errors(directory, (record["height"], record["width"]))
+            if not (shot / "deep" / name).is_file():
+                errors.append(f"recomposition frame {name} lacks raw deep")
     return errors if deep_frames else [*errors, "no raw deep frame"]
 
 

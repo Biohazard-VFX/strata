@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://strata.dev/contract/dataset/0.1.0/schema.json",
+  "$id": "https://strata.dev/contract/dataset/0.2.0/schema.json",
   "title": "Strata dataset shot records",
   "$defs": {
-    "contract": {"const": "strata-dataset-0.1.0"},
+    "contract": {"const": "strata-dataset-0.2.0"},
     "matrix4": {
       "type": "array", "minItems": 4, "maxItems": 4,
       "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
@@ -80,13 +80,15 @@
         "assets": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/asset"}},
         "render": {
           "type": "object",
-          "required": ["renderer", "width", "height", "path_traced_samples", "frames", "aovs", "deep_aovs"],
+          "required": ["renderer", "width", "height", "path_traced_samples", "frames", "aovs", "deep_aovs",
+                       "deep_stride"],
           "properties": {
             "width": {"type": "integer"},
             "height": {"type": "integer"},
             "frames": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer"}},
             "aovs": {"type": "array", "items": {"type": "string"}},
-            "deep_aovs": {"type": "array", "items": {"type": "string"}}
+            "deep_aovs": {"type": "array", "items": {"type": "string"}},
+            "deep_stride": {"type": "integer", "minimum": 1}
           }
         },
         "timings": {"type": "object"}
