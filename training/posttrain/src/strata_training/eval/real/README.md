@@ -48,5 +48,47 @@ first-acquisition integrity fingerprints, not proof of an author-provided checks
 Public Google Drive listings paginate and enforce the official exact split count;
 no 50-file partial-folder success. Existing data is reused only at the expected size.
 Use a single fetch process per root. The manifests make blocked/manual requests explicit.
+
+P3M-500-P uses the `nobg/P3M-10K` HF evaluation-only parquet mirror because the author
+link bundles training data. Its upstream HF digest is verified; equivalence to the
+original author archive is not independently established. Only the P split is fetched,
+never the NP or train shards. Install the reader-only extra without changing this
+project's lock: `uv run --frozen --with pyarrow python -m strata_training.eval.real ...`.
+LayeredDepth's nine official validation shards expose RGB/relative tuples through
+`layered_samples`; there is deliberately no invented alpha. Its ordering metrics are
+not part of this alpha runner.
+
+## Scoring and baseline diagnostics
+
+```sh
+uv run --frozen python -m strata_training.eval.real score DATASET_DIR REPORT.json
+uv run --frozen python -m strata_training.eval.real score VIDEO_DIR REPORT.json --frames-per-sequence 2
+uv run --frozen python -m strata_training.eval.real infer-cpu DATASET_DIR PRED_DIR HEAD.pt CURVES.json --limit 3 --max-side 384 --threads 8
+uv run --frozen python -m strata_training.eval.real score DATASET_DIR REPORT.json --predictions PRED_DIR/h-head --name h-head --limit 3
+```
+
+Default scoring is opaque-front fake deep. Cached predictions are NPZ with `alpha`
+(HxW matte or KxHxW conditional layers), at filenames returned by `cache_path`.
+Identifiers are hashed, preventing path traversal and basename collisions. Missing
+predictions fail; there is no silent baseline substitution. `--limit` and
+`--frames-per-sequence` are explicit report fields. Video limits retain the first N
+frames of each sequence, not a random frame subset; never call that the full split.
+
+`infer-cpu` loads H+ via the existing public checkpoint loader and DP2 public model,
+uses frozen synthetic training curves, and writes both H+ and analytic-r16+curve
+predictions. It is a deliberately bounded CPU diagnostic: max-side RGB resize, r=16
+in the resized inverse-depth grid, fixed unit-focal scale=1 (real intrinsics absent),
+sRGB-to-linear conversion only for head RGB, bilinear prediction return to native GT.
+It is NOT the full-native analytic baseline nor a metric-calibrated H+ run. The Apple
+encoder/checkpoint remain under Apple's research licence. Restrict CUDA visibility
+for CPU reference scripts: PyTorch DataParallel otherwise auto-selects GPUs.
+
+Natural input RGB is decoded as stored (no EXIF reorientation or label interpolation).
+Published RVM HD alpha is JPEG: strict mixed masks can be dominated by weak compressed
+background values. Always inspect the 1/255 sensitivity score; do not mistake JPEG
+noise for physically measured coverage. Published F/B/composite bytes are retained,
+not recomposited into an invented clean natural scene. Natural/measurement/keyed
+tracks and transparent-object strata must not be pooled as physical coverage truth.
+
 No login, signed agreement, non-commercial permission or mixed train/test archive is
 bypassed. Dataset MIT terms do not clear third-party image/personality rights.

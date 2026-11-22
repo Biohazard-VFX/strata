@@ -15,7 +15,7 @@ def main() -> None:
     score.add_argument("root", type=Path)
     score.add_argument("output", type=Path)
     score.add_argument("--predictions", type=Path)
-    score.add_argument("--name", default="fake-deep")
+    score.add_argument("--name")
     score.add_argument("--limit", type=int)
     score.add_argument("--frames-per-sequence", type=int)
     infer_command = commands.add_parser("infer-cpu")
@@ -48,8 +48,9 @@ def main() -> None:
         from strata_training.eval.real.runner import cached, evaluate, fake
 
         predictor = cached(args.predictions) if args.predictions else fake
+        name = args.name or ("cached-alpha" if args.predictions else "fake-deep")
         result = evaluate(
-            args.root, args.output, predictor, args.name, args.limit, args.frames_per_sequence
+            args.root, args.output, predictor, name, args.limit, args.frames_per_sequence
         )
         print(result["macro_mean"])
 
