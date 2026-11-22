@@ -5,7 +5,8 @@ by its `manifest.instance_ids` range name (`membership`): `foreground` is every 
 `hero` the hero's skin, groom and hairstyle, `fur` its groom and hairstyle strands. Each renders as a
 deep channel premultiplied by the sample's float alpha, like `coverage`. Karma merges samples by
 summing their channels, so a merged sample holds exactly the coverage of each role among its
-sources; a role's pixel coverage sums its channel times the transmittance in front.
+sources; a role's pixel coverage sums its channel times the transmittance in front. The beauty
+renders the same primvars as flat float AOVs (`AOVS`), an independent image of each role's coverage.
 """
 
 from typing import cast
@@ -20,6 +21,7 @@ FUR = ("hero_groom", "hero_hair")
 HERO = ("hero_skin", *FUR)
 ROLES = ("foreground", "hero", "fur")
 CHANNELS = tuple(f"roles.{role}" for role in ROLES)
+AOVS = tuple(f"{role}.{role}" for role in ROLES)
 
 
 def membership(name: str) -> tuple[float, float, float]:

@@ -25,9 +25,10 @@ from strata_datagen.render import pack
 from strata_dataset import identity, records, roles, segmented
 from strata_dataset import samples as contract_samples
 
-VALIDATION = "raw-qa-4"
+VALIDATION = "raw-qa-5"
 LUMA = (0.2126, 0.7152, 0.0722)
 ROLE_EXCESS = 2.0**-15
+ROLE_BEAUTY = 2.0**-15
 LIMITS = {
     "median_luma": (0.02, 1.5),
     "clipped_fraction": (0.0, 0.02),
@@ -43,6 +44,8 @@ LIMITS = {
     "identity_channels": (1.0, 1.0),
     "role_channels": (1.0, 1.0),
     "role_excess": (0.0, ROLE_EXCESS),
+    "beauty_roles": (1.0, 1.0),
+    "role_beauty_error": (0.0, ROLE_BEAUTY),
     "coverage_alpha_error": (0.0, 2.0**-11),
     "sky_in_front": (0.0, 1e-5),
     "camera_error": (0.0, 1e-3),
@@ -72,6 +75,8 @@ DEEP_KEYS = (
     "identity_channels",
     "role_channels",
     "role_excess",
+    "beauty_roles",
+    "role_beauty_error",
     "coverage_alpha_error",
     "sky_in_front",
 )
@@ -135,6 +140,23 @@ def _role_metrics(deep: Deep, frame: pack.Samples) -> dict[str, float]:
     }
 
 
+def role_beauty_metrics(frame: pack.Samples, beauty: dict[str, NDArray[np.float32]]) -> dict[str, float]:
+    """The deep role coverage pack writes, against the beauty role AOVs rendered from the same primvars.
+
+    `role_beauty_error` is the largest per-pixel difference over all roles; a missing or non-finite
+    beauty role AOV sets `beauty_roles` to 0 and measures nothing.
+    """
+    rendered = [beauty.get(name) for name in roles.AOVS]
+    if any(image is None or not np.isfinite(image).all() for image in rendered):
+        return {"beauty_roles": 0.0}
+    composited = roles.coverage(frame.alpha, frame.roles, np.diff(frame.offsets), frame.shape)
+    errors = [
+        np.abs(composited[channel].astype(np.float64) - cast("NDArray[np.float32]", image)).max(initial=0.0)
+        for channel, image in zip(roles.CHANNELS, rendered, strict=True)
+    ]
+    return {"beauty_roles": 1.0, "role_beauty_error": float(max(errors))}
+
+
 def deep_metrics(
     deep: Deep, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
 ) -> dict[str, float]:
@@ -146,6 +168,7 @@ def deep_metrics(
     if present and labelled:
         frame = pack.samples(deep)
         metrics |= _identity_metrics(frame, ranges) | _role_metrics(deep, frame)
+        metrics |= role_beauty_metrics(frame, beauty)
         difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
         metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
     residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)

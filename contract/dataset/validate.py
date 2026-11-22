@@ -26,7 +26,7 @@ BEAUTY = {
     "instance_check": {"instance_check.instance_check"},
     "instance_check2": {"instance_check2.instance_check2"},
     "denoised": {"denoised.R", "denoised.G", "denoised.B", "denoised.A"},
-    **{role: {f"{role}.{role}"} for role in roles.ROLES},
+    **{role: {aov} for role, aov in zip(roles.ROLES, roles.AOVS, strict=True)},
     "coverage": {"coverage.coverage"},
 }
 DEEP = {

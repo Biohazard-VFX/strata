@@ -8,6 +8,7 @@ from typing import cast
 from unittest import mock
 
 import numpy as np
+import OpenEXR
 from jsonschema import Draft202012Validator
 
 import validate
@@ -42,6 +43,42 @@ class RawEvidenceTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 checks.prune(shot, range(1, 3))
             self.assertTrue((shot / "deep" / "0002.exr").exists())
+
+    def test_deep_roles_contradicting_the_beauty_role_aovs_are_rejected_and_keep_raw_deep(self) -> None:
+        unhero = [[Sample(0.5, 1.0, 2, roles=(1.0, 0.0, 0.0)), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
+        furred = [[Sample(0.5, 1.0, 2), SKY], [Sample(0.2, 0.5, 1, roles=(1.0, 1.0, 1.0)), SKY], SKY]
+        for corrupt in (unhero, furred):
+            for frame in (1, 2):
+                with self.subTest(corrupt=corrupt, frame=frame), tempfile.TemporaryDirectory() as tmp:
+                    shot = Path(tmp) / "s"
+                    write_shot(shot, [CLEAN, CLEAN], stride=24)
+                    write_deep(shot / "deep" / f"{frame:04d}.exr", corrupt)
+                    raw = shot / "deep" / f"{frame:04d}.exr"
+                    self.assertFalse(cli.finish_task(shot, range(1, 3)))
+                    self.assertTrue(raw.exists())
+                    self.assertFalse(json.loads((shot / "qa" / f"{frame:04d}.json").read_text())["passed"])
+                    if frame == 2:
+                        with self.assertRaises(ValueError):
+                            checks.prune(shot, range(frame, frame + 1))
+                    else:
+                        self.assertEqual(checks.prune(shot, range(frame, frame + 1)), [])
+                    self.assertTrue(raw.exists())
+                    failures = shot_failures(shot)
+                    self.assertTrue(any(f.startswith(f"frame {frame}: role_beauty_error") for f in failures))
+                    self.assertFalse(any(f.startswith(f"frame {3 - frame}:") for f in failures), failures)
+
+    def test_beauty_role_aovs_must_be_present_and_finite_and_agree_within_roundoff(self) -> None:
+        for name in roles.AOVS:
+            for change in ("drop", "nan", "roundoff", "off"):
+                with self.subTest(name=name, change=change), tempfile.TemporaryDirectory() as tmp:
+                    shot = Path(tmp) / "s"
+                    write_shot(shot, [CLEAN, CLEAN], stride=24)
+                    _change_beauty_role(shot / "beauty" / "0002.exr", name, change)
+                    passed = cli.finish_task(shot, range(1, 3))
+                    self.assertEqual(passed, change == "roundoff")
+                    self.assertEqual((shot / "deep" / "0002.exr").exists(), change != "roundoff")
+                    frames = cast("list[dict[str, float]]", checks.check_shot(shot)["frames"])
+                    self.assertEqual(frames[1]["beauty_roles"], float(change not in ("drop", "nan")))
 
     def test_pruned_frames_need_their_acceptance_and_unchanged_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -185,6 +222,19 @@ class MergedSampleTest(unittest.TestCase):
                 self.assertIn(found, sources)
                 self.assertLessEqual(1.0 - sources[found], 2.0 * identity.TOLERANCE)
                 self.assertTrue(passed)
+
+
+def _change_beauty_role(path: Path, name: str, change: str) -> None:
+    """Drop one beauty role AOV, make a pixel of it NaN, or move it by 2^-17 or 2^-13."""
+    part = OpenEXR.File(str(path), separate_channels=True).parts[0]
+    header = dict(part.header)
+    channels = {key: np.array(channel.pixels, np.float32) for key, channel in part.channels.items()}
+    if change == "drop":
+        del channels[name]
+    else:
+        step = {"nan": np.nan, "roundoff": 2.0**-17, "off": 2.0**-13}[change]
+        channels[name][0, 1] += np.float32(step)
+    OpenEXR.File(header, {k: OpenEXR.Channel(v) for k, v in channels.items()}).write(str(path))
 
 
 def _drop_hero_ids(shot: Path) -> None:

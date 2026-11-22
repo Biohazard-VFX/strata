@@ -77,6 +77,7 @@
 - The sky is a camera-only 3000 m backdrop sphere (id 0, HDRI mapped like the dome), so every pixel has a deep sample and the deep flattens to the beauty everywhere.
 - Camera distance and height scale with the hero's horizontal size (2.5-11 m for a 1.6 m subject), so any creature fills a similar share of the frame.
 - Background is part of the deep: one opaque, finite-Z sample per pixel with reserved id 0 (manifest.background); depth losses ignore it, colour and coverage use it.
+- Raw QA needs present, finite beauty role AOVs and the deep role coverage pack writes within 2^-15 of them per pixel (render roundoff < 1e-6), before accept or prune.
 - Off-stride raw deep is deleted by `prune` only when the frame's raw QA passed and every validated input (all but manifest timings) is unchanged.
 - Layer and sample alpha come from the float `coverage`, not half A, so near-opaque samples keep the visible layers behind them.
 - The flat geometry mask is the `foreground` role AOV (1 on geometry, 0 on the sky); deep `coverage` stays 1 on the sky for id decoding and float alpha.

@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 
 from strata_datagen.exr import Deep, read_deep
 from strata_datagen.qa.deep import flatten
+from strata_datagen.render import pack
 from strata_datagen.scene.export import CONTRACT_VERSION
 from strata_dataset import identity, roles
 
@@ -120,10 +121,16 @@ def projection(width: int, height: int, fx: float, fy: float) -> NDArray[np.floa
 
 
 def write_beauty(path: Path, deep: Deep, fy_scale: float = 1.0) -> None:
-    """Beauty `C` equal to the flattened deep, a denoised copy and husk's camera header."""
+    """Beauty `C` equal to the flattened deep, a denoised copy, role AOVs and husk's camera header.
+
+    The role AOVs are the deep's role coverage, as Karma renders them from the same primvars.
+    """
     rgba = flatten(deep).rgba.astype(np.float32)
     channels = {c: rgba[..., i] for i, c in enumerate("RGBA")}
     channels |= {f"denoised.{c}": rgba[..., i] * np.float32(0.9) for i, c in enumerate("RGB")}
+    frame = pack.samples(deep)
+    covered = roles.coverage(frame.alpha, frame.roles, np.diff(frame.offsets), frame.shape)
+    channels |= {aov: covered[c] for aov, c in zip(roles.AOVS, roles.CHANNELS, strict=True)}
     width, height = deep.width, deep.height
     fx = FOCAL_MM / SENSOR_MM * width
     world_to_camera = FLIP_Z.T
