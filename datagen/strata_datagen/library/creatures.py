@@ -6,7 +6,8 @@ glTF animal (source "gltf", run by blender/gltf_creature.py in Blender). Both wr
 (skin.npz, albedo.png, creature.json); this module turns it into poses/<pose>.usdc, textures/albedo.png
 and hero.json with a coat sampled from coat classes.
 
-Recipe fields: key, source, job (passed to the Blender script), poses {name: {start, frames}},
+Recipe fields: key, source, job (passed to the Blender script), poses {name: {start, frames, loop,
+shortest}} (a loop pose keeps one detected cycle, closed so its last frame equals its first),
 length_m (body length along its heading), coat (coat class names), forward (heading in Blender
 axes when the body has no head region), provenance {source, license, redistributable}.
 """
@@ -102,6 +103,21 @@ def in_place(clip: FloatArray) -> FloatArray:
     drift = clip.mean(axis=1) - clip[0].mean(axis=0)
     drift[:, 1] = 0.0
     return clip - drift[:, None]
+
+
+def loop_period(clip: FloatArray, shortest: int) -> int:
+    """Frames per cycle: the offset (at least `shortest`) whose next three poses match the first three."""
+    offsets = range(shortest, len(clip) - 2)
+    error = [float(np.abs(clip[k : k + 3] - clip[:3]).mean()) for k in offsets]
+    return shortest + int(np.argmin(error))
+
+
+def close_loop(clip: FloatArray, period: int) -> FloatArray:
+    """One cycle of `period` + 1 frames, its end-to-start residual spread linearly: last equals first."""
+    cycle = clip[: period + 1].copy()
+    residual = cycle[0] - cycle[period]
+    weight = np.linspace(0.0, 1.0, period + 1)[:, None, None]
+    return cycle + weight * residual
 
 
 def write_pose(path: Path, raw: Raw, clip: FloatArray) -> None:
@@ -332,7 +348,14 @@ def sample_coat(classes: list[str], field: coat.Field, rest: FloatArray, front: 
         for layer in fur
     )
     budget = min(1.0, MAX_HAIRS / wanted) if wanted else 1.0
+    morph = {
+        "length": [_u(rng, 0.55, 0.8), 1.0],
+        "density": [_u(rng, 0.5, 0.8), 1.0],
+        "min_period_s": 8.0,
+        "key_step": 24,
+    }
     return {
+        "morph": morph,
         "front_vertex": front,
         "segments": SEGMENTS,
         "animated_density": 0.4,
@@ -354,8 +377,7 @@ class Tools:
 
 
 def _export(recipe: Json, tools: Tools, raw_dir: Path) -> None:
-    if (raw_dir / "skin.npz").exists():
-        return
+    """Run the Blender export unless raw_dir already holds one for the same frames."""
     frames = sorted(
         {
             start + i
@@ -364,6 +386,9 @@ def _export(recipe: Json, tools: Tools, raw_dir: Path) -> None:
             for i in range(int(cast("int", p.get("frames", 1))))
         }
     )
+    done = raw_dir / "creature.json"
+    if (raw_dir / "skin.npz").exists() and json.loads(done.read_text())["frames"] == frames:
+        return
     job = {**cast("Json", recipe["job"]), "frames": frames, "output": str(raw_dir)}
     if recipe["source"] == "infinigen":
         run_blender(tools.infinigen, "infinigen_creature.py", job, raw_dir.parent)
@@ -387,6 +412,8 @@ def build_hero(recipe: Json, raw_dir: Path, folder: Path) -> Json:
         start, count = int(cast("int", pose["start"])), int(cast("int", pose.get("frames", 1)))
         clip = oriented[[index[start + i] for i in range(count)]]
         clip = in_place(clip) if count > 1 else clip
+        if pose.get("loop"):
+            clip = close_loop(clip, loop_period(clip, int(cast("int", pose.get("shortest", 8)))))
         write_pose(folder / "poses" / f"{name}.usdc", raw, clip)
         poses[name] = f"poses/{name}.usdc"
         first = clip[0] if first is None else first

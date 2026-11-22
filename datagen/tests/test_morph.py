@@ -1,0 +1,76 @@
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import numpy as np
+from pxr import Usd, UsdGeom
+
+from strata_datagen.generators import morph
+from strata_datagen.library import creatures
+from strata_datagen.rng import stream
+from strata_datagen.usdutil import floats, ints, new_stage, vec3f
+
+
+class SignalTest(unittest.TestCase):
+    def test_smooth_stays_in_range_and_changes_slowly(self) -> None:
+        times = np.arange(0, 30 * 24) / 24.0
+        signal = morph.smooth(stream(1, "s"), times, morph.Range(0.4, 1.0), 8.0)
+        self.assertGreaterEqual(float(signal.min()), 0.4)
+        self.assertLessEqual(float(signal.max()), 1.0)
+        self.assertGreater(float(np.ptp(signal)), 0.1)
+        self.assertLess(float(np.abs(np.diff(signal)).max()), 0.6 * 2 * np.pi / (8.0 * 24.0))
+
+    def test_widths_taper_length_and_gate_density_without_dropping_strands(self) -> None:
+        base = np.full((1000, 9), 1e-4)
+        rank = np.linspace(0.0, 1.0, 1000, endpoint=False)
+        shown = morph.strand_widths(base, rank, 0.5, 0.3, softness=1e-6)
+        self.assertEqual(shown.shape, base.shape)
+        visible = shown.max(axis=1) > 0
+        self.assertAlmostEqual(float(visible.mean()), 0.3, delta=0.01)
+        self.assertTrue((shown[visible][:, :4] > 0).all())
+        self.assertTrue((shown[:, 5:] == 0).all())
+
+
+class LoopTest(unittest.TestCase):
+    def test_close_loop_finds_the_period_and_matches_ends(self) -> None:
+        t = np.arange(40)[:, None, None]
+        clip = np.sin(2 * np.pi * t / 13.0) * np.ones((1, 5, 3)) + 0.002 * t
+        period = creatures.loop_period(clip, 8)
+        self.assertEqual(period, 13)
+        closed = creatures.close_loop(clip, period)
+        self.assertEqual(len(closed), 14)
+        np.testing.assert_allclose(closed[-1], closed[0])
+
+    def test_value_clip_loop_replays_the_cycle_over_a_long_shot(self) -> None:
+        with TemporaryDirectory() as tmp:
+            clip_path = Path(tmp) / "cycle.usdc"
+            clip = new_stage(clip_path)
+            clip.SetDefaultPrim(UsdGeom.Xform.Define(clip, "/hero").GetPrim())
+            curves = UsdGeom.BasisCurves.Define(clip, "/hero/groom")
+            curves.CreateCurveVertexCountsAttr(ints(np.array([2])))
+            points = curves.CreatePointsAttr(vec3f(np.zeros((2, 3))))
+            curves.CreateWidthsAttr(floats(np.full(2, 1e-3)))
+            for frame in range(5):
+                points.Set(vec3f(np.full((2, 3), float(frame % 4))), float(frame))
+            clip.GetRootLayer().Save()
+            shot = Usd.Stage.CreateInMemory()
+            hero = shot.DefinePrim("/World/hero")
+            hero.GetReferences().AddReference(str(clip_path))
+            morph.author_loop(hero, str(clip_path), "/hero", period=4, first=0, last=30)
+            attribute = UsdGeom.BasisCurves(shot.GetPrimAtPath("/World/hero/groom")).GetPointsAttr()
+            values = [float(np.asarray(attribute.Get(float(f)))[0, 0]) for f in range(30)]
+            self.assertEqual(values, [float(f % 4) for f in range(30)])
+            morph.author_coat(
+                shot,
+                "/World/hero/groom",
+                np.full((1, 2), 1e-3),
+                morph=morph.CoatMorph(morph.Range(0.5, 1.0), morph.Range(0.5, 1.0), 8.0, 12),
+                frames=(0, 30),
+                rng=stream(2, "m"),
+            )
+            widths = UsdGeom.BasisCurves(shot.GetPrimAtPath("/World/hero/groom")).GetWidthsAttr()
+            self.assertEqual(widths.GetTimeSamples(), [0.0, 12.0, 24.0, 30.0])
+
+
+if __name__ == "__main__":
+    unittest.main()

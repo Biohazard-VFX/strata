@@ -5,7 +5,9 @@ A creature hero's hero.json may carry a "coat" block next to the plain hero fiel
   segments: points per curve minus one, shared by every layer so all curves merge into one prim;
   animated_density: hair and feather count factor for poses with per-frame skin points;
   fur: [{name, regions, zone, lift, droop, guides, groom: GroomParams fields}];
-  feathers: [{name, regions, zone, params: FeatherParams fields except samples}].
+  feathers: [{name, regions, zone, params: FeatherParams fields except samples}];
+  morph (optional): {length: [lo, hi], density: [lo, hi], min_period_s, key_step}, copied onto the
+  prepared groom prim's customData so shots can vary the coat over time (generators/morph.py).
 zone = {geodesic: [lo, hi] as fractions of the longest comb distance, min_up: lowest normal y}.
 Pose skins carry a uniform int primvar `region` whose names are the mesh's customData `regions`.
 """
@@ -61,6 +63,7 @@ class Coat:
     animated_density: float
     fur: tuple[FurLayer, ...]
     feathers: tuple[FeatherLayer, ...]
+    morph: Json | None
 
 
 def _zone(raw: Json) -> Zone:
@@ -126,6 +129,7 @@ def load(directory: Path) -> Coat | None:
         float(cast("float", coat["animated_density"])),
         tuple(_fur(f, segments) for f in cast("list[Json]", coat.get("fur", []))),
         tuple(_feather(f, segments) for f in cast("list[Json]", coat.get("feathers", []))),
+        cast("Json | None", coat.get("morph")),
     )
 
 
@@ -374,6 +378,8 @@ def prepare_pose(manifest: heroes.HeroManifest, pose: str, output: Path) -> hero
     if hair is not None:
         posed = [(time, deform(hair, skin.triangles, skin.points, frame)) for time, frame in samples]
         _author_groom(stage, hair, posed)
+        if coat.morph is not None:
+            stage.GetPrimAtPath("/hero/groom").SetCustomDataByKey("morph", coat.morph)
     stage.GetRootLayer().Save()
     every = [skin.points, *(p for _, p in samples)]
     low = np.min([p.min(axis=0) for p in every], axis=0)
