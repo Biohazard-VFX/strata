@@ -12,6 +12,7 @@ length_m (body length along its heading), coat (coat class names), forward (head
 axes when the body has no head region), provenance {source, license, redistributable}.
 """
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -385,8 +386,32 @@ class Tools:
     blender: list[str]
 
 
-def _export(recipe: Json, tools: Tools, raw_dir: Path) -> None:
-    """Run the Blender export unless raw_dir already holds one for the same frames."""
+EXPORT_SCRIPTS = {"infinigen": "infinigen_creature.py", "gltf": "gltf_creature.py"}
+EXPORT_RECORD = "export.json"
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def export_fingerprint(recipe: Json, tools: Tools, frames: list[int]) -> str:
+    """Everything a raw export depends on: recipe job, frames, export scripts, source files, tools."""
+    job = cast("Json", recipe["job"])
+    script = EXPORT_SCRIPTS["infinigen" if recipe["source"] == "infinigen" else "gltf"]
+    inputs = {key: _digest(Path(str(job[key]))) for key in ("model", "animation") if job.get(key) is not None}
+    record = {
+        "source": recipe["source"],
+        "job": job,
+        "frames": frames,
+        "scripts": {name: _digest(BLENDER_DIR / name) for name in (script, "creature_export.py")},
+        "inputs": inputs,
+        "tool": tools.infinigen if recipe["source"] == "infinigen" else tools.blender,
+    }
+    return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
+
+
+def export_raw(recipe: Json, tools: Tools, raw_dir: Path) -> None:
+    """Run the Blender export unless raw_dir holds one made from exactly this recipe and these tools."""
     frames = sorted(
         {
             start + i
@@ -395,16 +420,26 @@ def _export(recipe: Json, tools: Tools, raw_dir: Path) -> None:
             for i in range(int(cast("int", p.get("frames", 1))))
         }
     )
-    done = raw_dir / "creature.json"
-    if (raw_dir / "skin.npz").exists() and json.loads(done.read_text())["frames"] == frames:
+    fingerprint = export_fingerprint(recipe, tools, frames)
+    record = raw_dir / EXPORT_RECORD
+    if (
+        (raw_dir / "skin.npz").exists()
+        and record.exists()
+        and json.loads(record.read_text())["fingerprint"] == fingerprint
+    ):
         return
+    record.unlink(missing_ok=True)
     job = {**cast("Json", recipe["job"]), "frames": frames, "output": str(raw_dir)}
     if recipe["source"] == "infinigen":
-        run_blender(tools.infinigen, "infinigen_creature.py", job, raw_dir.parent)
+        run_blender(tools.infinigen, EXPORT_SCRIPTS["infinigen"], job, raw_dir.parent)
     else:
         run_blender(
-            [*tools.blender, "-b", "--factory-startup", "--python"], "gltf_creature.py", job, raw_dir.parent
+            [*tools.blender, "-b", "--factory-startup", "--python"],
+            EXPORT_SCRIPTS["gltf"],
+            job,
+            raw_dir.parent,
         )
+    files.write_text(record, json.dumps({"fingerprint": fingerprint}) + "\n")
 
 
 def build_hero(recipe: Json, raw_dir: Path, folder: Path) -> Json:
@@ -461,6 +496,6 @@ def prepare(recipes: list[Json], tools: Tools, library: Path) -> list[Json]:
         folder = library / str(recipe["key"])
         raw_dir = folder / "_raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
-        _export(recipe, tools, raw_dir)
+        export_raw(recipe, tools, raw_dir)
         out.append(build_hero(recipe, raw_dir, folder))
     return out

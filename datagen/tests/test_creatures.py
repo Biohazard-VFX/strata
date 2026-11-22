@@ -217,5 +217,29 @@ class CreatureTest(unittest.TestCase):
             self.assertGreater(float(lifted[:, 1].mean()), 0.0)
 
 
+class ExportCacheTest(unittest.TestCase):
+    def test_a_changed_recipe_reexports_even_with_the_same_frames(self) -> None:
+        tools = creatures.Tools(["python"], ["blender"])
+
+        def recipe(seed: int) -> dict[str, object]:
+            job = {"factory": "a.B", "factory_seed": seed, "resolution": 64}
+            return {"source": "infinigen", "poses": {"walk": {"start": 1, "frames": 2}}, "job": job}
+
+        with TemporaryDirectory() as tmp:
+            raw = Path(tmp) / "raw"
+            raw.mkdir()
+            (raw / "skin.npz").write_bytes(b"export")
+            (raw / "creature.json").write_text(json.dumps({"frames": [1, 2], "factory_seed": 11}))
+            with mock.patch.object(creatures, "run_blender") as run:
+                creatures.export_raw(recipe(11), tools, raw)
+                creatures.export_raw(recipe(11), tools, raw)
+                self.assertEqual(run.call_count, 1)
+                creatures.export_raw(recipe(999), tools, raw)
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args.args[2]["factory_seed"], 999)
+                creatures.export_raw(recipe(999), creatures.Tools(["other-python"], ["blender"]), raw)
+                self.assertEqual(run.call_count, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
