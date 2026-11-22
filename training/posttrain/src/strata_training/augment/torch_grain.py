@@ -1,5 +1,7 @@
 """Torch implementation of the Nuke-matched Alexa grain, including its noise field."""
 
+from typing import cast
+
 import torch
 import torch.nn.functional as F
 
@@ -39,12 +41,20 @@ def _gradient_noise(x: torch.Tensor, y: torch.Tensor, z: torch.Tensor) -> torch.
     return total
 
 
-_compiled_noise = api.compile(_gradient_noise, fullgraph=True, dynamic=True)
+def _noise_fields(points: torch.Tensor) -> torch.Tensor:
+    return _gradient_noise(points[0], points[1], points[2])
+
+
+_compiled_noise = api.compile(_noise_fields, fullgraph=True, dynamic=True)
 
 
 def gradient_noise(x: torch.Tensor, y: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
     if x.device.type == "cuda":
-        return _compiled_noise(x, y, z)
+        x, y, z = cast(
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor], api.broadcast_tensors(x, y, z)
+        )
+        points = torch.stack((x.reshape(-1), y.reshape(-1), z.reshape(-1)))
+        return _compiled_noise(points).reshape(x.shape)
     return _gradient_noise(x, y, z)
 
 

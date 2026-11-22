@@ -51,6 +51,27 @@ def test_torch_grain_matches_numpy(profile: str, math_device: str) -> None:
     np.testing.assert_allclose(actual, expected, atol=2e-6, rtol=2e-6)
 
 
+def test_noise_replays_across_layouts_and_grad_modes(math_device: str) -> None:
+    from strata_training.augment.noise import gradient_noise as reference_noise
+    from strata_training.augment.torch_grain import gradient_noise
+
+    rng = np.random.default_rng(431)
+    for dtype in (np.float32, np.float64):
+        for shape in ((31, 43), (1, 31, 43), (3, 31, 43)):
+            for enabled in (False, True):
+                for transpose in (False, True):
+                    arrays = [rng.uniform(-5, 5, shape).astype(dtype) for _ in range(3)]
+                    values = [torch.tensor(a, device=math_device) for a in arrays]
+                    if transpose:
+                        values = [value.transpose(-2, -1) for value in values]
+                        arrays = [np.swapaxes(a, -2, -1) for a in arrays]
+                    with torch.set_grad_enabled(enabled):
+                        actual = gradient_noise(*values).cpu().numpy()
+                    np.testing.assert_allclose(
+                        actual, reference_noise(*arrays), atol=2e-6, rtol=2e-6
+                    )
+
+
 @pytest.mark.parametrize("kind", occluders.KINDS)
 def test_torch_occluder_matches_numpy(kind: str, math_device: str) -> None:
     size = (31, 43)
