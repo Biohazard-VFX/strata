@@ -12,7 +12,7 @@ from source_scan import c_comments, python_comments
 
 marker = re.compile(r'\b(?:TODO|FIXME|XXX|HACK|workaround)\b', re.I)
 listed = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard',
-                                  'runtime', 'training', 'tools', 'contract'], text=True).split()
+                                  'runtime', 'training', 'tools', 'contract', 'datagen'], text=True).split()
 errors = []
 checked = 0
 for name in sorted(set(listed)):

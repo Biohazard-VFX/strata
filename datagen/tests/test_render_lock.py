@@ -28,7 +28,7 @@ deadline = time.monotonic() + {TIMEOUT_S}
 while not (barrier / "{GO}").exists() and time.monotonic() < deadline:
     time.sleep(0.05)
 """
-ENTRY_POINT = f"""#!/bin/sh
+ENTRY_POINT = f"""#!/usr/bin/env sh
 exec "{sys.executable}" -c "import sys; from strata_datagen.cli import main; main()" "$@"
 """
 
@@ -54,7 +54,7 @@ class RenderLockTest(unittest.TestCase):
         tools = Path(self.directory.name) / "bin"
         tools.mkdir()
         executable(tools / "husk", FAKE_HUSK)
-        executable(tools / "nvidia-smi", "#!/bin/sh\necho 100\n")
+        executable(tools / "nvidia-smi", "#!/usr/bin/env sh\necho 100\n")
         executable(tools / "strata-datagen", ENTRY_POINT)
         self.husk = str(tools / "husk")
         self.path = f"{tools}{os.pathsep}{os.environ['PATH']}"

@@ -69,8 +69,7 @@ class MocapTest(unittest.TestCase):
         np.testing.assert_allclose(motion.heads[0, 0], [0.0, 40 * inch, 0.0])
         np.testing.assert_allclose(motion.tails[0, 1], [0.0, 60 * inch, 0.0], atol=1e-9)
         np.testing.assert_allclose(motion.tails[0, 2], [10 * inch, 60 * inch, 0.0], atol=1e-9)
-        # Frame 2: root yaw +90 turns +X to -Z; the arm's rx turns about its axis frame's X, which the
-        # 90 degree axis roll points along world Y, so it adds another 90 degree yaw: +X ends at -X.
+        # Frame 2: root yaw +90 maps +X to -Z; the rolled arm rx adds 90 degrees more yaw: +X ends at -X.
         np.testing.assert_allclose(motion.tails[1, 2] - motion.heads[1, 2], [-10 * inch, 0.0, 0.0], atol=1e-9)
 
 
