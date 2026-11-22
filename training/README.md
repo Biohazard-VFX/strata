@@ -151,6 +151,18 @@ are written. `augmentation` passes explicit settings to `AugmentConfig.from_dict
 use top-level `clean_fraction`, not `augmentation.clean`. Logs include loader seconds
 and clean/live counts. CPU-heavy augmentation is not silently pre-baked.
 
+### Memory-mapped training caches
+
+The first `Frame` construction migrates each compressed target/base NPZ to a sibling
+`<name>.npz.mmap/` directory of individual NPY arrays, including exact row-major
+mixed-pixel coordinates. Migration holds only one frame/archive at a time and publishes
+the directory atomically; subsequent runs read only requested mmap windows. Allocate
+additional disk space for the uncompressed cache. Caches are immutable: changing an
+NPZ's size or modification time rejects its stale mapping directory; remove that
+sibling directory before rebuilding. Frame objects hold metadata, not image arrays;
+each worker retains at most two mapped archives, feature frames and raw-sample shots.
+Raw deep crop reads gather contiguous sample spans for the requested pixel rows.
+
 ### Native datagen layout and supervision boundary
 
 Target preparation prefers `layers/NNNN.exr` for every camera frame, including frames

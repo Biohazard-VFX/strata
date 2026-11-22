@@ -1,5 +1,6 @@
 import hashlib
 import json
+import pickle
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,23 @@ def _configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
     path = tmp_path / "config.json"
     write_json(path, config)
     return config, path
+
+
+def test_frame_pickle_and_crop_reads_are_bounded_and_exact(tmp_path: Path) -> None:
+    from strata_training.data.dataset import Frame, batch
+
+    config, _ = _configuration(tmp_path)
+    entry = json.loads(Path(config["index"]).read_text())[0]
+    frame = Frame(entry, Path(config["features"]))
+    assert len(pickle.dumps(frame)) < 2048
+    assert isinstance(frame.base, np.memmap)
+    assert isinstance(frame.arrays["alpha"], np.memmap)
+    with np.load(entry["cache"]) as archive:
+        _, targets, _ = batch([frame], [(0, 0, 0)], 32, 0, "cpu")
+        for key, value in targets.items():
+            np.testing.assert_array_equal(value.numpy()[0], archive[key])
+    restored = pickle.loads(pickle.dumps(frame))
+    assert restored.crop(np.random.default_rng(3), 32) == frame.crop(np.random.default_rng(3), 32)
 
 
 def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path) -> None:
@@ -176,7 +194,9 @@ def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode
     assert result["loss"] > 0
     assert model.training
     assert all(parameter.grad is None for parameter in model.parameters())
-    frame.arrays["mixed"][:] = False
+    empty_cache = tmp_path / "empty.npz"
+    save_arrays(empty_cache, **{**frame.arrays, "mixed": np.zeros((32, 32), dtype=bool)})
+    frame = Frame({**entries[0], "cache": str(empty_cache)}, Path(config["features"]))
     with pytest.raises(ValueError, match="requires mixed pixels"):
         evaluate_validation(model, config, [frame])
     assert model.training

@@ -1,5 +1,7 @@
 # Architecture decisions
 
+- Frame objects retain metadata only; bounded per-process LRU mappings serve immutable NPY targets, bases and features; compressed NPZ caches migrate atomically once.
+- Deep crops concatenate only contiguous row sample spans from mmap offsets, never a whole-frame sample-index array.
 - Deep targets use K=4 front-to-back slots at native resolution; labels are never resized or interpolated.
 - Sort samples by Z and retain the largest K-1 log-depth gaps above ln(1.15); ties choose the first gap.
 - Discard visible coverage <=1e-12 before clustering so fully occluded samples cannot consume slots.

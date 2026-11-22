@@ -3,6 +3,7 @@
 import hashlib
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -77,6 +78,15 @@ def _combine(
     return result
 
 
+@lru_cache(maxsize=2)
+def _shot(root: Path) -> Shot:
+    return Shot(
+        load_samples(root / "deep"),
+        np.load(root / "noisy.npy", mmap_mode="r"),
+        np.load(root / "denoised.npy", mmap_mode="r"),
+    )
+
+
 class OnlineLoader:
     """Own memory-map references; RNG and buffers belong to each sequential caller."""
 
@@ -94,7 +104,7 @@ class OnlineLoader:
         if "clean" in values:
             raise ValueError("Use clean_fraction, not augmentation.clean")
         self.augmentation = AugmentConfig.from_dict({**values, "clean": 0.0})
-        self.shots: list[Shot] = []
+        self.samples = samples
         self.roles: list[Roles] = []
         for frame in frames:
             root = samples / frame.entry["id"]
@@ -106,16 +116,19 @@ class OnlineLoader:
                 raise ValueError(
                     "Clean feature cache must match denoised sample; extract --samples"
                 )
-            shot = Shot(
-                load_samples(root / "deep"), np.load(root / "noisy.npy", mmap_mode="r"), denoised
-            )
+            if not (root / "deep/shape.npy").exists():
+                raise ValueError(
+                    f"Recomposition requires producer raw identities for {frame.entry['id']}"
+                )
+            shot = _shot(root)
             if shot.deep.shape != frame.base.shape or denoised.shape != (3, *shot.deep.shape):
                 raise ValueError(
                     "Raw samples, denoised image and targets must share native dimensions"
                 )
-            self.shots.append(shot)
             self.roles.append(roles(json.loads(Path(frame.entry["manifest"]).read_text())))
-            frame.arrays["beauty"] = denoised
+
+    def shot(self, index: int) -> Shot:
+        return _shot(self.samples / self.frames[index].entry["id"])
 
     def prepare(
         self,
@@ -142,16 +155,16 @@ class OnlineLoader:
             )
             if rng.random() < self.clean_fraction:
                 clean.append(position)
-                image = self.shots[i].denoised[:, *window]
+                image = self.shot(i).denoised[:, *window]
                 beauty = frame.arrays.get("target_beauty", frame.arrays["beauty"])[:, *window]
                 scale = frame.scale
             else:
                 live.append(position)
-                donor_i = int(rng.integers(len(self.shots)))
+                donor_i = int(rng.integers(len(self.frames)))
                 y, x = self.frames[donor_i].crop(rng, size)
-                donor = Donor(self.shots[donor_i].crop(y, x, size, size), self.roles[donor_i])
+                donor = Donor(self.shot(donor_i).crop(y, x, size, size), self.roles[donor_i])
                 sample = augment_sample(
-                    self.shots[i].crop(top, left, size, size),
+                    self.shot(i).crop(top, left, size, size),
                     self.roles[i],
                     layers,
                     donor,

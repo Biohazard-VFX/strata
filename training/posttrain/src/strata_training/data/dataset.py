@@ -1,12 +1,13 @@
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
 
+from strata_training.data import mapped
 from strata_training.types import Array
 
 
@@ -15,37 +16,63 @@ class Frame:
     entry: dict[str, Any]
     feature_root: Path
     scale_mode: str = "raw"
-    arrays: dict[str, Array] = field(init=False)
-    features: Array = field(init=False)
-    pyramid: list[Array] = field(init=False)
-    base: Array = field(init=False)
-    scale: float = field(init=False)
-    mixed_y: Array = field(init=False)
-    mixed_x: Array = field(init=False)
 
     def __post_init__(self) -> None:
         if self.scale_mode not in {"raw", "oracle-aligned"}:
             raise ValueError("scale_mode must be raw or explicitly oracle-aligned")
-        with np.load(self.entry["cache"]) as file:
-            self.arrays = {k: file[k] for k in file.files}
-        root = self.feature_root / self.entry["id"]
-        context_path = root / "context.json"
+        mapped.unpack(Path(self.entry["cache"]))
+        mapped.unpack(self.root / "base.npz")
+        context_path = self.root / "context.json"
+        self.has_image = False
         if context_path.exists():
             context = json.loads(context_path.read_text())
             if "image_sha256" in context:
-                image = np.load(root / "image.npy", mmap_mode="r")
+                image = np.load(self.root / "image.npy", mmap_mode="r")
                 digest = hashlib.sha256(np.asarray(image, dtype=np.float32).tobytes()).hexdigest()
                 if digest != context["image_sha256"]:
                     raise ValueError("Feature cache image identity mismatch")
-                self.arrays.setdefault("target_beauty", self.arrays["beauty"])
-                self.arrays["beauty"] = image
-        self.features = np.load(root / "features.npy", mmap_mode="r")
-        self.pyramid = [np.load(root / f"pyramid_{i}.npy", mmap_mode="r") for i in range(4)]
-        with np.load(root / "base.npz") as data:
-            prefix = "raw_" if self.scale_mode == "raw" else ""
-            self.base = data[f"{prefix}inverse_depth"]
-            self.scale = float(data[f"{prefix}metric_scale"])
-        self.mixed_y, self.mixed_x = np.nonzero(self.arrays["mixed"])
+                self.has_image = True
+
+    @property
+    def root(self) -> Path:
+        return self.feature_root / self.entry["id"]
+
+    @property
+    def arrays(self) -> dict[str, Array]:
+        values = mapped.arrays(Path(self.entry["cache"]))
+        if self.has_image:
+            return {
+                **values,
+                "target_beauty": values["beauty"],
+                "beauty": mapped.image_array(self.root),
+            }
+        return values
+
+    @property
+    def features(self) -> Array:
+        return mapped.feature_arrays(self.root)["features"]
+
+    @property
+    def pyramid(self) -> list[Array]:
+        return mapped.feature_arrays(self.root)["pyramid"]
+
+    @property
+    def base(self) -> Array:
+        prefix = "raw_" if self.scale_mode == "raw" else ""
+        return mapped.arrays(self.root / "base.npz")[f"{prefix}inverse_depth"]
+
+    @property
+    def scale(self) -> float:
+        prefix = "raw_" if self.scale_mode == "raw" else ""
+        return float(mapped.arrays(self.root / "base.npz")[f"{prefix}metric_scale"])
+
+    @property
+    def mixed_y(self) -> Array:
+        return self.arrays["mixed_y"]
+
+    @property
+    def mixed_x(self) -> Array:
+        return self.arrays["mixed_x"]
 
     def crop(self, rng: np.random.Generator, size: int) -> tuple[int, int]:
         height, width = self.base.shape

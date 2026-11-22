@@ -46,18 +46,21 @@ class DeepSamples:
         rows = np.arange(top, top + height)[:, None] * self.shape[1]
         first: Array = self.offsets[rows + left].ravel()
         last: Array = self.offsets[rows + left + width].ravel()
-        lengths: Array = last - first
-        starts: Array = np.repeat(first - np.cumsum(lengths) + lengths, lengths)
-        index: Array = starts + np.arange(int(lengths.sum()))
         within = self.offsets[rows + np.arange(left, left + width + 1)]
         counts = np.diff(within, axis=1).ravel()
+
+        def gather(values: Array) -> Array:
+            return np.concatenate(
+                [values[int(a) : int(b)] for a, b in zip(first, last, strict=True)]
+            )
+
         return DeepSamples(
             (height, width),
             np.concatenate(([0], np.cumsum(counts))),
-            np.asarray(self.z[index]),
-            np.asarray(self.alpha[index]),
-            np.asarray(self.rgb[index]),
-            np.asarray(self.ids[index]),
+            gather(self.z),
+            gather(self.alpha),
+            gather(self.rgb),
+            gather(self.ids),
         )
 
     def scaled(self, factor: float) -> "DeepSamples":
