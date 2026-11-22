@@ -6,7 +6,10 @@ import numpy as np
 from strata_datagen.fields import Ground
 from strata_datagen.generators import scatter, terrain
 from strata_datagen.generators.scatter import Layer, Prototype
+from strata_datagen.library.catalogue import Library, Model
 from strata_datagen.rng import stream
+from strata_datagen.scene import layers
+from tests.test_determinism import PROVENANCE, TEXTURES
 
 
 def _flat_ground(size_m: float = 40.0) -> Ground:
@@ -54,6 +57,31 @@ class ScatterScaleTest(unittest.TestCase):
         self.assertTrue(scatter.fits(3.4, (0.25, 2.5)))
         with self.assertRaises(ValueError):
             scatter.place(_flat_ground(), _layer(1.0, 18.0), [], stream(1, "s"))
+
+
+class LayerChoiceTest(unittest.TestCase):
+    def test_rocks_too_big_too_small_or_too_tall_are_never_chosen(self) -> None:
+        sizes = {"cliff": (18.0, 10.6, 4.9), "pebble": (0.1, 0.04, 0.05), "post": (0.4, 1.9, 0.4)}
+        sizes |= {"boulder": (1.8, 1.5, 2.2), "stone": (0.65, 0.5, 0.6)}
+        models = tuple(
+            Model(f"{k}_v1", k, k, "rock", f"m/{k}.usdc", size, 10, TEXTURES, PROVENANCE)
+            for k, size in sizes.items()
+        )
+        rule = next(r for r in layers.RULES if r.role == "rock")
+        chosen: set[str] = set()
+        for seed in range(30):
+            built = layers.layer(
+                rule,
+                Library(models, (), (), ()),
+                stream(seed, "l"),
+                1.0,
+                centre=(0.0, 0.0),
+                material=lambda m: f"/m/{m.asset_id}",
+                asset=lambda m: m.file,
+            )
+            assert built is not None
+            chosen |= {p.key for p in built.prototypes}
+        self.assertEqual(chosen, {"boulder_v1", "stone_v1"})
 
 
 if __name__ == "__main__":
