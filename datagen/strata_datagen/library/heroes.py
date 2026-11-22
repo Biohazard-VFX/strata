@@ -3,7 +3,8 @@
 hero.json fields:
   key: library id; poses: {pose name: USD file relative to the hero directory};
   skin_prim: mesh prim path in each pose file; guide_prims: curve prim paths (may be empty);
-  albedo: texture file relative to the hero directory; groom: GroomParams fields (optional);
+  albedo: texture file relative to the hero directory; groom: GroomParams fields, optional
+  when a coat (library/coat.py) replaces it or the hero has none;
   regions: names of float vertex primvars `region_<name>` (0..1) on the skin marking hair-growing areas,
   any of scalp, brows, lashes, beard; a scalp region gives the hero a seeded hairstyle per shot;
   forward: the direction the face looks in the pose files (Y is up), default [0, 0, 1];
@@ -53,6 +54,8 @@ def _groom(raw: dict[str, float]) -> groom.GroomParams:
         length_jitter=float(raw["length_jitter"]),
         frizz_m=float(raw["frizz_m"]),
         neighbours=int(raw["neighbours"]),
+        clump_count=int(raw.get("clump_count", 0)),
+        clump_strength=float(raw.get("clump_strength", 0.0)),
     )
 
 
@@ -98,7 +101,7 @@ def _corner_st(mesh: UsdGeom.Mesh, corners: int) -> FloatArray:
     return values[indices] if values.shape[0] != corners else values
 
 
-def _fan(counts: IntArray) -> tuple[IntArray, IntArray]:
+def fan(counts: IntArray) -> tuple[IntArray, IntArray]:
     """Triangle corner indices into the face-vertex list, fanning each polygon from its first corner."""
     starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
     tri = [(s, s + k, s + k + 1) for s, n in zip(starts, counts, strict=True) for k in range(1, n - 1)]
@@ -112,7 +115,7 @@ def read_skin(stage: Usd.Stage, path: str) -> tuple[groom.Skin, UsdGeom.Mesh]:
     counts = np.asarray(mesh.GetFaceVertexCountsAttr().Get(), dtype=np.int64)
     indices = np.asarray(mesh.GetFaceVertexIndicesAttr().Get(), dtype=np.int64)
     corner_st = _corner_st(mesh, indices.size)
-    corners, flat = _fan(counts)
+    corners, flat = fan(counts)
     triangles = indices[corners]
     return groom.Skin(points, triangles, corner_st[flat].reshape(-1, 2)), mesh
 

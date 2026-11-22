@@ -124,6 +124,7 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
                 "hairs": shot.pose.hairs,
                 "hairstyle": None if shot.hair is None else hairstyle.record(shot.hair),
                 "clip_start": None if shot.placement is None else shot.placement.start,
+                "animation": shot.hero_animation,
             },
             "lighting": {
                 "hdri": shot.light.hdri.key,

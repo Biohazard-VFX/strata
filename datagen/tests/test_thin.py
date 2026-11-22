@@ -14,7 +14,7 @@ from strata_datagen.rng import stream
 from strata_datagen.scene import compose, export
 from strata_datagen.scene.spec import ShotSpec
 from strata_datagen.usdutil import FloatArray
-from tests.test_determinism import RENDER, library
+from tests.test_determinism import RENDER, hero_files, library
 
 GROUND = Ground(np.zeros((201, 201)), 1.0, {})
 FOCAL_MM = 35.0
@@ -222,6 +222,7 @@ class ComposeTest(unittest.TestCase):
     def test_shots_author_thin_structures_with_instance_ids_in_the_manifest(self) -> None:
         lib = library()
         with TemporaryDirectory() as tmp:
+            hero_files(Path(tmp), lib)
             spec = ShotSpec(
                 seed=7, thin=(thin.Choice("chain_link", "between"), thin.Choice("wires", "background"))
             )
@@ -247,6 +248,7 @@ class ComposeTest(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             layers: list[list[bytes]] = []
             for name in ("a", "b"):
+                hero_files(Path(tmp) / name, lib)
                 shot = compose.plan(spec, lib, Path(tmp) / name)
                 compose.write(shot, lib, Path(tmp) / name, RENDER)
                 layers.append([p.read_bytes() for p in sorted(shot.scene_dir.glob("*.usd*"))])

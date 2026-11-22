@@ -38,13 +38,19 @@ class GroomParams:
     length_jitter: float
     frizz_m: float
     neighbours: int
+    clump_count: int = 0
+    clump_strength: float = 0.0
 
 
 @dataclass(frozen=True)
 class Groom:
+    """Curves of equal point count; face and weights bind each root to its skin triangle."""
+
     curves: FloatArray
     widths: FloatArray
     st: FloatArray
+    face: IntArray
+    weights: FloatArray
 
 
 def resample(points: FloatArray, samples: int) -> FloatArray:
@@ -58,7 +64,19 @@ def resample(points: FloatArray, samples: int) -> FloatArray:
     return np.stack([np.interp(targets, lengths, points[:, i]) for i in range(3)], axis=-1)
 
 
-def _roots(skin: Skin, count: int, rng: np.random.Generator) -> tuple[FloatArray, FloatArray, FloatArray]:
+@dataclass(frozen=True)
+class Roots:
+    """Skin points: position, unit face normal, texture coordinate, triangle and barycentric weights."""
+
+    position: FloatArray
+    normal: FloatArray
+    st: FloatArray
+    face: IntArray
+    weights: FloatArray
+
+
+def sample_roots(skin: Skin, count: int, rng: np.random.Generator) -> Roots:
+    """Area-uniform points on the skin."""
     tri = skin.points[skin.triangles]
     normals = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
     area = 0.5 * np.linalg.norm(normals, axis=1)
@@ -70,7 +88,7 @@ def _roots(skin: Skin, count: int, rng: np.random.Generator) -> tuple[FloatArray
     position = np.einsum("nk,nkd->nd", weights, tri[face])
     st = np.einsum("nk,nkd->nd", weights, skin.corner_st.reshape(-1, 3, 2)[face])
     normal = normals[face] / np.maximum(np.linalg.norm(normals[face], axis=1, keepdims=True), 1e-12)
-    return position, normal, st
+    return Roots(position, normal, st, np.asarray(face, dtype=np.int64), weights)
 
 
 def _from_guides(
@@ -96,21 +114,31 @@ def _from_parameters(roots: FloatArray, normals: FloatArray, params: GroomParams
     return roots[:, None] + direction * params.length_m * t
 
 
+def _clump(curves: FloatArray, params: GroomParams, t: FloatArray, rng: np.random.Generator) -> FloatArray:
+    """Pull each hair towards its nearest clump-centre hair, more strongly towards the tip."""
+    centres = rng.choice(len(curves), min(params.clump_count, len(curves)), replace=False)
+    _, nearest = KDTree(curves[centres, 0]).query(curves[:, 0])
+    leader = curves[centres[np.asarray(nearest, dtype=np.int64)]]
+    return curves + (leader - curves) * (params.clump_strength * t[None, :, None])
+
+
 def build(skin: Skin, guides: Guides | None, params: GroomParams, rng: np.random.Generator) -> Groom:
-    roots, normals, st = _roots(skin, params.count, rng)
+    roots = sample_roots(skin, params.count, rng)
     if guides is None:
-        curves, keep = _from_parameters(roots, normals, params), np.ones(len(roots), bool)
+        curves, keep = _from_parameters(roots.position, roots.normal, params), np.ones(params.count, bool)
     else:
-        curves, keep = _from_guides(roots, guides, params)
-    curves, st = curves[keep], st[keep]
+        curves, keep = _from_guides(roots.position, guides, params)
+    curves = curves[keep]
     scale = 1.0 + params.length_jitter * rng.uniform(-1.0, 1.0, (len(curves), 1, 1))
     curves = curves[:, :1] + (curves - curves[:, :1]) * scale
     t = np.linspace(0.0, 1.0, curves.shape[1])
+    if params.clump_count > 0:
+        curves = _clump(curves, params, t, rng)
     curves = curves + rng.normal(0.0, params.frizz_m, curves.shape) * t[None, :, None]
     widths = np.broadcast_to(
         params.width_root_m + (params.width_tip_m - params.width_root_m) * t, curves.shape[:2]
     )
-    return Groom(curves=curves, widths=np.ascontiguousarray(widths), st=st)
+    return Groom(curves, np.ascontiguousarray(widths), roots.st[keep], roots.face[keep], roots.weights[keep])
 
 
 def author(stage: Usd.Stage, path: str, groom: Groom) -> UsdGeom.BasisCurves:

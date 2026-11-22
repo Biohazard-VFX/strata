@@ -3,13 +3,13 @@
 import argparse
 import json
 import shutil
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
 from strata_datagen import files
 from strata_datagen.library import build as library_build
-from strata_datagen.library import catalogue, fetch, humans, morph
+from strata_datagen.library import catalogue, creatures, fetch, humans, morph
 from strata_datagen.presets import PRESETS
 from strata_datagen.qa import checks, contact
 from strata_datagen.render import husk, pack
@@ -57,6 +57,14 @@ def cmd_morphs(args: argparse.Namespace) -> None:
     catalog = cast("humans.Catalog", json.loads(recipe.mpfb_targets.read_text()))
     for family in args.families if args.families is not None else range(block.families):
         print("built", morph.build_family(recipe, block, family, args.library, catalog), flush=True)
+
+
+def cmd_creatures(args: argparse.Namespace) -> None:
+    raw = cast("dict[str, list[dict[str, object]]]", json.loads(args.recipes.read_text()))
+    recipes = [r for r in raw["creatures"] if not args.only or r["key"] in args.only]
+    tools = creatures.Tools(infinigen=[args.infinigen_python], blender=[args.blender])
+    for manifest in creatures.prepare(recipes, tools, args.library):
+        print("creature", manifest["key"], ",".join(cast("list[str]", manifest["coat_classes"])), flush=True)
 
 
 def cmd_build(args: argparse.Namespace) -> None:
@@ -121,6 +129,26 @@ def cmd_qa(args: argparse.Namespace) -> None:
         print(shot.name, "PASS" if result["passed"] else "FAIL", failures[:3], flush=True)
 
 
+def _hero_library_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
+    p = add_parser("humans", help="build the human hero library from a recipe (MPFB + CMU)")
+    p.add_argument("--recipe", type=Path, required=True)
+    p.add_argument("--library", type=Path, required=True)
+    p.add_argument("--only", type=int, nargs="*", help="human indices to build (default: all)")
+    p.set_defaults(run=cmd_humans)
+    p = add_parser("morphs", help="build morphing human takes (recipe block `morph`)")
+    p.add_argument("--recipe", type=Path, required=True)
+    p.add_argument("--library", type=Path, required=True)
+    p.add_argument("--families", type=int, nargs="*", help="family indices to build (default: all)")
+    p.set_defaults(run=cmd_morphs)
+    p = add_parser("creatures", help="generate or import creature bodies into a hero library")
+    p.add_argument("--recipes", type=Path, required=True)
+    p.add_argument("--library", type=Path, required=True)
+    p.add_argument("--infinigen-python", required=True)
+    p.add_argument("--blender", default="blender")
+    p.add_argument("--only", nargs="*", default=[])
+    p.set_defaults(run=cmd_creatures)
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="strata-datagen", description=__doc__)
     sub = root.add_subparsers(dest="command", required=True)
@@ -133,16 +161,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--sources", type=Path, required=True)
     p.set_defaults(run=cmd_prepare)
-    p = sub.add_parser("humans", help="build the human hero library from a recipe (MPFB + CMU)")
-    p.add_argument("--recipe", type=Path, required=True)
-    p.add_argument("--library", type=Path, required=True)
-    p.add_argument("--only", type=int, nargs="*", help="human indices to build (default: all)")
-    p.set_defaults(run=cmd_humans)
-    p = sub.add_parser("morphs", help="build morphing human takes (recipe block `morph`)")
-    p.add_argument("--recipe", type=Path, required=True)
-    p.add_argument("--library", type=Path, required=True)
-    p.add_argument("--families", type=int, nargs="*", help="family indices to build (default: all)")
-    p.set_defaults(run=cmd_morphs)
+    _hero_library_commands(sub.add_parser)
     p = sub.add_parser("build", help="compose shots and write the husk job list")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--presets", nargs="*", default=[], choices=sorted(PRESETS))

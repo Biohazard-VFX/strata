@@ -30,6 +30,7 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
 
 ```sh
 uv sync
+strata-datagen creatures --recipes creatures.json --library HEROES --infinigen-python PY  # creature heroes
 strata-datagen prepare --root BUILD --sources sources.json      # assets/library.json
 strata-datagen build --root BUILD --presets hero_in_terrain --first-seed 1 --count 10  # 720-frame shots
 strata-datagen render --root BUILD --husk /path/to/husk          # or BUILD/jobs.sh: 60-frame tasks, each husk + pack
@@ -38,6 +39,10 @@ python ../contract/dataset/validate.py BUILD/shots/*
 ./check.sh                                                       # ruff, pyright, layer and identifier checks, tests
 ```
 
+`creatures.json` lists creature recipes (Infinigen factory and seed, or a glTF model and animation,
+poses, body length, coat classes, provenance); see `strata_datagen/library/creatures.py`. Install
+Infinigen in its own Python 3.11 environment (`INFINIGEN_MINIMAL_INSTALL=True uv pip install -e
+".[infinigen1]"`) and pass that interpreter; glTF animals use a system Blender.
 `sources.json` lists `megascans_roots`, `hdris`, `hero_library`, `heroes` and `max_variations`.
 A hero whose `hero.json` lists a `scalp` region (float vertex primvar `region_scalp` on its skin) gets a
 seeded hairstyle in every shot; see `strata_datagen/library/heroes.py` for the manifest fields.
