@@ -25,3 +25,5 @@
 - Supervise coverage with float32 soft-target BCE logits so sigmoid saturation cannot erase mixed-pixel correction gradients.
 - Warm up new-head and pretrained-decoder optimizer groups at separate learning rates; reject resume across objective or schedule changes.
 - Oracle evaluation aligns the current scalar prior before the deep head; frozen heads align the stock prior with the same GT mask.
+- Public raw deep samples own flattened channel arrays and preserve pixel counts, sample order and premultiplied IDs; missing channels fail explicitly.
+- Sorted pixel and cluster segments use contiguous extrema reductions; ordered first candidates preserve stable depth-gap ties.
