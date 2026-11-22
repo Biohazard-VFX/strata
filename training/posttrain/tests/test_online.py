@@ -320,6 +320,8 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
                 NativeBatches([frame], augmented, [[0]], augmented_config), "cuda"
             ) as overlap:
                 next(overlap)
+            with pytest.raises(StopIteration):
+                next(overlap)
 
     if math_device == "cuda" and loader_math == "torch":
         from strata_training.data.workers import device_batches
