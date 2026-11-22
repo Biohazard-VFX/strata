@@ -508,8 +508,7 @@ static int estimate_focal(strata_context *ctx,
 		strata_fail(err, "focal output unavailable");
 		goto out;
 	}
-	*focal = strata_focal(angles, w, h);
-	ret = 0;
+	ret = strata_focal(angles, w, h, focal, err);
 out:
 	release_value(ctx->api, &input);
 	release_value(ctx->api, &output);
@@ -549,6 +548,8 @@ static int focal_length(strata_context *ctx, const struct strata_frame *frame,
 		camera->fy_px = camera->fx_px;
 		camera->cx_px = (float)w / 2;
 		camera->cy_px = (float)h / 2;
+		if (strata_camera_validate(camera, 1, err))
+			return -1;
 	}
 	result->timings.focal_ms = strata_milliseconds() - start;
 	return 0;

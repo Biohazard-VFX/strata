@@ -35,7 +35,8 @@ size_t strata_prepare(const struct strata_image *image, float exposure,
 		      const struct strata_tensor *padded);
 int strata_fov_input(const struct strata_tensor *padded, int w, int h,
 		     struct strata_tensor *crop, struct strata_error *err);
-float strata_focal(const float *angles, int w, int h);
+int strata_focal(const float *angles, int w, int h, float *focal,
+		 struct strata_error *err);
 int strata_postprocess(const float *prediction, int stride,
 		       struct strata_result *result, struct strata_error *err);
 int strata_atomic_target(const char *path, char **temporary,

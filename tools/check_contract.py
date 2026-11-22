@@ -122,20 +122,30 @@ def main():
             np.testing.assert_allclose(values,expected_p,rtol=1e-6)
             assert file.header()['strata:P_space'] == ('world' if world else 'camera')
 
-    angles = onnx.helper.make_tensor('angles',onnx.TensorProto.FLOAT,[1,2],[50,30])
-    zero = onnx.helper.make_tensor('zero',onnx.TensorProto.FLOAT,[],[0])
-    one = onnx.helper.make_tensor('one',onnx.TensorProto.INT64,[2],[0,1])
-    fov_graph = onnx.helper.make_graph(
-        [onnx.helper.make_node('ReduceMean',['image'],['mean'],keepdims=0),
-         onnx.helper.make_node('Mul',['mean','zero'],['zeroed']),
-         onnx.helper.make_node('Unsqueeze',['zeroed','one'],['column']),
-         onnx.helper.make_node('Add',['column','angles'],[spec()['fov']['output_name']])],
-        'fov_fixture',[image],
-        [onnx.helper.make_tensor_value_info(spec()['fov']['output_name'],onnx.TensorProto.FLOAT,[1,2])],
-        initializer=[angles,zero,one])
-    fov = onnx.helper.make_model(fov_graph,opset_imports=[onnx.helper.make_opsetid('',23)])
-    fov.ir_version = 10
-    onnx.save(fov,str(directory/'model.fov.onnx'))
+    def save_fov(values):
+        angles = onnx.helper.make_tensor('angles',onnx.TensorProto.FLOAT,[1,2],values)
+        zero = onnx.helper.make_tensor('zero',onnx.TensorProto.FLOAT,[],[0])
+        one = onnx.helper.make_tensor('one',onnx.TensorProto.INT64,[2],[0,1])
+        fov_graph = onnx.helper.make_graph(
+            [onnx.helper.make_node('ReduceMean',['image'],['mean'],keepdims=0),
+             onnx.helper.make_node('Mul',['mean','zero'],['zeroed']),
+             onnx.helper.make_node('Unsqueeze',['zeroed','one'],['column']),
+             onnx.helper.make_node('Add',['column','angles'],[spec()['fov']['output_name']])],
+            'fov_fixture',[image],
+            [onnx.helper.make_tensor_value_info(spec()['fov']['output_name'],onnx.TensorProto.FLOAT,[1,2])],
+            initializer=[angles,zero,one])
+        fov = onnx.helper.make_model(fov_graph,opset_imports=[onnx.helper.make_opsetid('',23)])
+        fov.ir_version = 10
+        onnx.save(fov,str(directory/'model.fov.onnx'))
+    for values in ([50,float('nan')],[50,float('inf')],[50,float('-inf')],[float('nan'),30],
+                   [50,0],[50,-10],[50,180],[50,200],[0,30],[180,30]):
+        save_fov(values)
+        for path in ('depth.exr','deep.exr','P.exr'):
+            (directory/path).unlink(missing_ok=True)
+        rejected = subprocess.run(command,capture_output=True,text=True,check=False)
+        assert rejected.returncode == 1 and 'invalid estimated field of view' in rejected.stderr, (values,rejected.returncode,rejected.stdout,rejected.stderr)
+        assert not rejected.stdout and not (directory/'depth.exr').exists(), values
+    save_fov([50,30])
     estimated = subprocess.run(command,capture_output=True,text=True,check=False)
     assert estimated.returncode == 0, estimated.stderr
     report = json.loads(estimated.stdout)

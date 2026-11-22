@@ -283,10 +283,19 @@ out:
 	return ret;
 }
 
-float strata_focal(const float *angles, int w, int h)
+int strata_focal(const float *angles, int w, int h, float *focal,
+		 struct strata_error *err)
 {
-	return .5f * (float)(w < h ? w : h) /
-	       tanf(angles[w < h ? 0 : 1] * .008726646259971648f);
+	for (size_t i = 0; i < 2; ++i) {
+		if (!(angles[i] > 0 && angles[i] < 180))
+			return strata_fail(
+				err,
+				"invalid estimated field of view: %g degrees",
+				(double)angles[i]);
+	}
+	*focal = .5f * (float)(w < h ? w : h) /
+		 tanf(angles[w < h ? 0 : 1] * .008726646259971648f);
+	return 0;
 }
 
 int strata_postprocess(const float *prediction, int stride,
