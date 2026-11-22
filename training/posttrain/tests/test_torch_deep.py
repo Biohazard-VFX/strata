@@ -38,6 +38,24 @@ def test_torch_targets_match_contract(math_device: str) -> None:
         np.testing.assert_allclose(
             actual[key].cpu().numpy(), getattr(expected, key), atol=2e-6, rtol=2e-6
         )
+    from dataclasses import replace
+
+    from strata_training.augment.torch_deep import batch_samples
+
+    other = replace(
+        samples, z=samples.z * 3, rgb=samples.rgb * 0.4, ids=torch.ones_like(samples.ids)
+    )
+    second = reduce_samples(
+        (z[order] * 3).astype(np.float64),
+        alpha[order].astype(np.float64),
+        (rgb[order] * 0.4).astype(np.float64),
+        counts,
+        (10, 12),
+    )
+    packed = batch_samples([samples, other]).targets()
+    for key in ("inverse_depth", "alpha", "rgb"):
+        expected_batch = np.concatenate((getattr(expected, key), getattr(second, key)), axis=-2)
+        np.testing.assert_allclose(packed[key].cpu().numpy(), expected_batch, atol=2e-6, rtol=2e-6)
 
 
 def test_torch_targets_hidden_sky_ties_empty(math_device: str) -> None:

@@ -26,6 +26,22 @@ def test_torch_camera_matches_numpy(codec: str, curve: str, math_device: str) ->
     np.testing.assert_allclose(actual, expected, atol=5e-5, rtol=2e-5)
 
 
+def test_torch_batched_grain_matches_independent_cpu_fields(math_device: str) -> None:
+    from strata_training.augment.torch_grain import apply_grain_batch
+
+    images = np.random.default_rng(44).uniform(-0.02, 8, (3, 3, 64, 96)).astype(np.float32)
+    params = [
+        grain.GrainParams("alexa35", 400, -1.1, 13, 0.7),
+        grain.GrainParams("alexa_lf", 3200, 0.9, 71, 1.3),
+        grain.GrainParams("alexa35", 1280, 0.3, 106, 1.0),
+    ]
+    expected = np.stack(
+        [grain.apply_grain(image, p) for image, p in zip(images, params, strict=True)]
+    )
+    actual = apply_grain_batch(torch.tensor(images, device=math_device), params)
+    np.testing.assert_allclose(actual.cpu().numpy(), expected, atol=2e-6, rtol=2e-6)
+
+
 @pytest.mark.parametrize("profile", list(grain.PROFILES))
 def test_torch_grain_matches_numpy(profile: str, math_device: str) -> None:
     image = np.random.default_rng(42).uniform(-0.01, 8, (3, 31, 43)).astype(np.float32)

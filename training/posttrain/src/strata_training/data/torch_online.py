@@ -8,11 +8,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
+from strata_training.augment.camera import CameraParams
 from strata_training.augment.deep import Shot
+from strata_training.augment.grain import GrainParams
 from strata_training.augment.pipeline import AugmentConfig, Roles, draw_camera, draw_grain
-from strata_training.augment.torch_camera import degrade
-from strata_training.augment.torch_compose import TensorShot, recompose
-from strata_training.augment.torch_grain import apply_grain
+from strata_training.augment.torch_camera import degrade_batch
+from strata_training.augment.torch_compose import TensorShot, recompose_samples
+from strata_training.augment.torch_deep import TensorSamples, batch_samples
+from strata_training.augment.torch_grain import apply_grain_batch
 from strata_training.data.raw_tensor import MappedSamples, mapped_samples
 from strata_training.torch_api import api
 from strata_training.types import Array
@@ -165,12 +168,15 @@ def normalize(images: torch.Tensor) -> torch.Tensor:
 
 
 def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch":
-    """Consume owned raw payloads on their device; return training-ready native tensors."""
+    """Consume raw payloads; rebuild targets and Alexa fields across the live batch."""
     prepared = replace(
         prepared,
         images=prepared.images.clone(),
         target={k: v.clone() for k, v in prepared.target.items()},
     )
+    pending: list[tuple[int, TensorSamples]] = []
+    grains: list[tuple[int, GrainParams]] = []
+    cameras: list[tuple[int, CameraParams]] = []
     for job in prepared.jobs:
         rng = np.random.default_rng(job.seed)
         record: dict[str, Any] = {}
@@ -180,26 +186,47 @@ def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch"
             for k, v in prepared.target.items()
             if k in ("inverse_depth", "alpha", "rgb")
         }
-        image, targets = recompose(
+        image, result = recompose_samples(
             job.shot, job.roles, targets, job.donor, job.donor_roles, rng, job.config, record
         )
-        alpha, rgb = targets["alpha"], targets["rgb"]
-        through = torch.cat((torch.ones_like(alpha[:1]), (1 - alpha).cumprod(0)[:-1]))
-        beauty = (through[:, None] * rgb).sum(0)
-        values = {
-            **targets,
-            "beauty": beauty,
-            "mixed": ((alpha[0] > 0.03) & (alpha[0] < 0.97)).float(),
-        }
-        for key, value in values.items():
-            prepared.target[key][position] = value
+        if isinstance(result, TensorSamples):
+            pending.append((position, result))
+        else:
+            for key, value in result.items():
+                prepared.target[key][position] = value
+        prepared.images[position] = image
         grain = draw_grain(rng, job.config)
         if grain is not None:
-            image = apply_grain(image, grain)
+            grains.append((position, grain))
         camera = draw_camera(rng, job.config)
         if camera is not None:
-            image = degrade(image, camera)
-        prepared.images[position] = image
+            cameras.append((position, camera))
+    if pending:
+        size = prepared.images.shape[-1]
+        reduced = batch_samples([samples for _, samples in pending]).targets(
+            prepared.target["alpha"].shape[1]
+        )
+        for i, (position, _) in enumerate(pending):
+            for key, value in reduced.items():
+                prepared.target[key][position] = value[..., i * size : (i + 1) * size, :]
+    if prepared.live:
+        alpha = prepared.target["alpha"][prepared.live]
+        rgb = prepared.target["rgb"][prepared.live]
+        through = torch.cat((torch.ones_like(alpha[:, :1]), (1 - alpha[:, :-1]).cumprod(1)), dim=1)
+        prepared.target["beauty"][prepared.live] = (through[:, :, None] * rgb).sum(1)
+        prepared.target["mixed"][prepared.live] = (
+            (alpha[:, 0] > 0.03) & (alpha[:, 0] < 0.97)
+        ).float()
+    if grains:
+        positions = [i for i, _ in grains]
+        prepared.images[positions] = apply_grain_batch(
+            prepared.images[positions], [params for _, params in grains]
+        )
+    if cameras:
+        positions = [i for i, _ in cameras]
+        prepared.images[positions] = degrade_batch(
+            prepared.images[positions], [params for _, params in cameras]
+        )
     prepared.normalized = normalize(prepared.images[prepared.live]) if prepared.live else None
     prepared.target = {
         k: v[..., halo : halo + crop, halo : halo + crop] for k, v in prepared.target.items()

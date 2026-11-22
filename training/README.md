@@ -144,12 +144,12 @@ strata-train features /data/targets/index.json /data/clean_features --preset dep
 
 Set `features` to that clean cache. Input-content hashes reject old noisy caches and
 changed denoises. Raw deep samples remain available before rebuilding K-layer targets.
-The exact training-side augmentation hook is `OnlineLoader.prepare` in
-`strata_training.data.online`: it calls `augment.pipeline.augment_sample` on the native
-crop plus halo, then transfers its image and matching targets. No augmented features
-are written. `augmentation` passes explicit settings to `AugmentConfig.from_dict`;
+The NumPy reference hook is `OnlineLoader.prepare` in
+`strata_training.data.online`. CUDA hybrid training instead defers math from
+`NativeBatches` to `LoadedBatch.to`, as described below. No augmented features are
+written. `augmentation` passes explicit settings to `AugmentConfig.from_dict`;
 use top-level `clean_fraction`, not `augmentation.clean`. Logs include loader seconds
-and clean/live counts. CPU-heavy augmentation is not silently pre-baked.
+and clean/live counts. Augmentation is not silently pre-baked.
 
 ### Parallel CPU preparation
 
@@ -164,7 +164,7 @@ machine-specific thread counts. Peak image memory scales with workers × prefetc
 batch/crop size and raw sample density, not frame count. Metadata still scales
 linearly with the number of index records.
 
-Sampling is intentionally versioned as `step-seed-v1`: each absolute training step
+NumPy sampling is intentionally versioned as `step-seed-v1`: each absolute training step
 uses `SeedSequence([seed, step])`. Crop selection and augmentation draws within a
 step remain sequential and unchanged. This makes outputs independent of worker
 count, queue scheduling and prefetch position, including resumed runs. It does
@@ -173,6 +173,60 @@ without the matching sampling version rather than pretending to continue their
 sequence. Calling `OnlineLoader.prepare` with the same selections and RNG retains
 its existing per-view semantics. `loader_seconds` now measures the main process's
 wait plus device transfer; overlapped worker CPU time is not added to it.
+
+### Device-side hybrid preparation
+
+`loader_math: "torch"` is the default for CUDA hybrid training; CPU and cached-mode
+runs default to `"numpy"`. The explicit NumPy path remains the reference. Spawned
+workers read compact targets, denoised crops and clean cached inputs; changed views
+carry raw CSR sample mappings plus value-only augmentation plans. Private COW NPY
+mappings own their lifetimes and reopen by descriptor across queues, avoiding a raw
+array copy into shared memory followed by another into pinned memory. Sources must
+remain immutable until the batch is consumed. Only image/compact/cache tensors are
+pinned. Device transfer stages the requested native row span, then gathers the crop's
+columns on the device. Wide frames therefore transfer extra samples outside the
+crop's horizontal extent, but never samples outside its row span.
+
+`LoadedBatch.to` runs deep selection, stable depth merge, transmission, per-object
+and scene grading, all six procedural occluder families, photometric camera math
+and Alexa grain on the selected device. Changed deep targets are rebuilt together
+across the batch through `strata_contract.torch_layers.reduce_sorted_samples`;
+that optional Torch module owns the same thresholds, tie breaking, hidden-sample
+rule and sky masking as `strata_contract.layers`. Reductions accumulate in float64.
+Alexa noise fields are batched by profile, retaining the studio permutation table,
+Nuke response curves and nearest-edge sharpening. Its tensor noise kernel compiles
+lazily on CUDA; include first-use compilation in startup, not steady-state timing.
+
+JPEG/H.264/H.265 encode/decode runs on CPU worker threads after GPU camera encoding,
+on final cropped input images only. A batch owns at most one codec thread per
+compressed image and joins before returning. Camera decoding and uncompressed
+quantization run on the device. Targets never pass through grain, camera transforms
+or codecs. Codecs are not pre-baked because their input depends on that view's
+actual recomposition and grain.
+
+The Torch sampling successor is `step-seed-gpu-v1`: retain the absolute-step seed,
+then draw clean/live identity, independent augmentation-stage enable flags and a
+per-view math seed. Donor selection follows that plan. This permits workers to omit
+raw mappings for photometric-only views without executing augmentation. Worker
+count, prefetch and resumed absolute-step slices preserve the same view. Resume
+rejects changing between the two sampling versions. Direct NumPy `prepare` retains
+its historical semantics.
+
+Tests compare device and CPU/contract targets, composition, occluders and grain at
+`atol=rtol=2e-6`; camera examples use `atol=5e-5, rtol=2e-5`. These are numerical,
+not cross-device bitwise, equivalence gates. Codec quantization is discontinuous:
+values at a bin boundary may select adjacent levels after floating-point rounding.
+Same-device replays are checked bitwise. CPU tests can be isolated with
+`CUDA_VISIBLE_DEVICES=`; the new math tests also exercise CUDA when visible and
+must use the standing GPU resource protocol. Tests include batched fields/targets,
+source immutability, exact native column gathering, halo targets, worker/resume
+invariance and full deferred-batch comparison with independent CPU recomposition.
+
+GPU memory scales with the live batch's actual raw sample count, including row-span
+transfer and float64 scratch. Choose batch size, workers and prefetch explicitly;
+there is no hidden density truncation or allocator policy. Native producer failures
+below remain hard errors. Throughput measurements belong in the external results
+directory, not this architecture/readme.
 
 ### Memory-mapped training caches
 

@@ -1,6 +1,6 @@
 """Device camera math; only actual final-image codec encoding remains on CPU."""
 
-import math
+from concurrent.futures import ThreadPoolExecutor
 
 import torch
 
@@ -13,6 +13,7 @@ from strata_training.augment.camera import (
     video,
 )
 from strata_training.augment.torch_grain import blur
+from strata_training.types import Array
 
 
 def _matrix(image: torch.Tensor, values: object) -> torch.Tensor:
@@ -66,19 +67,31 @@ def decode(code: torch.Tensor, params: CameraParams) -> torch.Tensor:
     return _matrix(image, matrix)
 
 
-def codec(code: torch.Tensor, params: CameraParams) -> torch.Tensor:
-    """Borrow encoded CHW; CPU codecs see only the final cropped input, never labels."""
-    if params.codec == "none":
-        levels = math.pow(2, params.bits) - 1
-        return (code.clamp(0, 1) * levels).round() / levels
-    cpu = code.detach().cpu().numpy()
-    result = (
-        jpeg(cpu, params.quality)
-        if params.codec == "jpeg"
-        else video(cpu, params.codec, params.quality, params.bits)
-    )
-    return torch.tensor(result, device=code.device)
+def _codec_array(code: Array, params: CameraParams) -> Array:
+    if params.codec == "jpeg":
+        return jpeg(code, params.quality)
+    return video(code, params.codec, params.quality, params.bits)
+
+
+def degrade_batch(images: torch.Tensor, params: list[CameraParams]) -> torch.Tensor:
+    """Borrow BCHW inputs; CPU workers encode only final images, never supervision.
+
+    Each batch owns at most one codec thread per compressed input and joins before return.
+    """
+    codes = [encode(image, p) for image, p in zip(images, params, strict=True)]
+    compressed = [i for i, p in enumerate(params) if p.codec != "none"]
+    if compressed:
+        arrays = {i: codes[i].detach().cpu().numpy() for i in compressed}
+        with ThreadPoolExecutor(max_workers=len(compressed)) as workers:
+            futures = {i: workers.submit(_codec_array, arrays[i], params[i]) for i in compressed}
+            for i in compressed:
+                codes[i] = torch.tensor(futures[i].result(), device=images.device)
+    for i, p in enumerate(params):
+        if p.codec == "none":
+            levels = (1 << p.bits) - 1
+            codes[i] = (codes[i].clamp(0, 1) * levels).round() / levels
+    return torch.stack([decode(code, p).float() for code, p in zip(codes, params, strict=True)])
 
 
 def degrade(image: torch.Tensor, params: CameraParams) -> torch.Tensor:
-    return decode(codec(encode(image, params), params), params).float()
+    return degrade_batch(image[None], [params])[0]

@@ -86,14 +86,14 @@ class Frame:
         ) // 32 * 32
 
 
-def batch(
+def input_batch(
     frames: list[Frame],
     selections: list[tuple[int, int, int]],
     crop: int = 128,
     halo: int = 64,
     device: str = "cuda",
     decoder: bool = False,
-) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], list[torch.Tensor]]:
+) -> tuple[dict[str, torch.Tensor], list[torch.Tensor]]:
     size = crop + 2 * halo
 
     def tensor(arrays: list[Array]) -> torch.Tensor:
@@ -113,19 +113,6 @@ def batch(
         inputs["features"] = tensor(
             [f.features[:, y : y + size, x : x + size] for f, y, x in selected]
         )
-    targets = {
-        key: tensor(
-            [
-                f.arrays.get("target_beauty", f.arrays[key])[
-                    ..., y + halo : y + halo + crop, x + halo : x + halo + crop
-                ]
-                if key == "beauty"
-                else f.arrays[key][..., y + halo : y + halo + crop, x + halo : x + halo + crop]
-                for f, y, x in selected
-            ]
-        )
-        for key in ("inverse_depth", "alpha", "rgb", "beauty", "mixed")
-    }
     pyramid: list[torch.Tensor] = []
     if decoder:
         for level, stride in enumerate((4, 8, 16, 32)):
@@ -141,6 +128,36 @@ def batch(
                     ]
                 )
             )
+    return inputs, pyramid
+
+
+def batch(
+    frames: list[Frame],
+    selections: list[tuple[int, int, int]],
+    crop: int = 128,
+    halo: int = 64,
+    device: str = "cuda",
+    decoder: bool = False,
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], list[torch.Tensor]]:
+    inputs, pyramid = input_batch(frames, selections, crop, halo, device, decoder)
+    selected = [(frames[i], y, x) for i, y, x in selections]
+
+    def tensor(arrays: list[Array]) -> torch.Tensor:
+        return torch.as_tensor(np.stack(arrays)).to(device).float()
+
+    targets = {
+        key: tensor(
+            [
+                f.arrays.get("target_beauty", f.arrays[key])[
+                    ..., y + halo : y + halo + crop, x + halo : x + halo + crop
+                ]
+                if key == "beauty"
+                else f.arrays[key][..., y + halo : y + halo + crop, x + halo : x + halo + crop]
+                for f, y, x in selected
+            ]
+        )
+        for key in ("inverse_depth", "alpha", "rgb", "beauty", "mixed")
+    }
     return inputs, targets, pyramid
 
 

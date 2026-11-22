@@ -29,6 +29,7 @@ class MappedSamples(TensorSamples):
             self.shape,
             *(function(getattr(self, key)) for key in ("counts", "z", "alpha", "rgb", "ids")),
         )
+        values.validate()
         if self.left == 0 and self.width == self.shape[1]:
             return values
         column = values.pixel % self.shape[1]
@@ -50,14 +51,24 @@ class MappedSamples(TensorSamples):
 def mapped_samples(root: Path, top: int, left: int, height: int, width: int) -> MappedSamples:
     """Own private source-row tensor mappings; caller must keep source files immutable."""
     shape = np.load(root / "shape.npy")
+    if shape.shape != (2,) or shape.dtype != np.dtype(np.int64):
+        raise ValueError("Raw samples require int64 native shape metadata")
     native_width = int(shape[1])
     offsets = np.load(root / "offsets.npy", mmap_mode="r")
+    if offsets.dtype != np.dtype(np.int64) or offsets.shape != (int(shape.prod()) + 1,):
+        raise ValueError("Raw samples require int64 native pixel offsets")
     begin, end = top * native_width, (top + height) * native_width
     first, last = int(offsets[begin]), int(offsets[end])
+    if int(offsets[0]) != 0 or first < 0 or last < first:
+        raise ValueError("Raw samples require nonnegative pixel offsets starting at zero")
     counts: torch.Tensor = api.from_numpy(np.diff(offsets[begin : end + 1]))
     arrays: list[torch.Tensor] = []
     for key in ("z", "alpha", "rgb", "ids"):
         values = np.load(root / f"{key}.npy", mmap_mode="c")
+        dtype = np.dtype(np.int64 if key == "ids" else np.float32)
+        expected = (int(offsets[-1]), 3) if key == "rgb" else (int(offsets[-1]),)
+        if values.dtype != dtype or values.shape != expected or not values.flags.c_contiguous:
+            raise ValueError(f"Raw samples require native C-order {dtype} {key} arrays")
         arrays.append(api.from_numpy(values[first:last]))
     return MappedSamples(
         (height, native_width),

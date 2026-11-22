@@ -1,6 +1,7 @@
 """Device-owned CSR samples, stable merging and contract-equivalent target reduction."""
 
 from dataclasses import dataclass
+from functools import cached_property
 
 import torch
 from strata_contract.torch_layers import reduce_sorted_samples, transmittance
@@ -17,7 +18,7 @@ class TensorSamples:
     rgb: torch.Tensor
     ids: torch.Tensor
 
-    @property
+    @cached_property
     def pixel(self) -> torch.Tensor:
         return torch.repeat_interleave(
             torch.arange(self.counts.numel(), device=self.z.device),
@@ -25,15 +26,30 @@ class TensorSamples:
             output_size=self.z.numel(),
         )
 
+    def validate(self) -> None:
+        """Reject nonfinite/range/order violations before GPU visibility can hide them."""
+        pixel = self.pixel
+        valid = torch.isfinite(self.z).all() & (self.z > 0).all()
+        valid &= (
+            torch.isfinite(self.alpha).all() & (self.alpha >= 0).all() & (self.alpha <= 1).all()
+        )
+        valid &= torch.isfinite(self.rgb).all()
+        valid &= ((self.z[1:] >= self.z[:-1]) | (pixel[1:] != pixel[:-1])).all()
+        if not bool(valid):
+            raise ValueError(
+                "Raw samples require finite positive sorted depths, finite RGB and alpha in [0,1]"
+            )
+
     def select(self, keep: torch.Tensor) -> "TensorSamples":
-        pixel = self.pixel[keep]
+        indices = torch.nonzero(keep).flatten()
+        pixel = self.pixel[indices]
         return TensorSamples(
             self.shape,
             torch.bincount(pixel, minlength=self.counts.numel()),
-            self.z[keep],
-            self.alpha[keep],
-            self.rgb[keep],
-            self.ids[keep],
+            self.z[indices],
+            self.alpha[indices],
+            self.rgb[indices],
+            self.ids[indices],
         )
 
     def through(self) -> torch.Tensor:
@@ -45,8 +61,23 @@ class TensorSamples:
         )
 
 
+def batch_samples(parts: list[TensorSamples]) -> TensorSamples:
+    """Concatenate independent native grids vertically without mixing pixel segments."""
+    if len(parts) == 1:
+        return parts[0]
+    return TensorSamples(
+        (sum(p.shape[0] for p in parts), parts[0].shape[1]),
+        *(
+            torch.cat([getattr(p, key) for p in parts])
+            for key in ("counts", "z", "alpha", "rgb", "ids")
+        ),
+    )
+
+
 def merge(parts: list[TensorSamples]) -> tuple[TensorSamples, torch.Tensor]:
     """Borrow sorted parts on one grid; return owned stable depth-merged samples/labels."""
+    if len(parts) == 1:
+        return parts[0], torch.zeros_like(parts[0].ids)
     z = torch.cat([p.z for p in parts])
     pixels = torch.cat([p.pixel for p in parts])
     key = (pixels << 32) | z.float().view(torch.int32).long()

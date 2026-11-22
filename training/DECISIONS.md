@@ -1,7 +1,9 @@
 # Architecture decisions
 
-- CPU batch preparation uses bounded persistent spawned DataLoader workers; only owned crop tensors cross queues or transfer to CUDA.
-- Training data RNG is keyed by seed and absolute step (step-seed-v1), making worker count, prefetch and resume independent of sample identity.
+- CUDA hybrid batches default to Torch math; raw target rebuilds and Alexa fields batch across views, while final-image codecs alone use bounded CPU threads.
+
+- Persistent spawned workers prepare native I/O; raw CSR samples cross queues as privately owned mmap descriptors, then gather crop columns on the device.
+- Step-keyed RNG preserves worker/prefetch/resume identity; Torch uses independent stage flags and per-view math seeds (step-seed-gpu-v1), NumPy retains step-seed-v1.
 - Shared K-layer reduction uses stable per-pixel compiled segments and float64 sums; sky membership is reduced in the same pass, not reclustered.
 - Photometric-only crops never materialize raw samples; deep composition uses stable segmented merging and accumulation.
 - Frame objects retain metadata only; bounded per-process LRU mappings serve immutable NPY targets, bases and features; compressed NPZ caches migrate atomically once.
@@ -32,7 +34,7 @@
 - Warm up new-head and pretrained-decoder optimizer groups at separate learning rates; reject resume across objective or schedule changes.
 - Oracle evaluation aligns the current scalar prior before the deep head; frozen heads align the stock prior with the same GT mask.
 - Public raw deep samples own flattened channel arrays and preserve pixel counts, sample order and premultiplied IDs; missing channels fail explicitly.
-- K-layer clustering lives only in strata_contract.layers; training validates inputs and masks sky geometry without implementing a second clustering rule.
+- K-layer clustering lives in strata_contract.layers and its optional torch_layers realization; independent NumPy/CUDA parity gates share constants and sky semantics.
 - Hybrid training uses native 512² independent crops, 40% clean-cache reuse and frozen bf16/SDPA encoding otherwise; augmented features are never cached.
 - Sky ID 0 retains colour/coverage targets; clusters containing visible sky have no depth supervision, including when the K limit merges sky and geometry.
 - Select best checkpoints by OOD-validation mixed-alpha MAE every 250 steps; stop after four stale checks and treat step budgets as ceilings.

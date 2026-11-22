@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from strata_training.data.dataset import Frame, batch
+from strata_training.data.dataset import Frame, batch, input_batch
 from strata_training.data.online import OnlineLoader, PreparedBatch
 from strata_training.data.torch_online import finalize, prepare_raw
 
@@ -99,7 +99,7 @@ class NativeBatches(Dataset[LoadedBatch]):
         else:
             prepared = self.online.prepare(selections, rng, crop, halo, "cpu")
         if prepared.clean:
-            prepared.cached_inputs, _, prepared.cached_pyramid = batch(
+            prepared.cached_inputs, prepared.cached_pyramid = input_batch(
                 self.frames, [selections[i] for i in prepared.clean], crop, halo, "cpu", decoder
             )
         return LoadedBatch(selections, {}, prepared.target, [], prepared)

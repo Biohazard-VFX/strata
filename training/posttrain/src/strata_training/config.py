@@ -11,7 +11,12 @@ def training_defaults(config: dict[str, Any]) -> dict[str, Any]:
         "compile_encoder": False,
         "loader_workers": 0,
         "loader_prefetch": 2,
-        "loader_math": "numpy",
+        "loader_math": (
+            "torch"
+            if config.get("device", "cuda") == "cuda"
+            and config.get("input_mode", "hybrid") == "hybrid"
+            else "numpy"
+        ),
         "early_stopping": True,
         "validation_every": 250,
         "validation_patience": 4,

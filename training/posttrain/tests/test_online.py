@@ -14,6 +14,7 @@ from strata_training.data.online import OnlineLoader, image_digest
 from strata_training.io import save_array, save_arrays, write_json
 from strata_training.model.live import FrozenEncoder
 from strata_training.torch_api import api
+from strata_training.types import Array
 
 
 def test_frozen_encoder_has_independent_batches_and_trainable_consumers() -> None:
@@ -62,6 +63,7 @@ def test_frozen_encoder_has_independent_batches_and_trainable_consumers() -> Non
 def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features(
     tmp_path: Path,
     loader_math: str,
+    math_device: str,
 ) -> None:
     height, width = 32, 64
     image = np.full((3, height, width), 0.5, dtype=np.float32)
@@ -98,7 +100,7 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
         np.tile([2.0, 4.0], height * width).astype(np.float32),
         np.tile([0.2, 1.0], height * width).astype(np.float32),
         np.full((height * width * 2, 3), 0.1, dtype=np.float32),
-        np.zeros(height * width * 2, dtype=np.int64),
+        np.tile([2, 0], height * width).astype(np.int64),
     )
     save_samples(samples / "sample/deep", data)
     save_array(samples / "sample/noisy.npy", image * 1.4)
@@ -186,6 +188,64 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
         for key, value in (a.cached_inputs or {}).items():
             assert b.cached_inputs is not None
             torch.testing.assert_close(value, b.cached_inputs[key], rtol=0, atol=0)
+    if loader_math == "torch":
+        from strata_training.augment.pipeline import photometric, recompose
+        from strata_training.data.targets import composite
+        from strata_training.types import Layers
+
+        augmented = OnlineLoader(
+            [frame],
+            samples,
+            0,
+            {
+                "recompose": 0,
+                "instance_grade": 1,
+                "scene_grade": 1,
+                "occluders": 1,
+                "grain": 1,
+                "camera": 1,
+                "codec_weights": [0, 1, 0, 0],
+            },
+        )
+        raw = NativeBatches(
+            [frame], augmented, [[0]], {**config, "crop": 16, "halo": 8, "loader_math": "torch"}
+        )[0]
+        assert raw.prepared is not None
+        expected_images: list[Array] = []
+        expected_targets: dict[str, list[Array]] = {k: [] for k in raw.target}
+        for job in raw.prepared.jobs:
+            i, y, x = raw.selections[job.position]
+            cpu_shot = augmented.shot(i).crop(y, x, 32, 32)
+            layers = Layers(
+                *(
+                    frame.arrays[k][..., y : y + 32, x : x + 32]
+                    for k in ("inverse_depth", "alpha", "rgb")
+                )
+            )
+            rng = np.random.default_rng(job.seed)
+            image, layers = recompose(cpu_shot, job.roles, layers, None, rng, job.config, {})
+            expected_images.append(photometric(image, rng, job.config, {}))
+            values = {
+                **layers.arrays(),
+                "beauty": composite(layers.alpha, layers.rgb),
+                "mixed": (layers.alpha[0] > 0.03) & (layers.alpha[0] < 0.97),
+            }
+            for key, value in values.items():
+                expected_targets[key].append(value[..., 8:24, 8:24])
+        actual = raw.to(math_device).prepared
+        replay = raw.to(math_device).prepared
+        assert actual is not None
+        assert replay is not None
+        np.testing.assert_allclose(
+            actual.images.cpu().numpy(), np.stack(expected_images), atol=5e-5, rtol=2e-5
+        )
+        torch.testing.assert_close(actual.images, replay.images, atol=0, rtol=0)
+        for key, values in expected_targets.items():
+            np.testing.assert_allclose(
+                actual.target[key].cpu().numpy(), np.stack(values), atol=2e-6, rtol=2e-6
+            )
+            torch.testing.assert_close(actual.target[key], replay.target[key], atol=0, rtol=0)
+
     assert sorted(p.name for p in (samples / "sample").iterdir()) == [
         "deep",
         "denoised.npy",
@@ -226,7 +286,11 @@ def test_hybrid_policy_defaults_and_unsupported_temporal_or_oracle_inputs() -> N
         4,
     )
     validate_config(config)
+    assert config["loader_math"] == "torch"
+    assert training_defaults({"device": "cpu"})["loader_math"] == "numpy"
+    assert training_defaults({"input_mode": "cached"})["loader_math"] == "numpy"
     for key, value in (
+        ("loader_math", "unknown"),
         ("loader_workers", -1),
         ("loader_workers", True),
         ("loader_prefetch", 0),

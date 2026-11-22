@@ -49,20 +49,23 @@ def gradient_noise(x: torch.Tensor, y: torch.Tensor, z: torch.Tensor) -> torch.T
 
 
 def noise_node(
-    shape: tuple[int, int], size: float, zoffset: float, gamma: float, device: torch.device
+    shape: tuple[int, int], size: float, seeds: torch.Tensor, gamma: float
 ) -> torch.Tensor:
     height, width = shape
+    device = seeds.device
     cols = torch.arange(width, device=device, dtype=torch.float64) / size
     rows = (height - 1 - torch.arange(height, device=device, dtype=torch.float64)) / size
-    x = cols[None].expand(shape)
-    y = rows[:, None].expand(shape)
-    plane = torch.stack((x, y, torch.full_like(x, zoffset)))
+    batch_shape = (seeds.numel(), height, width)
+    x = cols[None, None].expand(batch_shape)
+    y = rows[None, :, None].expand(batch_shape)
+    z = seeds[:, None, None].expand(batch_shape)
+    plane = torch.stack((x, y, z), dim=1)
     rotation = torch.tensor(ROTATION, device=device)
-    point = torch.einsum("ij,jhw->ihw", rotation, plane).float()
-    total = torch.zeros_like(point[0])
+    point = torch.einsum("ij,bjhw->bihw", rotation, plane).float()
+    total = torch.zeros_like(point[:, 0])
     for octave in range(octave_count(size)):
         scaled = point * 2.0**octave
-        total = total + gradient_noise(scaled[0], scaled[1], scaled[2])
+        total = total + gradient_noise(scaled[:, 0], scaled[:, 1], scaled[:, 2])
     value = 0.5 + 0.5 * total
     return value if gamma == 1 else torch.where(value > 0, value.abs() ** (1 / gamma), value)
 
@@ -81,11 +84,13 @@ def blur(image: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
     )
 
 
-def response(image: torch.Tensor, iso: int) -> torch.Tensor:
-    stops = ISO_STOPS[iso]
+def response(image: torch.Tensor, isos: list[int]) -> torch.Tensor:
+    stops = torch.tensor(
+        [ISO_STOPS[iso] for iso in isos], device=image.device, dtype=torch.float64
+    )[:, None, None]
     channels: list[torch.Tensor] = []
     for channel, curve in enumerate(FILM_RESPONSE):
-        value = image[channel].double() * 2.0**-stops
+        value = image[:, channel].double() * 2.0**-stops
         xs = torch.tensor(curve.table_x, device=image.device)
         ys = torch.tensor(curve.table_y, device=image.device)
         indices = torch.searchsorted(xs, value.contiguous()).clamp(1, xs.numel() - 1)
@@ -101,31 +106,50 @@ def response(image: torch.Tensor, iso: int) -> torch.Tensor:
             torch.where(value > float(curve.xs[-1]), above, inside),
         )
         channels.append(result * 2.0**stops)
-    return torch.stack(channels).float()
+    return torch.stack(channels, dim=1).float()
+
+
+def apply_grain_batch(images: torch.Tensor, params: list[GrainParams]) -> torch.Tensor:
+    """Borrow BCHW linear RGB and matching parameters; batch independent fields by profile."""
+    result = images.clone()
+    for name in dict.fromkeys(p.profile for p in params):
+        selected = [i for i, p in enumerate(params) if p.profile == name]
+        indices = torch.tensor(selected, device=images.device)
+        values = [params[i] for i in selected]
+        image = images[indices]
+        profile = PROFILES[name]
+        noise = torch.zeros_like(image)
+        seeds = torch.tensor([p.seed for p in values], device=images.device, dtype=torch.float64)
+        for size, amplitude, gamma, zoffset, channel in zip(
+            profile.sizes,
+            profile.amplitudes,
+            NOISE_GAMMA,
+            NOISE_ZOFFSET,
+            NOISE_CHANNEL,
+            strict=True,
+        ):
+            scale = torch.tensor(
+                [amplitude * exposure_level(p.exposure_offset) for p in values],
+                device=images.device,
+                dtype=torch.float32,
+            )[:, None, None]
+            field = (
+                noise_node((image.shape[-2], image.shape[-1]), size, seeds + zoffset, gamma) - 0.5
+            )
+            if channel is None:
+                noise = noise + (field * scale)[:, None]
+            else:
+                noise[:, channel] += field * scale
+        gain = torch.tensor(profile.channel_gain, device=images.device)[None, :, None, None]
+        noise = noise * gain
+        kernel = torch.tensor(SHARPEN_KERNEL, device=images.device, dtype=noise.dtype)
+        blurred = blur(noise, kernel)
+        sharpen = torch.tensor(profile.sharpen, device=images.device)[None, :, None, None]
+        amount = torch.tensor([p.amount for p in values], device=images.device)[:, None, None, None]
+        noise = (noise + sharpen * (noise - blurred)) * amount
+        result[indices] = image + noise * response(image, [p.iso for p in values])
+    return result
 
 
 def apply_grain(image: torch.Tensor, params: GrainParams) -> torch.Tensor:
-    """Borrow CHW linear RGB; return deterministic device-owned Alexa grain values."""
-    profile = PROFILES[params.profile]
-    level = exposure_level(params.exposure_offset)
-    noise = torch.zeros_like(image)
-    for size, amplitude, gamma, zoffset, channel in zip(
-        profile.sizes, profile.amplitudes, NOISE_GAMMA, NOISE_ZOFFSET, NOISE_CHANNEL, strict=True
-    ):
-        field = (
-            noise_node(
-                (image.shape[-2], image.shape[-1]), size, params.seed + zoffset, gamma, image.device
-            )
-            - 0.5
-        )
-        if channel is None:
-            noise = noise + field * (amplitude * level)
-        else:
-            noise[channel] += field * (amplitude * level)
-    gain = torch.tensor(profile.channel_gain, device=image.device)[:, None, None]
-    noise = noise * gain
-    kernel = torch.tensor(SHARPEN_KERNEL, device=image.device, dtype=noise.dtype)
-    blurred = blur(noise[None], kernel)[0]
-    amount = torch.tensor(profile.sharpen, device=image.device)[:, None, None]
-    noise = (noise + amount * (noise - blurred)) * params.amount
-    return image + noise * response(image, params.iso)
+    return apply_grain_batch(image[None], [params])[0]

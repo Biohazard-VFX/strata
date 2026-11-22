@@ -94,7 +94,7 @@ def _grade(rng: np.random.Generator, config: AugmentConfig, device: torch.device
     return torch.tensor(cpu_grade(rng, config), device=device)
 
 
-def recompose(
+def recompose_samples(
     shot: TensorShot,
     shot_roles: Roles,
     targets: dict[str, torch.Tensor],
@@ -103,7 +103,7 @@ def recompose(
     rng: np.random.Generator,
     config: AugmentConfig,
     record: dict[str, Any],
-) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+) -> tuple[torch.Tensor, dict[str, torch.Tensor] | TensorSamples]:
     """Borrow tensors and caller RNG; return an owned native image and matching targets."""
     device = shot.denoised.device
     scene = torch.eye(3, device=device, dtype=torch.float64)
@@ -117,7 +117,7 @@ def recompose(
     deep = shot.deep
     if rng.random() < config.instance_grade:
         assert deep is not None
-        present = cast(torch.Tensor, api.unique(deep.ids)).cpu().numpy()
+        present = cast(torch.Tensor, api.unique(api.unique_consecutive(deep.ids))).cpu().numpy()
         if present.size:
             count = min(
                 int(rng.integers(config.instance_count[0], config.instance_count[1] + 1)),
@@ -165,7 +165,25 @@ def recompose(
         return image, {**targets, "rgb": rgb}
     scoped = [replace(layer, matrix=scene @ layer.matrix.double()) for layer in layers]
     image, samples = compose(scoped, shot, scene)
-    return image, samples.targets(targets["alpha"].shape[0])
+    return image, samples
+
+
+def recompose(
+    shot: TensorShot,
+    shot_roles: Roles,
+    targets: dict[str, torch.Tensor],
+    donor: TensorShot | None,
+    donor_roles: Roles | None,
+    rng: np.random.Generator,
+    config: AugmentConfig,
+    record: dict[str, Any],
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    image, result = recompose_samples(
+        shot, shot_roles, targets, donor, donor_roles, rng, config, record
+    )
+    return image, result.targets(targets["alpha"].shape[0]) if isinstance(
+        result, TensorSamples
+    ) else result
 
 
 def _element(
@@ -183,7 +201,9 @@ def _element(
     scatter = torch.zeros_like(hero)
     for first, count in roles.scatter:
         scatter |= (deep.ids >= first) & (deep.ids < first + count)
-    scatter_ids = cast(torch.Tensor, api.unique(deep.ids[scatter])).cpu().numpy()
+    scatter_ids = (
+        cast(torch.Tensor, api.unique(api.unique_consecutive(deep.ids[scatter]))).cpu().numpy()
+    )
     if bool(hero.any()) and (rng.random() < config.hero or not scatter_ids.size):
         chosen = hero
         record["element"] = "hero"

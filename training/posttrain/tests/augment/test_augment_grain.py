@@ -93,8 +93,18 @@ def test_sharpen_matches_nuke_impulse_response() -> None:
     assert SHARPEN_KERNEL.size == 9
 
 
-def test_grain_statistics_match_nuke_render_of_studio_group() -> None:
-    noise = grain_noise((720, 1280), GrainParams("alexa_sxt", 800, 0.0, 777, 1.0))
+def test_grain_statistics_match_nuke_render_of_studio_group(math_device: str) -> None:
+    params = GrainParams("alexa_sxt", 800, 0.0, 777, 1.0)
+    if math_device == "cuda":
+        import torch
+
+        from strata_training.augment.torch_grain import apply_grain as tensor_grain
+
+        image = np.full((3, 720, 1280), 0.18, dtype=np.float32)
+        output = tensor_grain(torch.tensor(image, device=math_device), params).cpu().numpy()
+        noise = (output - image) / response(image, params.iso)
+    else:
+        noise = grain_noise((720, 1280), params)
     centred = noise - noise.mean(axis=(1, 2), keepdims=True)
     assert_allclose(centred.std(axis=(1, 2)), [0.01324, 0.01027, 0.0188], rtol=0.02)
     assert np.all(np.abs(noise.mean(axis=(1, 2))) < 0.02 * centred.std(axis=(1, 2)))

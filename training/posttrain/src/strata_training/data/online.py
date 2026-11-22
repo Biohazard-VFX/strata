@@ -13,7 +13,7 @@ import torch
 from strata_training.augment.deep import Shot, load_samples, read_samples, save_samples
 from strata_training.augment.pipeline import AugmentConfig, Donor, Roles, augment_sample, roles
 from strata_training.data.cache import display_rgb
-from strata_training.data.dataset import Frame, batch
+from strata_training.data.dataset import Frame, input_batch
 from strata_training.data.exr import read_rgb
 from strata_training.data.policy import require_supervision
 from strata_training.data.targets import composite
@@ -227,7 +227,7 @@ class OnlineLoader:
             clean_inputs = prepared.cached_inputs
             clean_pyramid = prepared.cached_pyramid or []
         elif prepared.clean:
-            clean_inputs, _, clean_pyramid = batch(
+            clean_inputs, clean_pyramid = input_batch(
                 self.frames,
                 [prepared.selections[i] for i in prepared.clean],
                 crop,

@@ -42,7 +42,7 @@ def reduce_sorted_samples(
     alpha = alpha.double().clamp(0, 1)
     trans = transmittance(alpha, counts)
     weights = trans * alpha
-    keep = weights > 1e-12
+    keep = torch.nonzero(weights > 1e-12).flatten()
     pixel = torch.repeat_interleave(
         torch.arange(counts.numel(), device=depth.device), counts, output_size=depth.numel()
     )[keep]
