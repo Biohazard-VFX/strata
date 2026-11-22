@@ -21,6 +21,7 @@ LIMITS = {
     "flatten_error": (0.0, 0.005),
     "flatten_excess": (0.0, 0.005),
     "valid_id_fraction": (0.999, 1.0),
+    "coverage_channel": (1.0, 1.0),
     "camera_error": (0.0, 1e-3),
 }
 COVERED = 0.999
@@ -56,10 +57,11 @@ def deep_metrics(
     deep = read_deep(path)
     flat = flatten(deep)
     z, zback = deep.channels["Z"], deep.channels["ZBack"]
-    ids = instance_ids(deep)
-    valid = np.zeros(ids.size, bool)
-    for low, high in ranges:
-        valid |= (ids >= low) & (ids < high)
+    valid = np.zeros(int(deep.counts.sum()), bool)
+    if "coverage" in deep.channels:
+        ids = instance_ids(deep)
+        for low, high in ranges:
+            valid |= (ids >= low) & (ids < high)
     covered = flat.alpha >= COVERED
     residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
     return {
@@ -70,6 +72,7 @@ def deep_metrics(
         "flatten_error": float(np.abs(residual[covered]).mean()) if covered.any() else 0.0,
         "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
         "valid_id_fraction": float(valid.mean()) if valid.size else 1.0,
+        "coverage_channel": float("coverage" in deep.channels),
     }
 
 
