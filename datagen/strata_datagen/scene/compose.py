@@ -335,7 +335,7 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
         )
     _author_scatter(shot, library, stage, root)
     _author_thin(shot, stage)
-    camera.author(stage, "/World/camera", shot.track)
+    camera.author(stage, "/World/camera", shot.track, render.width, render.height)
     lighting.author(stage, "/World/lights", shot.light, shot.frames[0])
     settings.author(
         stage,

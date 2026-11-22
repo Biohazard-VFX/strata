@@ -27,7 +27,7 @@ class CameraTest(unittest.TestCase):
             choices=camera.CameraChoices(move="locked"),
         )
         stage = Usd.Stage.CreateInMemory()
-        cam = camera.author(stage, "/cam", track)
+        cam = camera.author(stage, "/cam", track, 1280, 720)
         self.assertAlmostEqual(
             cam.GetFocalLengthAttr().Get(Usd.TimeCode(1)), track.frame_lenses()[0, 0] / 100.0, places=4
         )
@@ -73,6 +73,30 @@ class CameraTest(unittest.TestCase):
                 self.assertLess(z, 0.0, move)
                 self.assertLess(abs(fx * x / -z), cx, move)
                 self.assertLess(abs(fy * y / -z), cy, move)
+
+
+class OutputAspectTest(unittest.TestCase):
+    def test_square_and_portrait_outputs_record_the_projection_karma_renders(self) -> None:
+        ground = build(sample_params(stream(3, "t")), stream(3, "n"))
+        choices = camera.CameraChoices(move="locked")
+        track = camera.sample(
+            stream(1, "c"), ground, np.array([0.0, 0.4, 0.0]), 1.6, frames=FRAMES, choices=choices
+        )
+        for width, height in ((1280, 720), (640, 640), (720, 1280)):
+            stage = Usd.Stage.CreateInMemory()
+            cam = camera.author(stage, "/cam", track, width, height)
+            horizontal = cam.GetHorizontalApertureAttr().Get() * camera.MM_PER_LENS_UNIT
+            vertical = cam.GetVerticalApertureAttr().Get() * camera.MM_PER_LENS_UNIT
+            if horizontal / vertical > width / height:
+                vertical = horizontal * height / width
+            else:
+                horizontal = vertical * width / height
+            focal = track.frame_lenses()[:, 0]
+            fx, fy, cx, cy = track.intrinsics(width, height).T
+            np.testing.assert_allclose(fx, focal / horizontal * width, rtol=1e-6)
+            np.testing.assert_allclose(fy, focal / vertical * height, rtol=1e-6)
+            np.testing.assert_allclose(fy, fx, rtol=1e-9)
+            np.testing.assert_allclose((cx, cy), (np.full_like(cx, width / 2), np.full_like(cy, height / 2)))
 
 
 class ForegroundTest(unittest.TestCase):

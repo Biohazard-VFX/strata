@@ -65,17 +65,23 @@ class CameraTrack:
         return np.linalg.inv(self.camera_to_world)
 
     def intrinsics(self, width: int, height: int) -> FloatArray:
-        """Per frame (fx, fy, cx, cy) in pixels."""
+        """Per frame (fx, fy, cx, cy) in pixels for square pixels and `aperture(width, height)`."""
         focal = self.frame_lenses()[:, 0]
+        horizontal, vertical = aperture(width, height)
         return np.stack(
             [
-                focal / SENSOR_MM[0] * width,
-                focal / SENSOR_MM[1] * height,
+                focal / horizontal * width,
+                focal / vertical * height,
                 np.full_like(focal, 0.5 * width),
                 np.full_like(focal, 0.5 * height),
             ],
             axis=-1,
         )
+
+
+def aperture(width: int, height: int) -> tuple[float, float]:
+    """Film back in mm with the output's aspect, so no aperture conform policy changes the projection."""
+    return SENSOR_MM[0], SENSOR_MM[0] * height / width
 
 
 def look_at(eye: FloatArray, target: FloatArray) -> FloatArray:
@@ -252,7 +258,7 @@ def sample(
     return CameraTrack(move, frames, poses, lenses, shutter)
 
 
-def author(stage: Usd.Stage, path: str, track: CameraTrack) -> UsdGeom.Camera:
+def author(stage: Usd.Stage, path: str, track: CameraTrack, width: int, height: int) -> UsdGeom.Camera:
     """Time-sampled transform at every frame plus one handle frame on each side for motion blur."""
     camera = UsdGeom.Camera.Define(stage, path)
     op = camera.AddTransformOp()
@@ -269,8 +275,9 @@ def author(stage: Usd.Stage, path: str, track: CameraTrack) -> UsdGeom.Camera:
         focal.Set(float(lens[0]) / MM_PER_LENS_UNIT, time)
         fstop.Set(float(lens[1]), time)
         focus.Set(float(lens[2]), time)
-    camera.CreateHorizontalApertureAttr(SENSOR_MM[0] / MM_PER_LENS_UNIT)
-    camera.CreateVerticalApertureAttr(SENSOR_MM[1] / MM_PER_LENS_UNIT)
+    horizontal, vertical = aperture(width, height)
+    camera.CreateHorizontalApertureAttr(horizontal / MM_PER_LENS_UNIT)
+    camera.CreateVerticalApertureAttr(vertical / MM_PER_LENS_UNIT)
     nearest = float(track.lenses[:, 2].min())
     camera.CreateClippingRangeAttr(Gf.Vec2f(min(CLIPPING_M[0], 0.1 * nearest), CLIPPING_M[1]))
     camera.CreateShutterOpenAttr(track.shutter[0])
