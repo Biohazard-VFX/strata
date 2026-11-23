@@ -82,8 +82,8 @@ def sky[Mask](alpha: _Coverage[Mask], foreground: _Coverage[Mask]) -> Mask:
 
 
 def coverage(
-    alpha: NDArray[np.float32],
-    weights: NDArray[np.float32],
+    alpha: NDArray[np.floating],
+    weights: NDArray[np.floating],
     counts: NDArray[np.int64],
     shape: tuple[int, int],
 ) -> dict[str, NDArray[np.float32]]:

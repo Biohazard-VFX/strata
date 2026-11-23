@@ -6,13 +6,18 @@ Schema for both files; `validate.py` checks a shot directory against it, against
 `strata_dataset.records.errors` and against the image files. Datagen packing and raw QA refuse
 records of any other version.
 
-0.5.0 keeps raw deep and immutable raw/merged sidecars on **every** frame: Strata is a video model
-and needs consecutive deep targets to learn and measure temporal stability. Frame-skipping deep
+0.5.0 keeps immutable merged deep, beauty and layers on **every** frame: Strata is a video model
+and needs consecutive deep targets to learn and measure temporal stability. Raw deep EXRs and NPY
+sample sidecars are deleted only after that frame passes raw QA and merged validation, and targets
+rebuilt from merged deep agree with its packed targets. A durable acceptance receipt binds the
+retained files, records and validation rules before deletion; interrupted deletion resumes safely. Frame-skipping deep
 policies are forbidden; records carrying `render.deep_stride` are rejected. Merged deep preserves
 both over-compositing and the sufficient statistics of the layer rule. Existing K=4 targets still come from raw samples,
 without changing their arithmetic or bytes. Older shots must be repacked from their original raw
 deep; changing a record's version does not create the new sidecars. The training loader continues
-to use raw sample sidecars; adoption of merged deep by that loader is separate.
+to use raw sample sidecars; training accepted merged-only shots requires separate loader adoption.
+`validate.py` permits absent raw files but requires valid merged deep on every declared frame;
+`check_shot` additionally requires matching raw acceptance and rechecks the merged reconstruction.
 
 0.4.0 carries roles in linear deep and beauty channels (`foreground`, `hero`, `fur`): Karma sums
 the channels of samples it merges, so role coverage stays exact through any merge, and role targets
@@ -36,10 +41,10 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   manifest.json
   camera.json
   beauty/0001.exr ... 0024.exr
-  deep/0001.exr ... 0024.exr     raw deep, retained on every frame
+  deep/0001.exr ... 0024.exr     raw deep, until each frame is accepted
   layers/0001.exr ... 0024.exr   K = 4 sky-inclusive layer targets and role coverage, every frame
   merged/<shot_id>_NNNN/deep.npz  merged deep and layer statistics, every frame
-  samples/<shot_id>_NNNN/        raw-sample sidecars of every frame
+  samples/<shot_id>_NNNN/        raw-sample sidecars, until each frame is accepted
   qa/NNNN.json      raw QA acceptance of each frame (identity of every input it validated)
   scene/            optional: the USD the shot was rendered from (reproducibility, not training input)
   qa.json           optional: the generator's acceptance report
@@ -117,7 +122,7 @@ alpha 1, the sky colour and inverse depth 0. Training reads these for every fram
 The same file holds, for every frame, float32 `roles.<role>` (`strata_dataset.roles.coverage`): the
 visible coverage of the role in the pixel, the sum over the frame's deep samples of the sample's
 role channel (premultiplied, nested by `strata_dataset.roles.nested`) times the transmittance in
-front, from the frame's own retained raw deep. A merged sample contributes exactly
+front, from the frame's own raw deep before acceptance. A merged sample contributes exactly
 its sources' share of each role; instance ids play no part. Every surface's role primvars follow its
 `manifest.instance_ids` range name (`strata_dataset.roles.membership`):
 
@@ -177,9 +182,10 @@ agree independently of the layer statistics. K=4 production targets remain packe
 
 ## samples/<shot_id>_NNNN/
 
-The raw samples of every frame,
+Before acceptance, each frame's raw samples are stored
 as uncompressed C-order NPY (`strata_dataset.samples`). A frame directory is write-once: it appears
-whole, by one rename, and is never changed afterwards; only an offline removal deletes it. It is a
+whole, by one rename, and is never rewritten. Acceptance deletes it after committing the retained
+frame; offline removal is allowed only while raw deep remains available. It is a
 real directory, never a symlink. `identity.json` records the SHA-256 of every file below, and its
 own SHA-256 is the frame's identity (recorded by raw QA). `strata_dataset.samples.read` opens the
 directory once, reads every file through that handle and verifies each against `identity.json`:

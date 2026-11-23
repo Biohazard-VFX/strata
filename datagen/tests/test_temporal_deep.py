@@ -1,40 +1,246 @@
 import dataclasses
 import io
 import json
+import os
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+import OpenEXR
 from jsonschema import Draft202012Validator
 
 import validate
 from strata_datagen import cli
+from strata_datagen.exr import read_deep
 from strata_datagen.qa import checks
 from strata_datagen.render import pack
 from strata_datagen.scene import compose
-from strata_dataset import records
+from strata_dataset import merged, records
 from tests.fixtures import SKY, Sample, write_shot
 
 PIXELS: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 2), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
 
 
+class Interrupted(BaseException):
+    pass
+
+
 class TemporalDeepTest(unittest.TestCase):
-    def test_finishing_retains_consecutive_raw_deep_and_both_sidecars(self) -> None:
+    def test_raw_retirement_follows_durable_acceptance_and_reruns_are_identical(self) -> None:
         with TemporaryDirectory() as temporary:
             shot = Path(temporary) / "shot"
             write_shot(shot, [PIXELS] * 3)
-            before = {path.name: path.read_bytes() for path in (shot / "deep").iterdir()}
-            self.assertTrue(cli.finish_task(shot, range(1, 4)))
-            self.assertEqual({path.name: path.read_bytes() for path in (shot / "deep").iterdir()}, before)
+            pack.pack(shot, range(1, 4))
             plan = pack.ShotFrames.load(shot)
-            for frame in range(1, 4):
-                self.assertTrue((plan.merged_dir(shot, frame) / "deep.npz").is_file())
-                self.assertTrue((plan.sample_dir(shot, frame) / "deep" / "z.npy").is_file())
-            self.assertEqual([result.failures for result in checks.accept(shot, range(1, 4))], [[], [], []])
+            before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in shot.glob("merged/*/deep.npz")}
+            synced: set[Path] = set()
+            fsync, unlink = os.fsync, Path.unlink
 
-    def test_missing_middle_frame_deep_is_invalid_despite_a_passed_receipt(self) -> None:
+            def sync(descriptor: int) -> None:
+                synced.add(Path(f"/proc/self/fd/{descriptor}").readlink())
+                fsync(descriptor)
+
+            def remove(path: Path, *, missing_ok: bool = False) -> None:
+                if path.parent == shot / "deep":
+                    frame = int(path.stem)
+                    receipt = shot / "qa" / f"{frame:04d}.json"
+                    accepted = json.loads(receipt.read_text())
+                    self.assertTrue(accepted["passed"])
+                    self.assertEqual(accepted["inputs"], checks.inputs(shot, frame))
+                    self.assertEqual(accepted["metrics"]["rebuilt_mismatch"], 0)
+                    retained = [
+                        receipt,
+                        shot / "beauty" / path.name,
+                        shot / "layers" / path.name,
+                        plan.merged_dir(shot, frame) / "deep.npz",
+                        shot / "manifest.json",
+                        shot / "camera.json",
+                    ]
+                    required = {*retained, *(p.parent for p in retained), shot, shot / "merged"}
+                    self.assertLessEqual(required, synced)
+                unlink(path, missing_ok=missing_ok)
+
+            with mock.patch.object(os, "fsync", sync), mock.patch.object(Path, "unlink", remove):
+                self.assertEqual([r.failures for r in checks.accept(shot, range(1, 4))], [[], [], []])
+            for frame in range(1, 4):
+                self.assertFalse((shot / "deep" / f"{frame:04d}.exr").exists())
+                self.assertFalse(plan.sample_dir(shot, frame).exists())
+                self.assertTrue((plan.merged_dir(shot, frame) / "deep.npz").is_file())
+            retained = {
+                p: (p.read_bytes(), p.stat().st_mtime_ns)
+                for p in shot.rglob("*")
+                if p.is_file() and not p.name.startswith(".")
+            }
+            self.assertTrue(cli.finish_task(shot, range(1, 4)))
+            self.assertTrue(checks.check_shot(shot)["passed"])
+            self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in retained}, retained)
+            self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before}, before)
+            with self.assertRaisesRegex(ValueError, "cannot remove merged deep without raw"):
+                pack.remove_samples(shot, range(1, 4))
+            self.assertTrue(checks.check_shot(shot)["passed"])
+
+    def test_interruptions_at_each_durability_and_deletion_boundary_recover(self) -> None:
+        for operation, stops in (
+            ("sync", range(1, 19)),
+            ("receipt", range(1, 3)),
+            ("raw", range(1, 3)),
+            ("npy", range(1, 3)),
+        ):
+            for stop in stops:
+                with self.subTest(operation=operation, stop=stop), TemporaryDirectory() as temporary:
+                    self.interrupted_accept(Path(temporary) / "shot", operation, stop)
+
+    def interrupted_accept(self, shot: Path, operation: str, stop: int) -> None:
+        write_shot(shot, [PIXELS])
+        pack.pack(shot, range(1, 2))
+        plan = pack.ShotFrames.load(shot)
+        raw = shot / "deep" / "0001.exr"
+        count = 0
+        fsync, replace, unlink, remove = os.fsync, Path.replace, Path.unlink, os.unlink
+
+        def interrupt() -> None:
+            nonlocal count
+            count += 1
+            if count == stop:
+                raise Interrupted
+
+        def sync(descriptor: int) -> None:
+            interrupt()
+            fsync(descriptor)
+
+        def publish(path: Path, target: Path) -> Path:
+            if operation == "receipt" and target.parent == shot / "qa":
+                interrupt()
+                result = replace(path, target)
+                interrupt()
+                return result
+            return replace(path, target)
+
+        def retire(path: Path, *, missing_ok: bool = False) -> None:
+            if operation == "raw" and path == raw:
+                interrupt()
+                unlink(path, missing_ok=missing_ok)
+                interrupt()
+            else:
+                unlink(path, missing_ok=missing_ok)
+
+        def retire_array(path: str, *, dir_fd: int | None = None) -> None:
+            if operation == "npy" and str(path).endswith(".npy"):
+                interrupt()
+                remove(path, dir_fd=dir_fd)
+                interrupt()
+            else:
+                remove(path, dir_fd=dir_fd)
+
+        with (
+            mock.patch.object(os, "fsync", sync if operation == "sync" else fsync),
+            mock.patch.object(Path, "replace", publish),
+            mock.patch.object(Path, "unlink", retire),
+            mock.patch.object(os, "unlink", retire_array),
+            self.assertRaises(Interrupted),
+        ):
+            checks.accept(shot, range(1, 2))
+        self.assertEqual(merged.errors(plan.merged_dir(shot, 1) / "deep.npz", (1, 3)), [])
+        self.assertTrue(cli.finish_task(shot, range(1, 2)))
+        self.assertFalse(raw.exists())
+        self.assertFalse(plan.sample_dir(shot, 1).exists())
+        self.assertTrue(checks.check_shot(shot)["passed"])
+
+    def test_bookkeeping_replacement_is_durable_after_raw_retirement(self) -> None:
+        with TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            write_shot(shot, [PIXELS])
+            synced: set[Path] = set()
+            fsync, replace = os.fsync, Path.replace
+
+            def sync(descriptor: int) -> None:
+                synced.add(Path(f"/proc/self/fd/{descriptor}").readlink())
+                fsync(descriptor)
+
+            def publish(path: Path, target: Path) -> Path:
+                if target == shot / "manifest.json":
+                    self.assertIn(path, synced)
+                    self.assertFalse((shot / "deep" / "0001.exr").exists())
+                return replace(path, target)
+
+            with (
+                mock.patch.object(os, "fsync", sync),
+                mock.patch.object(Path, "replace", publish),
+                mock.patch.object(cli.husk, "run", return_value={"exit_code": 0}),
+            ):
+                result = cli.render_task(shot, range(1, 2), "husk")
+            self.assertTrue(result["post_passed"])
+            self.assertEqual(json.loads((shot / "manifest.json").read_text())["timings"], result)
+            self.assertTrue(checks.check_shot(shot)["passed"])
+
+    def test_offline_removal_requires_durable_repackable_replacement_raw(self) -> None:
+        with TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            write_shot(shot, [PIXELS])
+            raw = shot / "deep" / "0001.exr"
+            original = raw.read_bytes()
+            self.assertTrue(cli.finish_task(shot, range(1, 2)))
+            plan = pack.ShotFrames.load(shot)
+            archive = plan.merged_dir(shot, 1) / "deep.npz"
+            accepted = archive.read_bytes()
+            for data in (b"", original[: len(original) // 2]):
+                raw.write_bytes(data)
+                with self.subTest(size=len(data)), self.assertRaises((ValueError, OSError, RuntimeError)):
+                    pack.remove_samples(shot, range(1, 2))
+                self.assertEqual(archive.read_bytes(), accepted)
+            for channel in ("A", "ZBack"):
+                raw.write_bytes(original)
+                part = OpenEXR.File(str(raw), separate_channels=True).parts[0]
+                del part.channels[channel]
+                OpenEXR.File(dict(part.header), part.channels).write(str(raw))
+                self.assertNotIn(channel, read_deep(raw).channels)
+                with self.subTest(channel=channel), self.assertRaisesRegex(KeyError, channel):
+                    pack.remove_samples(shot, range(1, 2))
+                self.assertEqual(archive.read_bytes(), accepted)
+            raw.write_bytes(original)
+            with mock.patch.object(os, "fsync", side_effect=Interrupted), self.assertRaises(Interrupted):
+                pack.remove_samples(shot, range(1, 2))
+            self.assertEqual(archive.read_bytes(), accepted)
+            synced: set[Path] = set()
+            fsync, rename = os.fsync, Path.rename
+
+            def sync(descriptor: int) -> None:
+                synced.add(Path(f"/proc/self/fd/{descriptor}").readlink())
+                fsync(descriptor)
+
+            def retire(path: Path, target: Path) -> Path:
+                self.assertLessEqual({raw, raw.parent}, synced)
+                return rename(path, target)
+
+            with mock.patch.object(os, "fsync", sync), mock.patch.object(Path, "rename", retire):
+                self.assertEqual(pack.remove_samples(shot, range(1, 2)), [1])
+            self.assertFalse(archive.exists())
+            pack.pack(shot, range(1, 2))
+            self.assertEqual([r.failures for r in checks.accept(shot, range(1, 2))], [[]])
+            self.assertTrue(checks.check_shot(shot)["passed"])
+
+    def test_rebuild_disagreement_keeps_raw_even_when_raw_qa_passes(self) -> None:
+        with TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            write_shot(shot, [PIXELS])
+            pack.pack(shot, range(1, 2))
+            original = merged.Merged.targets
+
+            def wrong(runs: merged.Merged, count: int = 4) -> object:
+                result = original(runs, count)
+                result.inverse_depth[0, 0, 0] += 0.1
+                return result
+
+            with mock.patch.object(merged.Merged, "targets", wrong):
+                result = checks.accept(shot, range(1, 2))[0]
+            self.assertIn("rebuilt_mismatch=1 outside 0.0..0.0", result.failures)
+            self.assertTrue((shot / "deep" / "0001.exr").is_file())
+            self.assertTrue(pack.ShotFrames.load(shot).sample_dir(shot, 1).is_dir())
+            self.assertFalse(json.loads((shot / "qa" / "0001.json").read_text())["passed"])
+
+    def test_merged_only_shot_requires_every_frame_and_matching_acceptance(self) -> None:
         with (
             TemporaryDirectory() as temporary,
             mock.patch.object(validate, "_schema_errors", return_value=[]),
@@ -46,16 +252,25 @@ class TemporalDeepTest(unittest.TestCase):
             self.assertEqual(validate.validate(shot), [])
             plan = pack.ShotFrames.load(shot)
             for path, expected in (
-                (shot / "deep" / "0002.exr", "missing raw deep for frame 2"),
                 (plan.merged_dir(shot, 2) / "deep.npz", "merged"),
+                (shot / "qa" / "0002.json", "matching acceptance"),
             ):
                 with self.subTest(path=path.name):
                     original = path.read_bytes()
                     path.unlink()
-                    self.assertTrue(any(expected in error for error in validate.validate(shot)))
+                    if expected == "merged":
+                        self.assertTrue(any(expected in error for error in validate.validate(shot)))
                     self.assertFalse(checks.check_shot(shot)["passed"])
                     path.write_bytes(original)
             self.assertEqual(validate.validate(shot), [])
+            manifest_path = shot / "manifest.json"
+            original = manifest_path.read_text()
+            manifest = json.loads(original)
+            manifest["instance_ids"] = [r for r in manifest["instance_ids"] if r["name"] != "hero_skin"]
+            manifest_path.write_text(json.dumps(manifest))
+            self.assertFalse(checks.check_shot(shot)["passed"])
+            manifest_path.write_text(original)
+            self.assertTrue(checks.check_shot(shot)["passed"])
 
     def test_frame_skipping_manifest_fields_and_public_controls_are_rejected(self) -> None:
         render = {

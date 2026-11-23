@@ -26,14 +26,17 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   time samples. QA bounds per-frame camera steps.
 - `strata_datagen/render/pack.py`: after each render task, sky-inclusive K-layer targets and role
   coverage for every frame (`strata_dataset.layers` and `strata_dataset.roles`, in
-  `../contract/dataset`), contract 0.5.0 raw and merged sidecars on every frame. Raw deep also stays
+  `../contract/dataset`), contract 0.5.0 raw and merged sidecars on every frame. Merged deep stays
   on every frame: the video model needs consecutive deep targets for temporal stability. Roles come from the linear deep
   role channels (`foreground`, `hero`, `fur`), which every surface carries as 0/1 primvars chosen by
   its id range name (`usdutil.tag_instances`); instance ids are only a best-effort per-object label
   (`strata_dataset.identity.decode`, id -1 where the integer residual or either hash check fails).
   Pack and accept refuse records of any other contract version or any frame-skipping deep policy.
-  `accept` runs raw QA per frame and records it; raw deep is never pruned. Sidecars are write-once; to repack a
-  changed frame, stop every reader and run `remove-samples` first. Every command that changes a shot (build, render,
+  `accept` runs raw QA and validates merged reconstruction per frame, commits and fsyncs acceptance
+  and retained files, then removes that frame's raw EXR and NPY sidecars. Failed frames keep raw.
+  A retry validates the retained identities and resumes interrupted deletion without rewriting
+  acceptance or merged data. Sidecars are write-once; to repack a changed frame, re-render raw if
+  already accepted, stop every reader and run `remove-samples` first. Every command that changes a shot (build, render,
   render-task, pack, accept, remove-samples, qa) holds an exclusive `flock` on `<shot>/.lock`; a locked shot is
   refused, not waited for. The kernel releases the lock when the last process holding it exits.
 - `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).

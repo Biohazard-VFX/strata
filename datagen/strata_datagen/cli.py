@@ -82,9 +82,10 @@ def cmd_build(args: argparse.Namespace) -> None:
 
 
 def finish_task(shot: Path, frames: range) -> bool:
-    """Pack and raw-QA every rendered frame, retaining all deep; False when raw QA fails."""
-    pack.pack(shot, frames)
-    return _accepted(shot, frames)
+    """Pack and accept every frame; only accepted frames retire raw deep and NPY sidecars."""
+    with shotlock.held(shot):
+        pack.pack(shot, frames)
+        return _accepted(shot, frames)
 
 
 def render_task(shot: Path, frames: range, husk_path: str) -> dict[str, object]:
@@ -96,7 +97,7 @@ def render_task(shot: Path, frames: range, husk_path: str) -> dict[str, object]:
         manifest_path = shot / "manifest.json"
         manifest = export.load_json(manifest_path)
         manifest["timings"] = timings
-        files.write_text(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+        files.write_durable(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
     return timings
 
 

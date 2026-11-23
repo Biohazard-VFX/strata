@@ -38,6 +38,7 @@ class RawEvidenceTest(unittest.TestCase):
             write_shot(shot, [CLEAN, SKY_IN_FRONT])
             self.assertFalse(cli.finish_task(shot, range(1, 3)))
             self.assertTrue((shot / "deep" / "0002.exr").exists())
+            self.assertTrue(pack.ShotFrames.load(shot).sample_dir(shot, 2).is_dir())
             self.assertFalse(checks.check_shot(shot)["passed"])
             self.assertTrue(any("frame 2: sky_in_front" in f for f in shot_failures(shot)))
 
@@ -68,22 +69,9 @@ class RawEvidenceTest(unittest.TestCase):
                     _change_beauty_role(shot / "beauty" / "0002.exr", name, change)
                     passed = cli.finish_task(shot, range(1, 3))
                     self.assertEqual(passed, change == "roundoff")
-                    self.assertTrue((shot / "deep" / "0002.exr").exists())
+                    self.assertEqual((shot / "deep" / "0002.exr").exists(), not passed)
                     frames = cast("list[dict[str, float]]", checks.check_shot(shot)["frames"])
                     self.assertEqual(frames[1]["beauty_roles"], float(change not in ("drop", "nan")))
-
-    def test_missing_raw_deep_cannot_stand_on_an_acceptance_receipt(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN, CLEAN, CLEAN])
-            self.assertTrue(cli.finish_task(shot, range(1, 4)))
-            self.assertEqual(
-                sorted(p.name for p in (shot / "deep").iterdir()), ["0001.exr", "0002.exr", "0003.exr"]
-            )
-            self.assertEqual(shot_failures(shot), [])
-            (shot / "deep" / "0002.exr").unlink()
-            self.assertIn("frame 2: missing raw deep", shot_failures(shot))
-            self.assertTrue(checks.accept(shot, range(2, 3))[0].failures)
 
     def test_targets_are_checked_against_the_raw_deep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,7 +89,7 @@ class RawEvidenceTest(unittest.TestCase):
             shot = Path(tmp) / "s"
             write_shot(shot, [CLEAN, CLEAN])
             pack.pack(shot, range(1, 3))
-            self.assertEqual([r.failures for r in checks.accept(shot, range(1, 3))], [[], []])
+            self.assertEqual(shot_failures(shot), [])
             _drop_hero_ids(shot)
             self.assertTrue((shot / "deep" / "0002.exr").exists())
             failures = shot_failures(shot)
@@ -162,16 +150,17 @@ class MergedSampleTest(unittest.TestCase):
                     for i in sorted(set(sources) - declared)
                 ]
                 (shot / "manifest.json").write_text(json.dumps(manifest))
+                pack.pack(shot, range(1, 3))
+                arrays = contract_samples.load(pack.ShotFrames.load(shot).sample_dir(shot, 1))
                 finished = cli.finish_task(shot, range(1, 3))
                 passed = bool(checks.check_shot(shot)["passed"])
                 self.assertEqual(finished, passed)
-                self.assertTrue((shot / "deep" / "0002.exr").exists())
+                self.assertEqual((shot / "deep" / "0002.exr").exists(), not passed)
                 for frame in (1, 2):
                     layers = read_flat(shot / "layers" / f"{frame:04d}.exr")
                     for role, value in zip(roles.ROLES, sample.role_values(), strict=True):
                         self.assertEqual(float(layers[f"roles.{role}"][0, 0]), float(np.float32(value)))
                     self.assertEqual(float(layers["roles.foreground"][0, 1]), 0.5)
-                arrays = contract_samples.load(pack.ShotFrames.load(shot).sample_dir(shot, 1))
                 found = int(arrays["ids"][0])
                 np.testing.assert_array_equal(arrays["roles"][0], np.array(sample.role_values(), np.float32))
                 if found == identity.UNLABELLED:
@@ -255,7 +244,7 @@ class RoleTest(unittest.TestCase):
             manifest["instance_ids"].append({"name": "hero_hair", "first_id": 4, "count": 1})
             (shot / "manifest.json").write_text(json.dumps(manifest))
             self.assertTrue(cli.finish_task(shot, range(1, 4)))
-            self.assertTrue((shot / "deep" / "0002.exr").exists())
+            self.assertFalse((shot / "deep" / "0002.exr").exists())
             expected = {
                 1: {"foreground": [1.0, 0.5, 0.0], "hero": [1.0, 0.0, 0.0], "fur": [0.0, 0.0, 0.0]},
                 2: {"foreground": [1.0, 0.5, 0.0], "hero": [1.0, 0.0, 0.0], "fur": [0.5, 0.0, 0.0]},
@@ -276,7 +265,7 @@ class RoleTest(unittest.TestCase):
             pack.write_layers({k: v for k, v in frame.items() if not k.startswith("roles.")}, target)
             failures = shot_failures(shot)
             self.assertIn("frame 2: role_coverage=0 outside 1.0..1.0", failures)
-            self.assertTrue(any(f.startswith("frame 2: target_mismatch") for f in failures))
+            self.assertTrue(any(f.startswith("frame 2: rebuilt_mismatch") for f in failures))
 
 
 class SidecarTest(unittest.TestCase):

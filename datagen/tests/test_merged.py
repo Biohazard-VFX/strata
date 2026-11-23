@@ -150,11 +150,12 @@ class MergedDeepTest(unittest.TestCase):
             self.assertTrue(checks.accept(shot, range(2, 3))[0].failures)
             path.write_bytes(good)
             self.assertEqual(checks.accept(shot, range(2, 3))[0].failures, [])
-            self.assertTrue((shot / "deep" / "0002.exr").is_file())
+            self.assertFalse((shot / "deep" / "0002.exr").exists())
             path.unlink()
             self.assertFalse(checks.check_shot(shot)["passed"])
-            self.assertEqual(pack.remove_samples(shot, range(1, 3)), [1, 2])
-            self.assertFalse(plan.merged_dir(shot, 1).exists())
+            with self.assertRaisesRegex(ValueError, "cannot remove merged deep without raw"):
+                pack.remove_samples(shot, range(1, 3))
+            self.assertTrue(plan.merged_dir(shot, 1).exists())
 
     def test_contract_validator_rejects_malformed_merged_sidecars(self) -> None:
         with (

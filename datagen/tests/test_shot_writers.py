@@ -93,7 +93,7 @@ class ShotWriterTest(unittest.TestCase):
         shot = self.root / "shots" / "s"
         write_shot(shot, [PIXELS])
         with watching(self.root) as watch:
-            for name in ("pack", "accept", "remove-samples"):
+            for name in ("pack", "remove-samples", "pack", "accept"):
                 self.run_command(frame_args(name, shot))
         self.assertGreater(watch.writes, 0)
         self.assertEqual((watch.unlocked, watch.unexplained), ([], []))

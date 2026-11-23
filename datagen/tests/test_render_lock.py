@@ -64,12 +64,11 @@ class RenderLockTest(unittest.TestCase):
         self.directory.cleanup()
 
     def build(self, name: str) -> dict[str, str]:
-        """A packed, accepted two-frame shot with its job list; returns the environment for its job."""
+        """A packed two-frame shot with its job list; returns the environment for its job."""
         self.root = Path(self.directory.name) / name
         self.shot = self.root / "shots" / "s"
         write_shot(self.shot, [FIRST, FIRST])
         pack.pack(self.shot, FRAMES)
-        self.assertEqual([r.failures for r in checks.accept(self.shot, FRAMES)], [[], []])
         husk.write_job_list(self.root, husk.jobs(self.shot, self.root, tuple(FRAMES), husk.CHUNK_FRAMES))
         self.barrier = self.root / "barrier"
         self.barrier.mkdir()
@@ -114,7 +113,7 @@ class RenderLockTest(unittest.TestCase):
                     (self.barrier / GO).touch()
                     job.wait(TIMEOUT_S)
                 self.assertEqual(job.returncode, 0)
-                self.assertTrue((self.shot / "deep" / "0002.exr").exists())
+                self.assertFalse((self.shot / "deep" / "0002.exr").exists())
                 self.assertTrue(free(self.shot))
 
     def test_the_shot_stays_locked_while_the_renderer_outlives_a_killed_render(self) -> None:

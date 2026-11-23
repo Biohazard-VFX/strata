@@ -49,7 +49,7 @@
 - Farm nodes never write a local shot: downloaded output enters only via `ingest`, staged in the shot and renamed in under the lock.
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
-- Every frame gets float32 sky-inclusive K=4 targets (strata_dataset.layers, sky = samples under half foreground); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.
+- Every frame gets float32 sky-inclusive K=4 targets (strata_dataset.layers, sky = samples under half foreground); acceptance and retention follow docs/DECISIONS.md.
 - Thin structures are self-authored: flexible elements (cable, fence wire, twine, rope) as linear BasisCurves, rigid ones (posts, rails, bars) as tube meshes.
 - Thin-structure widths are drawn in pixels of a 1280-wide frame, main elements 0.15-5 px and members at most 24 px unless a kind's physical minimum is wider.
 - Thin structures sit in a depth band (foreground, between camera and subject, background) and are rejected if they come near any camera position or the subject.

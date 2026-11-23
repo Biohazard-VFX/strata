@@ -1,12 +1,8 @@
-"""Per-shot acceptance checks; a shot that fails any check is rejected from the dataset.
-
-Raw deep stays on every frame. `accept` records each frame's raw QA result and the identity of every
-input it validated (`inputs`); `check_shot` re-checks every raw frame and packed target. A receipt
-never replaces missing raw deep. Acceptance holds the shot's writer lock.
-"""
+"""Raw QA commits durable acceptance before retiring redundant raw evidence under the shot lock."""
 
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -23,7 +19,7 @@ from strata_datagen.render import pack
 from strata_dataset import identity, merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
 
-VALIDATION = "raw-qa-6"
+VALIDATION = "raw-qa-7"
 LUMA = (0.2126, 0.7152, 0.0722)
 ROLE_EXCESS = 2.0**-15
 ROLE_BEAUTY = 2.0**-15
@@ -55,6 +51,7 @@ LIMITS = {
     "target_mismatch": (0.0, 0.0),
     "samples_mismatch": (0.0, 0.0),
     "merged_mismatch": (0.0, 0.0),
+    "rebuilt_mismatch": (0.0, 0.0),
 }
 COVERED = 0.999
 SKY_MIN_Z_M = 0.25 * BACKDROP_M
@@ -369,6 +366,69 @@ def _raw_metrics(
     return metrics, failures
 
 
+def _rebuilt_metrics(shot: Path, frame: int, shape: tuple[int, ...]) -> tuple[dict[str, float], list[str]]:
+    plan = pack.ShotFrames.load(shot)
+    path = plan.merged_dir(shot, frame) / "deep.npz"
+    errors = merged.errors(path, (shape[0], shape[1]))
+    if errors:
+        return {"rebuilt_mismatch": 1.0}, errors
+    runs = merged.read(path)
+    rebuilt = pack.layer_channels(runs.targets()) | roles.coverage(
+        runs.alpha, runs.roles, np.diff(runs.offsets), runs.shape
+    )
+    target = _paths(shot, frame)["layers"]
+    stored = read_flat(target) if target.is_file() else {}
+    equal = rebuilt.keys() <= stored.keys() and all(
+        np.allclose(value, stored[name], rtol=1e-5, atol=1e-12)
+        if name.endswith((".R", ".G", ".B"))
+        else np.allclose(value, stored[name], rtol=0.0, atol=1e-5)
+        for name, value in rebuilt.items()
+    )
+    masks = equal and all(
+        np.array_equal(rebuilt[name] > 0, stored[name] > 0)
+        for name in rebuilt
+        if name.endswith((".A", ".invdepth"))
+    )
+    return {"rebuilt_mismatch": float(not masks)}, []
+
+
+def _accepted_metrics(shot: Path, frame: int) -> dict[str, float] | None:
+    try:
+        receipt = cast("dict[str, object]", json.loads(_paths(shot, frame)["acceptance"].read_text()))
+    except (OSError, ValueError):
+        return None
+    if receipt.get("frame") != frame or receipt.get("passed") is not True or receipt.get("failures") != []:
+        return None
+    checked = cast("dict[str, str | None]", receipt.get("inputs", {}))
+    current = inputs(shot, frame)
+    retained = ("validation", "manifest", "camera", "beauty", "targets", "merged")
+    if any(current[key] is None or checked.get(key) != current[key] for key in retained):
+        return None
+    if not checked.get("deep") or not checked.get("samples"):
+        return None
+    if current["deep"] is not None and current["deep"] != checked["deep"]:
+        return None
+    return cast("dict[str, float]", receipt["metrics"])
+
+
+def _retire_raw(shot: Path, frame: int) -> None:
+    paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
+    retained = [paths[key] for key in ("beauty", "layers", "acceptance")]
+    retained += [plan.merged_dir(shot, frame) / "deep.npz", shot / "manifest.json", shot / "camera.json"]
+    for path in retained:
+        files.sync(path)
+        files.sync(path.parent)
+    files.sync(shot / "merged")
+    files.sync(shot)
+    paths["deep"].unlink(missing_ok=True)
+    if paths["deep"].parent.is_dir():
+        files.sync(paths["deep"].parent)
+    directory = plan.sample_dir(shot, frame)
+    if directory.exists():
+        shutil.rmtree(directory)
+        files.sync(directory.parent)
+
+
 def check_frame(
     shot: Path, frame: int, record: dict[str, object], ranges: list[tuple[int, int]]
 ) -> FrameResult:
@@ -382,11 +442,17 @@ def check_frame(
         metrics.update(target_metrics(paths["layers"], beauty))
     else:
         failures.append("missing layers")
-    raw, found = (
-        _raw_metrics(shot, frame, beauty, ranges) if paths["deep"].exists() else ({}, ["missing raw deep"])
-    )
+    accepted = _accepted_metrics(shot, frame)
+    if accepted is not None:
+        raw, found = accepted, []
+    elif paths["deep"].exists():
+        raw, found = _raw_metrics(shot, frame, beauty, ranges)
+    else:
+        raw, found = {}, ["missing raw deep without matching acceptance"]
     metrics.update(raw)
-    failures += found
+    rebuilt, found_merged = _rebuilt_metrics(shot, frame, beauty["R"].shape)
+    metrics.update(rebuilt)
+    failures += found + found_merged
     metrics["camera_error"] = _camera_error(paths["beauty"], record)
     metrics["intrinsics_error"] = _intrinsics_error(paths["beauty"], record)
     failures += [f"{k}={metrics[k]:.4g}" for k in ("nonfinite", "bad_depth") if metrics.get(k, 0.0) > 0]
@@ -406,7 +472,7 @@ def _records(shot: Path) -> tuple[dict[int, dict[str, object]], list[tuple[int, 
 
 
 def accept(shot: Path, frames: range) -> list[FrameResult]:
-    """Raw QA of every rendered, packed frame; record each result and its inputs without removing deep."""
+    """Accept every packed frame, durably bind its retained inputs, then retire its redundant raw data."""
     with shotlock.held(shot):
         return _accept(shot, frames)
 
@@ -419,9 +485,16 @@ def _accept(shot: Path, frames: range) -> list[FrameResult]:
         checked = inputs(shot, frame)
         result = check_frame(shot, frame, records[frame], ranges)
         results.append(result)
-        if not paths["deep"].exists():
+        if result.failures:
+            if paths["deep"].exists():
+                files.write_text(
+                    paths["acceptance"], json.dumps({"passed": False, "failures": result.failures})
+                )
             continue
-        files.write_text(
+        if _accepted_metrics(shot, frame) is not None:
+            _retire_raw(shot, frame)
+            continue
+        files.write_durable(
             paths["acceptance"],
             json.dumps(
                 {
@@ -435,6 +508,7 @@ def _accept(shot: Path, frames: range) -> list[FrameResult]:
             )
             + "\n",
         )
+        _retire_raw(shot, frame)
     return results
 
 
@@ -491,8 +565,6 @@ def check_shot(shot: Path) -> dict[str, object]:
     ranges = _id_ranges(manifest)
     results = [check_frame(shot, cast("int", f["frame"]), f, ranges) for f in frames]
     failures += [f"frame {r.frame}: {f}" for r in results for f in r.failures]
-    if not any(_paths(shot, r.frame)["deep"].exists() for r in results):
-        failures.append("no raw deep frame")
     summary = {
         k: float(np.mean([r.metrics[k] for r in results if k in r.metrics]))
         for k in sorted({k for r in results for k in r.metrics})

@@ -29,4 +29,4 @@
 - CUDA and the PyTorch oracles disable TF32 so float32 operations keep IEEE precision; allocator, arena and threads stay at ONNX Runtime defaults.
 - TensorRT, CoreML and DirectML are out of scope until each lands with a test and a measurement.
 - The CLI refuses outputs inside the model's directory instead of parsing ONNX for external data, which ONNX Runtime confines to that directory.
-- Keep raw and merged deep on every frame: Strata is a video model and needs consecutive deep targets to learn and measure temporal stability.
+- Keep merged deep, beauty and layers on every frame; delete raw EXRs and NPY sidecars only after durable acceptance verifies merged rebuilds the packed targets, making raw redundant.

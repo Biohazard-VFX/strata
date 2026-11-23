@@ -1,11 +1,4 @@
-"""Every frame keeps raw deep, layer targets, roles and raw/merged sample sidecars.
-
-Roles come from the deep role channels (`strata_dataset.roles`), never from instance ids.
-
-Raw deep stays on every frame for temporal supervision and QA evidence. Sidecars are write-once:
-a frame's directory is published whole and never changed; only offline `remove_samples` deletes it.
-Every change holds the shot's writer lock.
-"""
+"""Publish every frame's targets and raw/merged sidecars; acceptance alone retires redundant raw data."""
 
 import json
 import os
@@ -19,7 +12,7 @@ import numpy as np
 import OpenEXR
 from numpy.typing import NDArray
 
-from strata_datagen import shotlock
+from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.qa.deep import instance_ids
 from strata_dataset import merged, records, roles, segmented
@@ -96,6 +89,13 @@ def samples(deep: Deep) -> Samples:
         nested,
         instance_ids(deep, order),
     )
+
+
+def read_samples(path: Path) -> Samples:
+    deep = read_deep(path)
+    for channel in ("A", "ZBack"):
+        del deep.channels[channel]
+    return samples(deep)
 
 
 def layers(frame: Samples) -> Layers:
@@ -210,12 +210,26 @@ def write_merged(frame: Samples, published: Path) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _replacement_raw(shot: Path, frame: int) -> None:
+    raw = shot / "deep" / f"{frame:04d}.exr"
+    replacement = read_samples(raw)
+    shape = _shape(shot, frame)
+    errors = contract_samples.sample_errors(replacement.arrays(), shape[0] * shape[1])
+    if replacement.shape != shape or errors:
+        raise ValueError(f"frame {frame}: replacement raw cannot be repacked: {errors}")
+    files.sync(raw)
+    files.sync(raw.parent)
+
+
 def remove_samples(shot: Path, frames: range) -> list[int]:
     """Offline: delete the published sidecars of `frames` and abandoned staging; readers must be stopped."""
     plan = ShotFrames.load(shot)
     removed: list[int] = []
     with shotlock.held(shot):
         for frame in frames:
+            if not (shot / "deep" / f"{frame:04d}.exr").is_file():
+                raise ValueError(f"frame {frame}: cannot remove merged deep without raw; re-render first")
+            _replacement_raw(shot, frame)
             removed_frame = False
             for published in (plan.sample_dir(shot, frame), plan.merged_dir(shot, frame)):
                 if not published.exists(follow_symlinks=False):
@@ -231,6 +245,13 @@ def remove_samples(shot: Path, frames: range) -> list[int]:
     return removed
 
 
+def _shape(shot: Path, frame: int) -> tuple[int, int]:
+    camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
+    records = cast("list[dict[str, int]]", camera["frames"])
+    record = next(record for record in records if record["frame"] == frame)
+    return record["height"], record["width"]
+
+
 def pack(shot: Path, frames: range) -> None:
     """Write targets and raw/merged sidecars for every frame; never removes raw deep.
 
@@ -240,11 +261,13 @@ def pack(shot: Path, frames: range) -> None:
     with shotlock.held(shot):
         for frame in frames:
             name = f"{frame:04d}.exr"
-            deep = read_deep(shot / "deep" / name)
-            for channel in ("A", "ZBack"):
-                del deep.channels[channel]
-            frame_samples = samples(deep)
-            del deep
+            raw = shot / "deep" / name
+            if not raw.is_file():
+                errors = merged.errors(plan.merged_dir(shot, frame) / "deep.npz", _shape(shot, frame))
+                if errors or not (shot / "layers" / name).is_file():
+                    raise ValueError(f"frame {frame}: missing packed frame or raw deep: {errors}")
+                continue
+            frame_samples = read_samples(raw)
             write_layers(targets(frame_samples), shot / "layers" / name)
             write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))
             write_merged(frame_samples, plan.merged_dir(shot, frame))

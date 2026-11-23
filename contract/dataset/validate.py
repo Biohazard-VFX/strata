@@ -116,10 +116,9 @@ def validate(shot: Path) -> list[str]:
         errors += merged.errors(merged_path, (record["height"], record["width"]))
         if (shot / "deep" / name).is_file():
             errors += _deep_errors(shot / "deep" / name, size)
-        else:
-            errors.append(f"missing raw deep for frame {record['frame']}")
         directory = shot / "samples" / samples.frame_id(str(manifest["shot_id"]), record["frame"])
-        errors += samples.errors(directory, (record["height"], record["width"]))
+        if directory.exists():
+            errors += samples.errors(directory, (record["height"], record["width"]))
     return errors
 
 
