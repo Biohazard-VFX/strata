@@ -2,6 +2,7 @@ import hashlib
 import json
 import pickle
 from importlib import import_module
+from itertools import chain, repeat
 from pathlib import Path
 from typing import Any
 
@@ -125,7 +126,7 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path, wo
     assert set(history[-1]["last_terms"]) == {"alpha", "depth", "gradient", "rgb", "composite"}
     state = torch.load(tmp_path / "run/final.pt", weights_only=True)
     assert state["step"] == 4
-    assert state["config"]["objective"] == "coverage-bce-logits-v1"
+    assert state["config"]["objective"] == "coverage-simplex-bce-v1"
     for key, value in (("steps", 5), ("learning_rate", 1e-3), ("warmup_steps", 1)):
         changed = {**config, "resume": str(tmp_path / "run/final.pt"), key: value}
         write_json(path, changed)
@@ -182,12 +183,18 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
         log_every=1,
     )
     write_json(path, config)
-    metrics = iter([0.4, 0.3, 0.31, 0.32])
+    metrics = chain([(0.4, 0.3), (0.3, 0.2), (0.2, 0.4)], repeat((0.1, 0.3)))
 
     def evaluate(model: object, config: object, frames: object) -> dict[str, Any]:
         del model, config, frames
-        value = next(metrics)
-        return {"mixed_alpha_mae": value, "loss": value * 2, "mixed_pixels": 1024, "frames": 1}
+        value, leak = next(metrics)
+        return {
+            "mixed_alpha_mae": value,
+            "loss": value * 2,
+            "mixed_pixels": 1024,
+            "frames": 1,
+            "leakage": {"worst_mean": leak, "passed": False},
+        }
 
     trainer: Any = import_module("strata_training.train")
     monkeypatch.setattr(trainer, "evaluate_validation", evaluate)
@@ -204,7 +211,7 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     assert not torch.equal(best["model"]["output.weight"], final["model"]["output.weight"])
     state = json.loads((output / "validation.json").read_text())
     assert [row["step"] for row in state["history"]] == [0, 2, 4, 6]
-    assert [row["mixed_alpha_mae"] for row in state["history"]] == [0.4, 0.3, 0.31, 0.32]
+    assert [row["mixed_alpha_mae"] for row in state["history"]] == [0.4, 0.3, 0.2, 0.1]
     assert final["validation"]["stale_evals"] == 2
     write_json(path, {**config, "resume": str(output / "last.pt")})
     with pytest.raises(ValueError, match="exhausted validation patience"):
@@ -222,11 +229,17 @@ def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode
 
     config, _ = _configuration(tmp_path)
     entries = json.loads(Path(config["index"]).read_text())
+    with np.load(entries[0]["cache"]) as data:
+        arrays = dict(data)
+    arrays["mixed"][:, :16] = False
+    save_arrays(Path(entries[0]["cache"]), **arrays)
     frame = Frame(entries[0], Path(config["features"]))
     model = DeepHead(128, nn.Identity(), 4)
     result = evaluate_validation(model, config, [frame])
-    assert result["mixed_alpha_mae"] == pytest.approx(0.3)
-    assert result["mixed_pixels"] == 1024
+    assert result["mixed_alpha_mae"] == pytest.approx(0.05)
+    assert result["mixed_pixels"] == 512
+    assert result["leakage"]["all"]["pixels"] > 0
+    assert result["leakage"]["all"]["mean"] == pytest.approx(0.75)
     assert result["loss"] > 0
     assert model.training
     assert all(parameter.grad is None for parameter in model.parameters())

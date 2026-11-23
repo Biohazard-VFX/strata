@@ -30,3 +30,6 @@
 - TensorRT, CoreML and DirectML are out of scope until each lands with a test and a measurement.
 - The CLI refuses outputs inside the model's directory instead of parsing ONNX for external data, which ONNX Runtime confines to that directory.
 - Training, evaluation and baselines never align predicted depth to GT; learn and score metric scale directly against synthetic deep truth so scale errors remain visible.
+- K-slot visible coverage is a simplex with opaque terminal alpha, closing holes by construction; check: test_head_coverage_is_exactly_one.
+- Gate GT-opaque interior behind-surface leakage by brightness and select with mixed-alpha error; checks: test_behind_surface_leakage, test_leakage_gate_and_selection_require_both_metrics.
+- Detach alpha only in per-layer colour supervision; preserve colour space and composite gradients; check: test_layer_colour_does_not_steer_coverage_but_composite_still_does.

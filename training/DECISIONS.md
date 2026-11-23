@@ -34,7 +34,7 @@
 - Post-training lives in training/posttrain so model export remains independently owned.
 - Dataset ingestion accepts only strata_dataset.records.VERSION; old shots and role caches must be regenerated.
 - OOD baselines reuse frozen training-only coverage calibration; depth retains each method's own metric scale.
-- Supervise coverage with float32 soft-target BCE logits so sigmoid saturation cannot erase mixed-pixel correction gradients.
+- Supervise nonterminal conditional alpha with float32 soft-target BCE logits; terminal alpha is fixed; check: test_coverage_supervision_recovers_from_opaque_saturation.
 - Warm up new-head and pretrained-decoder optimizer groups at separate learning rates; reject resume across objective or schedule changes.
 - Recomposition consumes only producer-published samples through strata_dataset.samples.read, including its identity verification.
 - NumPy clustering is owned by strata_dataset; the training-owned Torch adapter shares constants and must match its CPU/CUDA targets.

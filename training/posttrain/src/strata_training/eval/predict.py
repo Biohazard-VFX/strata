@@ -14,7 +14,7 @@ from strata_training.data.exr import write_deep
 from strata_training.eval.protocol import entries_for
 from strata_training.io import save_arrays, write_json
 from strata_training.model.dp2 import DeepDepthPro
-from strata_training.model.head import DeepHead
+from strata_training.model.head import COVERAGE_OBJECTIVE, DeepHead
 from strata_training.types import Layers
 
 
@@ -22,6 +22,8 @@ def load_model(path: Path, device: str = "cuda") -> tuple[nn.Module, dict[str, A
     checkpoint: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
     config: dict[str, Any] = checkpoint["config"]
     reject_scale_config(config)
+    if config.get("objective") != COVERAGE_OBJECTIVE:
+        raise ValueError("Checkpoint does not use coverage-by-construction")
     if config["mode"] == "decoder":
         model: nn.Module = DeepDepthPro(config["preset"], config["layers"], decoder_trainable=False)
     else:

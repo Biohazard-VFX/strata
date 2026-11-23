@@ -8,9 +8,11 @@ from torch import nn
 from strata_training.data.dataset import Frame
 from strata_training.data.policy import require_supervision
 from strata_training.data.targets import composite
+from strata_training.eval.leakage import leakage_samples, leakage_summary
 from strata_training.eval.predict import predict
 from strata_training.eval.protocol import entries_for
 from strata_training.losses.deep import deep_loss
+from strata_training.types import Array, Layers
 
 
 def validation_frames(config: dict[str, Any], training: list[dict[str, Any]]) -> list[Frame]:
@@ -55,6 +57,7 @@ def evaluate_validation(
     was_training = model.training
     error, pixels = 0.0, 0
     losses: list[float] = []
+    leakage: dict[str, list[Array]] = {}
     model.eval()
     try:
         for frame in frames:
@@ -66,6 +69,12 @@ def evaluate_validation(
             pixels += int(mixed.sum())
             prediction = {k: torch.as_tensor(v[None]).float() for k, v in result.arrays().items()}
             prediction["alpha_logits"] = torch.logit(prediction["alpha"].clamp(1e-7, 1 - 1e-7))
+            prediction["layer_rgb"] = prediction["rgb"]
+            target_layers = Layers(*(frame.arrays[k] for k in ("inverse_depth", "alpha", "rgb")))
+            for name, values in leakage_samples(
+                result, target_layers, mixed, frame.arrays["beauty"]
+            ).items():
+                leakage.setdefault(name, []).append(values)
             target = {
                 k: torch.tensor(frame.arrays[k][None]).float()
                 for k in ("inverse_depth", "alpha", "rgb", "mixed")
@@ -80,4 +89,15 @@ def evaluate_validation(
     metric, loss = error / pixels, float(np.mean(losses))
     if not np.isfinite(metric) or not np.isfinite(loss):
         raise FloatingPointError("Nonfinite OOD validation metric or loss")
-    return {"mixed_alpha_mae": metric, "loss": loss, "mixed_pixels": pixels, "frames": len(frames)}
+    leak = leakage_summary({name: np.concatenate(values) for name, values in leakage.items()})
+    if leak["worst_mean"] is None:
+        raise ValueError("OOD validation requires GT-opaque interior pixels for leakage")
+    if not np.isfinite(leak["worst_mean"]):
+        raise FloatingPointError("Nonfinite OOD leakage")
+    return {
+        "mixed_alpha_mae": metric,
+        "leakage": leak,
+        "loss": loss,
+        "mixed_pixels": pixels,
+        "frames": len(frames),
+    }

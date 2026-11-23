@@ -4,6 +4,8 @@ import torch
 from torch import nn
 from torch.nn import functional as functional
 
+COVERAGE_OBJECTIVE = "coverage-simplex-bce-v1"
+
 
 class DeepHead(nn.Module):
     input_mean: torch.Tensor
@@ -43,11 +45,20 @@ class DeepHead(nn.Module):
         inverse = torch.cat(
             (first[:, None], first[:, None] * torch.exp(-deltas.cumsum(dim=1))), dim=1
         )
-        alpha = raw[:, :, 1].sigmoid()
+        logits = raw[:, :, 1]
+        tail = logits.flip(1).logcumsumexp(dim=1).flip(1)
+        conditional = logits[:, :-1] - tail[:, 1:]
+        nonterminal = conditional.sigmoid()
+        remaining = torch.cat(
+            (torch.ones_like(logits[:, :1]), (1 - nonterminal).cumprod(dim=1)), dim=1
+        )
+        nonterminal = torch.where(remaining[:, :-1] > 0, nonterminal, 0)
+        alpha = torch.cat((nonterminal, torch.ones_like(logits[:, -1:])), dim=1)
         color = image[:, None] + raw[:, :, 2:]
         return {
             "inverse_depth": inverse,
             "alpha": alpha,
-            "alpha_logits": raw[:, :, 1],
+            "alpha_logits": torch.cat((conditional, torch.zeros_like(logits[:, -1:])), dim=1),
             "rgb": alpha[:, :, None] * color,
+            "layer_rgb": alpha.detach()[:, :, None] * color,
         }

@@ -16,6 +16,7 @@ from strata_training.data.exr import write_deep
 from strata_training.data.targets import composite, visible_inverse
 from strata_training.eval.boundaries import boundary_f1, directed_boundary_counts, silhouette_recall
 from strata_training.eval.calibration import calibration
+from strata_training.eval.leakage import leakage_samples, leakage_summary
 from strata_training.eval.metrics import mixed_errors
 from strata_training.eval.predict import load_model, predict
 from strata_training.eval.protocol import entries_for
@@ -81,6 +82,9 @@ class Collected:
         result["silhouette_recall_foreground"] = (
             float(np.mean(self.silhouettes)) if self.silhouettes else None
         )
+        result["leakage"] = leakage_summary(
+            {name: values[f"leakage_{name}"] for name in ("all", "bright", "normal", "dark")}
+        )
         return result
 
 
@@ -138,11 +142,19 @@ def collect(
             else {}
         ),
     }
+    leakage = leakage_samples(prediction, target, data["mixed"], data["beauty"])
     for group, region in masks.items():
         mixed = data["mixed"] & region
         if not region.any():
             continue
         result = collected.setdefault((group, method), Collected())
+        group_leakage = (
+            leakage
+            if group == "all"
+            else leakage_samples(prediction, target, data["mixed"], data["beauty"], region)
+        )
+        for name, values in group_leakage.items():
+            result.append(f"leakage_{name}", values)
         geometry = region & (gt_inverse > 0)
         historical_errors = mixed_errors(
             historical_inverse, prediction.alpha[0], reference_inv, reference_alpha, mixed

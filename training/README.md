@@ -34,13 +34,46 @@ external GPU coordination and memory policy appropriate to the deployment.
 
 Sort each pixel's deep point samples front to back and discard samples with visible contribution ≤1e−12 before clustering. Keep the largest K−1 consecutive log-depth gaps strictly above ln(1.15), with first-occurrence tie breaking. Merge each contiguous cluster with conditional front-to-back coverage and premultiplied linear RGB; use visible-coverage-weighted inverse depth. Empty or completely hidden slots are zero. Conditional cluster RGB and alpha reproduce the source sample composite without applying alpha twice. No target is resized or interpolated, including gradient pyramids: those use exact stride-1/2/4 pixel selections.
 
-The deep head takes DP2's full-resolution `head[1]` features, scene-linear image and scalar inverse depth. A 48-channel stem plus six dilated residual convolutions predicts K×5 channels. Layer zero starts from the pretrained scalar head, with a positive 1e−3 inverse-depth floor where its ReLU returns zero; multiplicative log residuals refine it. Positive softplus log-depth increments put every later layer behind it. Sigmoid coverage and conditional premultiplied color form the other channels. Encoder frozen; compare head-only with trainable decoder and the first two original head operators. New head weights load with `strict=False`, and all non-head incompatibilities are rejected.
+The deep head takes DP2's full-resolution `head[1]` features, scene-linear image and scalar inverse depth. A 48-channel stem plus six dilated residual convolutions predicts K×5 channels. Layer zero starts from the pretrained scalar head, with a positive 1e−3 inverse-depth floor where its ReLU returns zero; multiplicative log residuals refine it. Positive softplus log-depth increments put every later layer behind it. Visible coverage is a K-slot softmax. Conditional premultiplied color forms the remaining channels. Encoder frozen; compare head-only with trainable decoder and the first two original head operators. New head weights load with `strict=False`, and all non-head incompatibilities are rejected.
 
-The objective is unweighted valid-layer log inverse-depth L1 plus three-scale first-order inverse-depth gradient L1, 4× soft-target coverage BCE-with-logits, 0.25× premultiplied-color L1 and 0.25× composite L1. Coverage/color/reconstruction emphasize mixed pixels by 12×; geometry is not confidence weighted. The coverage coefficient compensates averaging over four slots. There is no extra ordering or sparsity loss: depth ordering is architectural and empty coverage is explicitly supervised. BCE uses float32 logits, not a loss on rounded sigmoid probabilities, so opaque saturation cannot erase the correction gradient for mixed coverage. Historical checkpoints retain their original L1-trained weights.
+The objective is unweighted valid-layer log inverse-depth L1 plus three-scale first-order inverse-depth gradient L1, 4× soft-target coverage BCE-with-logits, 0.25× premultiplied-color L1 and 0.25× composite L1. Coverage/color/reconstruction emphasize mixed pixels by 12×; geometry is not confidence weighted. Coverage BCE averages over K−1 learned conditional alphas; the terminal alpha is fixed and has no loss. For K=1 the coverage loss is zero. There is no extra ordering or sparsity loss: depth ordering is architectural and empty coverage is explicitly supervised. BCE uses float32 logits, not a loss on rounded sigmoid probabilities, so opaque saturation cannot erase the correction gradient for mixed coverage. Per-layer color supervision detaches alpha; composite supervision retains its coverage gradients. Color loss space remains unchanged. Old independent-alpha checkpoints are rejected, not reinterpreted.
 
 Decoder configs use separate AdamW groups: the new head's `learning_rate` and the pretrained decoder's `decoder_learning_rate`, with linear `warmup_steps` then cosine decay. Encoder weights stay frozen. Histories include every loss term, pre-clipping gradient norms and LR per group, coverage MAE and maximum absolute alpha logit. Nonfinite loss or gradients fail immediately. `train configs/h_diagnostic.json` is the seeded 400-step diagnostic; set its ordinary data/output paths for the deployment. Resume rejects changes to objective, groups or schedule; L1 optimizer states cannot resume a BCE run.
 
+### Coverage by construction
+
+For visible fractions `v = softmax(logits)`, deep point samples use
+`alpha_i = v_i / (1 - sum(v_j for j < i))`; the terminal alpha is exactly one.
+The head evaluates nonterminal log-odds as `logit_i - logsumexp(logits[i+1:])`,
+avoiding cancellation and softmax underflow in the division. Once computed
+transmittance is exactly zero, hidden nonterminal alphas are exactly zero;
+the terminal stays one, including K=1. Total coverage `1 - product(1-alpha)`
+is exactly one. Explicitly summing float32 visible contributions has ordinary
+roundoff, not a transparency residual.
+
+Thirteen isolated ground/shadow pixels in the historical 33.2M-pixel Karma
+measurement had total coverage below 0.999. These exceptions are accepted: GT
+is not rewritten and the head still closes every pixel.
+
 ## Frozen evaluation
+
+`eval/leakage.py` owns the behind-surface leakage metric used by both final
+evaluation and validation. The plane is GT front-cluster Z plus max(1 cm, 1% Z);
+leakage is the product of `(1-alpha)` for predicted samples at or before it.
+GT-opaque interior means accumulated GT coverage >=0.999, positive front inverse
+depth, and Euclidean distance >4 pixels from mixed pixels or the binary front-alpha
+0.5 boundary. Image borders are not artificial alpha boundaries. The mask never
+depends on predictions. A totally transparent prediction leaks 1; absent GT interior
+reports null, never zero, and validation refuses it. This is the requested total-GT
+opaque mask, not the stricter independently deep-GT-plane-opaque sensitivity mask.
+The metric includes depth-placement errors; full coverage alone cannot pass it.
+
+Report pooled all/bright/normal/dark means and pixel counts, using GT scene-linear
+beauty max RGB: bright >1.4, normal (0.04,1.4], dark <=0.04. No empty bucket is
+repopulated. The gate requires every populated bucket mean <=0.001, matching the
+GT opacity tolerance; missing all-interior pixels fails. Selection uses the worst
+populated mean alongside mixed-alpha MAE. This implementation does not require
+semantic masks or a separately available background-only composite.
 
 The saved protocol preserves all 28 train and 8 pose-240 holdout frames. Training uses native crops. Historical v004 checkpoints used fixed final steps; new runs use the separate OOD-validation policy below. `metrics.json` has pooled mixed-pixel alpha MAE, front/back and ordered inverse-depth median relative errors, layer color/count/order diagnostics, native directed boundary F1, silhouette recall, calibration reliability bins, composite and fixed-magenta-plane insertion errors, and edge-band recomposition errors. Every method is scored at its own metric scale with depth AbsRel/δ1; there are no global-scale or affine-aligned diagnostics. Ground truth never rescales predictions or model inputs, including fake deep, analytical and frozen-probe baselines.
 
@@ -67,9 +100,10 @@ feature/sample loading and direct validation evaluation refuse these sources. Fi
 test scoring remains allowed. Use held-out **synthetic** shots for early stopping.
 
 A step-zero validation establishes the initial best. Full native-frame validation
-then runs every N steps and at the ceiling. Checkpoint selection uses pooled
-first-layer mixed-pixel alpha MAE, not training loss. Four consecutive checks without
-a lower MAE stop training. `best.pt` is the selected checkpoint; `last.pt` and
+then runs every N steps and at the ceiling. Selection first prefers a passing leakage
+gate over a failing one. Within the same gate state, mixed-alpha MAE and worst-region
+mean leakage must both not increase, with at least one strictly decreasing. Four
+consecutive checks without such an improvement stop training. `best.pt` is the selected checkpoint; `last.pt` and
 `final.pt` retain the actual stopping-step state. Pipeline evaluation uses `best.pt`.
 `history.json` logs training loss and validation points, and `validation.json` retains
 all validation loss/MAE points, best step and patience state. Validation loss uses

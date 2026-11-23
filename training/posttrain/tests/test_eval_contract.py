@@ -53,6 +53,8 @@ def test_solid_frames_remain_in_geometry_metrics_without_fabricated_alpha_scores
     assert not any("align" in key for key in summary)
     assert summary["depth_delta1"] == 0
     assert summary["composite_mae"] == 0
+    assert summary["leakage"]["all"] == {"mean": 1.0, "pixels": 256}
+    assert not summary["leakage"]["passed"]
     target.alpha[:, 0, 0] = 0
     target.inverse_depth[:, 0, 0] = 0
     target.rgb[:, :, 0, 0] = 0
