@@ -282,9 +282,8 @@ def _samples_mismatch(directory: Path, frame: pack.Samples, beauty_path: Path) -
 
 
 def _merged_mismatch(directory: Path, frame: pack.Samples) -> float:
-    try:
-        stored = merged.read(directory / "deep.npz").arrays()
-    except (OSError, ValueError, KeyError):
+    stored, errors = merged.load_checked(directory / "deep.npz", frame.shape)
+    if errors:
         return 1.0
     expected = merged.merge(
         frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids

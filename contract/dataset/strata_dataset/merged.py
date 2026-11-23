@@ -117,12 +117,14 @@ def read(path: Path) -> Merged:
     return Merged(shape, *values)
 
 
-def errors(path: Path, shape: tuple[int, int]) -> list[str]:
-    """Read and validate immutable merged deep; return violations, never mutate borrowed files."""
+def load_checked(
+    path: Path, shape: tuple[int, int]
+) -> tuple[dict[str, NDArray[np.generic]], list[str]]:
+    """Owned arrays and format violations, read once; immutable inputs and thread-safe calls."""
     try:
         arrays = _arrays(path)
     except (OSError, ValueError, KeyError, BadZipFile, EOFError, TypeError) as error:
-        return [f"merged {path.parent.name}: unreadable: {error}"]
+        return {}, [f"merged {path.parent.name}: unreadable: {error}"]
     found = [
         f"{name}: expected {dtype} C-order"
         for name, dtype in FIELDS.items()
@@ -149,4 +151,9 @@ def errors(path: Path, shape: tuple[int, int]) -> list[str]:
             found.append("merged intervals overlap")
         if not np.isfinite(statistics).all() or np.any(statistics < 0) or np.any(statistics[:, 0] > 1):
             found.append("statistics must be finite and nonnegative, with transmittance at most one")
-    return [f"merged {path.parent.name}: {error}" for error in found]
+    return arrays, [f"merged {path.parent.name}: {error}" for error in found]
+
+
+def errors(path: Path, shape: tuple[int, int]) -> list[str]:
+    """Read and validate immutable merged deep; return violations without mutating borrowed files."""
+    return load_checked(path, shape)[1]
