@@ -69,7 +69,7 @@ rendered range: most shots are 8-frame clips, a minority are 24-96-frame sequenc
 in pixels, `world_to_camera`, `distortion`, `shutter_open`/`shutter_close` in frames relative to
 the frame (both 0 when motion blur is off), `fstop` (0 means depth of field off),
 `focus_distance_m`, `focal_length_mm`, `sensor_width_mm`. `move` names the camera move
-(`locked`, `pan_tilt`, `handheld`, `dolly`, `orbit`).
+(`locked`, `pan_tilt`, `handheld`, `dolly`, `orbit`, or the continuous long-shot `path`).
 
 ## manifest.json
 
