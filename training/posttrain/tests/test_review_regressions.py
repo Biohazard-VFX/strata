@@ -1,12 +1,11 @@
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 import torch
-from strata_dataset.samples import frame_id, read
+from strata_dataset.samples import read
 
 from strata_training.augment.deep import FIELDS, DeepSamples
 from strata_training.data.cache import prepare
@@ -42,12 +41,9 @@ def prepared_frames(shot: Path, root: Path) -> tuple[list[Frame], Path]:
 
 @pytest.mark.parametrize("mode", ["numpy", "torch"])
 def test_missing_samples_keep_cached_targets_and_seed_replay(
-    packed_shot: Path, tmp_path: Path, mode: str
+    unavailable_samples_shot: Path, tmp_path: Path, mode: str
 ) -> None:
-    manifest = json.loads((packed_shot / "manifest.json").read_text())
-    shutil.rmtree(packed_shot / "samples" / frame_id(manifest["shot_id"], 2))
-    (packed_shot / "deep" / "0002.exr").unlink()
-    frames, samples = prepared_frames(packed_shot, tmp_path)
+    frames, samples = prepared_frames(unavailable_samples_shot, tmp_path)
     loader = OnlineLoader(
         frames,
         samples,

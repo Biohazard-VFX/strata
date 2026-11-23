@@ -171,11 +171,11 @@ def test_train_holds_target_cache_lock(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_loader_reports_eligibility_and_configurable_warning(
-    packed_shot: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    unavailable_samples_shot: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     import logging
 
-    frames, samples = prepared_frames(packed_shot, tmp_path)
+    frames, samples = prepared_frames(unavailable_samples_shot, tmp_path)
     with caplog.at_level(logging.INFO):
         loader = OnlineLoader(frames, samples, eligibility_warning_fraction=0.75)
     assert loader.eligible == frozenset({0})
