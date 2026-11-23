@@ -97,6 +97,10 @@ CASES = [
     ('legacy RGB option', {'training/posttrain/src/unit.py': 'def read_rgb(path, *, legacy=False): pass\n'}, 'legacy training readers'),
     ('legacy training config', {'training/posttrain/configs/h_head.json': '{}'}, 'legacy training configs'),
     ('legacy evaluation split', {'training/eval/v004_split.json': '{}'}, 'legacy evaluation split'),
+    ('README image', {'README.md':'![x](docs/images/a.jpg)\n','docs/images/a.jpg':'x'}, None),
+    ('unreferenced docs image', {'README.md':'# x\n','docs/images/a.jpg':'x'}, 'README images'),
+    ('docs image wrong type', {'README.md':'![x](docs/images/a.gif)\n','docs/images/a.gif':'x'}, 'README images'),
+    ('docs notes', {'README.md':'# x\n','docs/notes.md':'x'}, 'README images'),
     ('public hosts', {'hosts/nuke/unit.cpp':'#include "strata.h"\n#include <DDImage/DeepFilterOp.h>\n', 'hosts/comfyui/nodes.py':'import ctypes\n'}, None),
     ('core ORT', {'runtime/src/core/unit.c':'#include <onnxruntime_c_api.h>\n'}, 'core cannot include'),
     ('CLI private', {'runtime/src/cli/unit.c':'#include "../core/private.h"\n','runtime/src/core/private.h':''}, 'may only include strata.h'),
@@ -231,6 +235,8 @@ def run(name, files, error, script):
             shutil.copy2(ROOT/'tools'/tool,directory/'tools'/tool)
         if name == 'tracked EXR':
             subprocess.run(['git','add','--force','models/forbidden.exr'],cwd=directory,check=True)
+        if any(relative.startswith('docs/') for relative in files):
+            subprocess.run(['git','add','--force','--','docs'],cwd=directory,check=True)
         result = subprocess.run(['bash','tools/'+script],cwd=directory,capture_output=True,text=True)
         if error is None:
             assert result.returncode == 0, (name,result.stderr)
