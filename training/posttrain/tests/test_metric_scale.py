@@ -10,6 +10,7 @@ from torch import nn
 from torch.nn import functional as functional
 
 from strata_training.config import training_defaults, validate_config
+from strata_training.data.cache import CACHE_VERSION
 from strata_training.data.dataset import Frame
 from strata_training.data.feature_cache import base_arrays, read_base
 from strata_training.eval.predict import cache_predictions, predict
@@ -45,6 +46,7 @@ def test_decoder_preserves_its_metric_prior_despite_gt_scale(
     cache = tmp_path / "target.npz"
     save_arrays(
         cache,
+        version=np.array(CACHE_VERSION),
         alpha=alpha,
         inverse_depth=inverse,
         rgb=np.zeros((4, 3, 32, 32)),
@@ -66,6 +68,7 @@ def test_decoder_preserves_its_metric_prior_despite_gt_scale(
     second = tmp_path / "second.npz"
     save_arrays(
         second,
+        version=np.array(CACHE_VERSION),
         alpha=alpha,
         inverse_depth=inverse * 8,
         rgb=np.zeros((4, 3, 32, 32)),

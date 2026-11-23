@@ -150,6 +150,9 @@ def test_train_holds_target_cache_lock(tmp_path: Path, monkeypatch: pytest.Monke
 
     output = tmp_path / "targets"
     output.mkdir()
+    from strata_training.io import save_arrays
+
+    save_arrays(output / "live.npz", version=np.array(cache.CACHE_VERSION))
     write_json(output / "index.json", [{"cache": str(output / "live.npz")}])
     config = tmp_path / "config.json"
     write_json(config, {"index": str(output / "index.json")})

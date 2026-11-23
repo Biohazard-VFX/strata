@@ -53,7 +53,7 @@ struct strata_camera {
 struct strata_frame {
 	const struct strata_image *image;
 	struct strata_camera camera;
-	float exposure_stops;
+	double exposure_stops; /* Fixed per shot, in stops. */
 	int64_t index;
 	double timestamp_seconds;
 };

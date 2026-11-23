@@ -5,7 +5,7 @@ import numpy as np
 from strata_training.data import mapped
 from strata_training.types import Array
 
-FEATURE_VERSION = "features-metric-v2"
+FEATURE_VERSION = "features-fable-float-v3"
 
 
 def read_base(path: Path) -> dict[str, Array]:

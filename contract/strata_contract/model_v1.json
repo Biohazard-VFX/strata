@@ -40,7 +40,7 @@
     "multiple": 32,
     "max_height": 4352,
     "max_width": 7680,
-    "linear_exposure": "multiply by exp2(stops), clip to [0,1], apply sRGB",
+    "linear_exposure": "x=max(0,0.72*exp2(shot_stops)*C); x<=0.6 ? x : 0.6+0.4*(x-0.6)/(0.4+x-0.6); sRGB; float32",
     "srgb_threshold": 0.0031308,
     "srgb_linear_scale": 12.92,
     "srgb_power_scale": 1.055,

@@ -27,8 +27,14 @@ class Case(TypedDict):
 
 
 def encode(linear: NDArray[np.generic], exposure: float = 0) -> NDArray[np.float32]:
-    exposed = linear.astype(np.float32) * np.float32(2.0**exposure)
-    value = np.nan_to_num(exposed, nan=0, posinf=1, neginf=0).clip(0, 1).astype(np.float64)
+    exposed = linear.astype(np.float64) * (0.72 * 2.0**exposure)
+    value = np.maximum(np.nan_to_num(exposed, nan=0, posinf=np.inf, neginf=0), 0)
+    delta = np.maximum(value - 0.6, 0)
+    with np.errstate(invalid="ignore"):
+        shoulder = cast(
+            "NDArray[np.float64]", np.nan_to_num(0.6 + 0.4 * delta / (0.4 + delta), nan=1)
+        )
+    value = np.where(value <= 0.6, value, shoulder)
     encoded = np.where(value <= 0.0031308, 12.92 * value, 1.055 * np.power(value, 1 / 2.4) - 0.055)
     return encoded.astype(np.float32)
 

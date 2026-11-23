@@ -10,6 +10,7 @@ from torch import nn
 
 from strata_training.augment.deep import DeepSamples, save_samples
 from strata_training.config import training_defaults, validate_config
+from strata_training.data.cache import CACHE_VERSION
 from strata_training.data.dataset import Frame
 from strata_training.data.feature_cache import base_arrays
 from strata_training.data.online import OnlineLoader, image_digest
@@ -77,6 +78,7 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
     cache = tmp_path / "target.npz"
     save_arrays(
         cache,
+        version=np.array(CACHE_VERSION),
         alpha=target,
         inverse_depth=inverse,
         rgb=colour,
@@ -143,6 +145,9 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
     assert changed.live == [0]
     assert changed.clean == []
     assert changed.normalized is not None
+    from strata_training.data.encoder_input import display, normalize
+
+    torch.testing.assert_close(changed.normalized, normalize(display(changed.images, "ACEScg")))
     torch.testing.assert_close(changed.images, torch.ones((1, 3, 32, 32)))
     torch.testing.assert_close(changed.target["beauty"], torch.full((1, 3, 32, 32), 0.36))
     torch.testing.assert_close(changed.target["alpha"], torch.as_tensor(target[:, :, :32])[None])
@@ -364,7 +369,7 @@ def test_device_normalization_matches_clean_cache_color_transform(math_device: s
     from strata_training.data.torch_online import normalize
 
     images = np.random.default_rng(719).uniform(-0.2, 3, (2, 3, 64, 96)).astype(np.float32)
-    display = np.stack([display_rgb(image, "ACEScg") for image in images]).astype(np.float32) / 255
+    display = np.stack([display_rgb(image, "ACEScg") for image in images]).astype(np.float32)
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)[None, :, None, None]
     std = np.array([0.229, 0.224, 0.225], dtype=np.float32)[None, :, None, None]
     expected = (display - mean) / std

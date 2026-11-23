@@ -9,6 +9,7 @@ import torch
 from torch import nn
 
 from strata_training.data.cache import cache_reader, display_rgb
+from strata_training.data.encoder_input import normalize
 from strata_training.data.feature_cache import FEATURE_VERSION, base_arrays, read_base
 from strata_training.data.metadata import camera_frames
 from strata_training.data.online import image_digest
@@ -93,8 +94,6 @@ def extract(
         by_shot[entry["shot"]].append(entry)
     model = _load(preset, device)
     output.mkdir(parents=True, exist_ok=True)
-    mean = torch.tensor([0.485, 0.456, 0.406], device=device)[None, :, None, None]
-    std = torch.tensor([0.229, 0.224, 0.225], device=device)[None, :, None, None]
     start = time.monotonic()
     completed = 0
     for shot in by_shot.values():
@@ -114,10 +113,10 @@ def extract(
                 np.load(e["cache"])["srgb"] if denoise is None else display_rgb(denoise, "ACEScg")
                 for e, denoise in zip(clip, denoises, strict=True)
             ]
-            image = torch.as_tensor(np.stack(arrays).astype(np.float32) / 255, device=device)
+            image = torch.as_tensor(np.stack(arrays), device=device)
             height, width = image.shape[-2:]
             normalized = torch.nn.functional.pad(
-                (image - mean) / std, (0, -width % 32, 0, -height % 32), mode="replicate"
+                normalize(image), (0, -width % 32, 0, -height % 32), mode="replicate"
             )
             with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16, cache_enabled=False):
                 pyramid = model.pyramid(normalized)
