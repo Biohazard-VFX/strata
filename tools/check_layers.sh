@@ -72,7 +72,7 @@ for directory in PROJECTS:
     errors += project_violations(directory)
 errors += lock_violations()
 for path in (*Path('training/posttrain/src').rglob('*.py'), *Path('training/posttrain/configs').rglob('*.json')):
-    if re.search(r'v004|legacy', path.read_text(), re.I):
+    if re.search(r'v004|legacy|oracle[-_ ](?:aligned|metric_scale|scale)|(?:scale|affine)_align|scale_mode|--scale-mode|raw_inverse_depth|raw_metric_scale', path.read_text(), re.I):
         errors.append(f'{path}: obsolete training reference')
 for path in Path('training/posttrain/src').rglob('*.py'):
     tree = ast.parse(path.read_text())

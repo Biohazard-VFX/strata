@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
+from strata_training.config import reject_scale_config
 from strata_training.data.policy import require_supervision
 from strata_training.io import write_json
 
@@ -10,14 +11,14 @@ from strata_training.io import write_json
 def freeze(index: Path, output: Path) -> dict[str, Any]:
     entries: list[dict[str, Any]] = json.loads(index.read_text())
     split: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "train": [e["id"] for e in entries if e["split"] == "train"],
         "test": [e["id"] for e in entries if e["split"] == "test"],
         "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
         "seed": 4004,
         "mixed": "native K-layer mixed-coverage masks",
         "selection": "best OOD-validation mixed-alpha checkpoint; step budget is a ceiling",
-        "scale": "oracle per-frame global alignment on eroded single surfaces, including holdout",
+        "depth_policy": "Model metric scale; no ground-truth alignment",
     }
     if not split["train"] or not split["test"] or set(split["train"]) & set(split["test"]):
         raise ValueError("A disjoint nonempty train/test split is required")
@@ -39,6 +40,7 @@ def entries_for(
 ) -> list[dict[str, Any]]:
     data: list[dict[str, Any]] = json.loads(index.read_text())
     frozen: dict[str, Any] = json.loads(protocol.read_text())
+    reject_scale_config(frozen)
     if hashlib.sha256(index.read_bytes()).hexdigest() != frozen["index_sha256"]:
         raise ValueError("Dataset index changed after protocol freeze")
     ids = set(frozen[split])

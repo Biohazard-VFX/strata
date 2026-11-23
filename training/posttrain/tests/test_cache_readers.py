@@ -20,7 +20,7 @@ def test_readers_lock_referenced_caches_not_index_directory(
     entries: list[dict[str, str]] = []
     for directory in directories:
         directory.mkdir()
-        entry = {"cache": str(directory / "live.npz"), "shot": "shot"}
+        entry = {"id": directory.name, "cache": str(directory / "live.npz"), "shot": "shot"}
         entries.append(entry)
         write_json(directory / "index.json", [entry])
     indexes = tmp_path / "indexes"

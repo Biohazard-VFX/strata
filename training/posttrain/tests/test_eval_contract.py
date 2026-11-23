@@ -50,7 +50,8 @@ def test_solid_frames_remain_in_geometry_metrics_without_fabricated_alpha_scores
     assert summary["alpha_mae"] is None
     assert summary["coverage_calibration"]["ece"] is None
     assert summary["depth_absrel"] == 1
-    assert summary["depth_absrel_scale_aligned"] == 0
+    assert not any("align" in key for key in summary)
+    assert summary["depth_delta1"] == 0
     assert summary["composite_mae"] == 0
     target.alpha[:, 0, 0] = 0
     target.inverse_depth[:, 0, 0] = 0

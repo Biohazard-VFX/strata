@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import torch
 
+from strata_training.data.feature_cache import base_arrays
 from strata_training.io import atomic_path, save_array, save_arrays, write_json
 from strata_training.train import train
 
@@ -31,9 +32,7 @@ def _configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
     save_array(root / "train/features.npy", np.zeros((128, 32, 32), dtype=np.float32))
     for level in range(4):
         save_array(root / f"train/pyramid_{level}.npy", np.zeros((1, 1, 1)))
-    save_arrays(
-        root / "train/base.npz", raw_inverse_depth=np.full((32, 32), 0.5), raw_metric_scale=1.0
-    )
+    save_arrays(root / "train/base.npz", **base_arrays(np.full((32, 32), 0.5), 1.0))
     write_json(
         index, [{"id": "train", "shot": "a", "frame": 1, "split": "train", "cache": str(cache)}]
     )
@@ -48,7 +47,6 @@ def _configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
         "preset": "depthpro2-h",
         "layers": 4,
         "mode": "head",
-        "scale_mode": "raw",
         "input_mode": "cached",
         "early_stopping": False,
         "seed": 4004,

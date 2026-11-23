@@ -33,10 +33,9 @@
 - Native role masks use stored linear foreground, hero and fur coverage; ids are best-effort per-object labels only.
 - Post-training lives in training/posttrain so model export remains independently owned.
 - Dataset ingestion accepts only strata_dataset.records.VERSION; old shots and role caches must be regenerated.
-- OOD baselines reuse frozen training-only calibration; oracle-conditioned predictions retain checkpoint training-scale provenance.
+- OOD baselines reuse frozen training-only coverage calibration; depth retains each method's own metric scale.
 - Supervise coverage with float32 soft-target BCE logits so sigmoid saturation cannot erase mixed-pixel correction gradients.
 - Warm up new-head and pretrained-decoder optimizer groups at separate learning rates; reject resume across objective or schedule changes.
-- Oracle evaluation aligns the current scalar prior before the deep head; frozen heads align the stock prior with the same GT mask.
 - Recomposition consumes only producer-published samples through strata_dataset.samples.read, including its identity verification.
 - NumPy clustering is owned by strata_dataset; the training-owned Torch adapter shares constants and must match its CPU/CUDA targets.
 - Hybrid training uses native 512² independent crops, 40% clean-cache reuse and frozen bf16/SDPA encoding otherwise; augmented features are never cached.

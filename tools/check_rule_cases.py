@@ -89,6 +89,16 @@ BASE.update({
     'datagen/pyproject.toml': project('strata-datagen',['numpy','strata-dataset'],{'strata-dataset':'../contract/dataset'}),
 })
 CASES = [
+    ('GT scale flag', {'training/posttrain/src/unit.py': 'flag = "--scale-mode"\n'}, 'obsolete training reference'),
+    ('GT aligned variant', {'training/posttrain/src/unit.py': 'name = "oracle-aligned"\n'}, 'obsolete training reference'),
+    ('GT decoder pass', {'training/posttrain/src/unit.py': 'def _decoder_oracle_scale(model): return 1\n'}, 'obsolete training reference'),
+    ('duplicate metric factor', {'training/posttrain/src/unit.py': 'key = "raw_metric_scale"\n'}, 'obsolete training reference'),
+    ('GT scale function', {'training/posttrain/src/unit.py': 'def oracle_metric_scale(data, inverse): return 1\n'}, 'obsolete training reference'),
+    ('GT scale option', {'training/posttrain/configs/neutral.json': '{"scale_mode": "raw"}'}, 'obsolete training reference'),
+    ('GT scale metric', {'training/posttrain/src/unit.py': 'def scale_align(inverse, truth): return inverse\n'}, 'obsolete training reference'),
+    ('GT affine metric', {'training/posttrain/src/unit.py': 'def affine_align(inverse, truth): return inverse\n'}, 'obsolete training reference'),
+    ('duplicate depth cache', {'training/posttrain/src/unit.py': 'key = "raw_inverse_depth"\n'}, 'obsolete training reference'),
+    ('model metric depth', {'training/posttrain/src/unit.py': 'key = "inverse_depth"\n'}, None),
     ('versioned training prose', {'training/posttrain/src/unit.py': 'label = "v004 frozen probe"\n'}, 'obsolete training reference'),
     ('obsolete training config content', {'training/posttrain/configs/neutral.json': '{"masks": "legacy masks"}'}, 'obsolete training reference'),
     ('nested versioned config content', {'training/posttrain/configs/nested/neutral.json': '{"baseline": "V004"}'}, 'obsolete training reference'),

@@ -96,7 +96,6 @@ def test_compact_frame_without_raw_deep_preserves_targets_and_denoised_part(tmp_
             "preset": "depthpro2-h",
             "layers": 4,
             "mode": "head",
-            "scale_mode": "raw",
             "input_mode": "cached",
             "seed": 1,
             "crop": 32,

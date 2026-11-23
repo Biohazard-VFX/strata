@@ -43,7 +43,7 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
                     "frame": 1,
                     "width": 32,
                     "height": 32,
-                    "fx": 32,
+                    "fx": 64,
                 }
             ],
         },
@@ -84,6 +84,12 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
         [0.229, 0.224, 0.225]
     )[:, None, None]
     assert_allclose(observed[0][0].numpy(), expected, atol=1e-6)
+    with np.load(root / "frame/base.npz") as base:
+        assert set(base.files) == {"inverse_depth", "metric_scale", "version"}
+        assert str(base["version"]) == "features-metric-v2"
+        expected_inverse = decode([observed[0][:, :1, ::s, ::s] for s in (4, 8, 16, 32)])
+        assert_allclose(base["inverse_depth"], expected_inverse[0, 0].numpy() * 0.5)
+        assert float(base["metric_scale"]) == 0.5
     frame = Frame(entry, root)
     assert_allclose(frame.arrays["beauty"], denoised)
     assert "target_beauty" not in frame.arrays

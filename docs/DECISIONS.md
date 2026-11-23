@@ -29,3 +29,4 @@
 - CUDA and the PyTorch oracles disable TF32 so float32 operations keep IEEE precision; allocator, arena and threads stay at ONNX Runtime defaults.
 - TensorRT, CoreML and DirectML are out of scope until each lands with a test and a measurement.
 - The CLI refuses outputs inside the model's directory instead of parsing ONNX for external data, which ONNX Runtime confines to that directory.
+- Training, evaluation and baselines never align predicted depth to GT; learn and score metric scale directly against synthetic deep truth so scale errors remain visible.

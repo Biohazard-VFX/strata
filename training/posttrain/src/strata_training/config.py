@@ -25,7 +25,13 @@ def training_defaults(config: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def reject_scale_config(config: dict[str, Any]) -> None:
+    if any("scale" in key.lower() for key in config):
+        raise ValueError("Scale configuration is forbidden; use the model metric scale")
+
+
 def validate_config(config: dict[str, Any]) -> None:
+    reject_scale_config(config)
     if config.get("loader_math", "numpy") not in {"numpy", "torch"}:
         raise ValueError("loader_math must be numpy or torch")
     for key, minimum, default in (("loader_workers", 0, 0), ("loader_prefetch", 1, 2)):
@@ -43,8 +49,8 @@ def validate_config(config: dict[str, Any]) -> None:
     if mode == "hybrid":
         if not config.get("samples"):
             raise ValueError("Hybrid training requires a denoised raw-sample cache: samples")
-        if config.get("scale_mode", "raw") != "raw" or config.get("clip_length", 1) != 1:
-            raise ValueError("Hybrid native crops require raw scale and independent single frames")
+        if config.get("clip_length", 1) != 1:
+            raise ValueError("Hybrid native crops require independent single frames")
         if not 0 <= config.get("clean_fraction", 0.4) <= 1:
             raise ValueError("clean_fraction must be in [0, 1]")
     if config["mode"] not in {"head", "decoder"}:
