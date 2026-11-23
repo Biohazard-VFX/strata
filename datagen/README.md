@@ -51,7 +51,8 @@ frames are skipped and every other file is replaced.
 
 ## Deep decoding
 
-Scanline deep ingestion requires OpenEXR 3.5.4 or newer with the exported OpenEXR Core 3.5
+Packing requires NumPy 2.2 or newer for explicit pickle-free NPZ writing. Scanline deep ingestion
+requires OpenEXR 3.5.4 or newer with the exported OpenEXR Core 3.5
 C API (provided by the Linux PyPI wheel). `exrcore.py` mirrors its version-sized decode and
 context structures. Core reads sample tables first, then decodes each chunk's pixel payload
 once directly into owned planar NumPy arrays, without per-pixel Python sample objects. Chunk

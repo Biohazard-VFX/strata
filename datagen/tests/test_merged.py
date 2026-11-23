@@ -1,11 +1,14 @@
+import tomllib
 import unittest
 from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 from unittest import mock
 
 import numpy as np
 from numpy.typing import NDArray
+from packaging.requirements import Requirement
 
 import validate
 from strata_datagen.qa import checks
@@ -76,6 +79,13 @@ def boundaries(
 
 
 class MergedDeepTest(unittest.TestCase):
+    def test_archive_dependency_excludes_numpy_without_the_pickle_control(self) -> None:
+        project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+        dependencies = cast("list[str]", project["project"]["dependencies"])
+        requirements = {requirement.name: requirement for requirement in map(Requirement, dependencies)}
+        for version in ("2.0.0", "2.1.0"):
+            self.assertFalse(requirements["numpy"].specifier.contains(version))
+
     def assert_targets(self, frame: pack.Samples, runs: merged.Merged) -> None:
         for count in range(1, 9):
             with self.subTest(layers=count):
