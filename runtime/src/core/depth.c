@@ -103,7 +103,7 @@ static void prepare_row(const float *rgba, size_t w, double gain, int linear,
 	}
 }
 
-size_t strata_prepare(const struct strata_image *image, float exposure,
+size_t strata_prepare(const struct strata_image *image, double exposure,
 		      const struct strata_tensor *padded)
 {
 	size_t w = (size_t)image->width, h = (size_t)image->height;

@@ -5,10 +5,11 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
-from strata_training.data.cache import prune
-from strata_training.io import write_json
+from strata_training.data.cache import CACHE_VERSION, prune
+from strata_training.io import save_arrays, write_json
 
 
 @pytest.mark.parametrize("reader", ["train", "features", "evaluate", "predict", "baselines"])
@@ -21,6 +22,7 @@ def test_readers_lock_referenced_caches_not_index_directory(
     for directory in directories:
         directory.mkdir()
         entry = {"id": directory.name, "cache": str(directory / "live.npz"), "shot": "shot"}
+        save_arrays(directory / "live.npz", version=np.array(CACHE_VERSION))
         entries.append(entry)
         write_json(directory / "index.json", [entry])
     indexes = tmp_path / "indexes"

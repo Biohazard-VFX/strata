@@ -11,7 +11,7 @@ from strata_training.data.encoder_input import display, normalize
 from strata_training.data.feature_cache import read_base
 from strata_training.io import save_arrays
 
-VALUES = [0, 0.001, 0.18, 0.6 / 0.72, 1, 1.4, 10, 64, 128, 1000, -1]
+VALUES = [0, 0.001, 0.18, 0.6 / 0.72, 1, 1.4, 10, 64, 128, 1000, -1, np.nan, np.inf, -np.inf]
 EXPECTED = [
     0,
     0.00930240005,
@@ -23,6 +23,9 @@ EXPECTED = [
     0.998465478,
     0.999234796,
     0.999902308,
+    0,
+    0,
+    1,
     0,
 ]
 
@@ -61,6 +64,37 @@ def test_pre_shoulder_feature_cache_is_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="version mismatch"):
         read_base(path)
+
+
+@pytest.mark.parametrize("version", [None, "targets-content-v1"])
+@pytest.mark.parametrize("consumer", ["extract", "baselines", "frame"])
+def test_stale_target_caches_are_rejected(
+    tmp_path: Path, version: str | None, consumer: str
+) -> None:
+    from strata_training.baselines.prepare import prepare_baselines
+    from strata_training.data.dataset import Frame
+    from strata_training.io import write_json
+    from strata_training.model.features import extract
+
+    cache = tmp_path / "target.npz"
+    values = {"srgb": np.ones((3, 1, 1), np.float32)}
+    if version is not None:
+        values["version"] = np.array(version)
+    save_arrays(cache, **values)
+    index = tmp_path / "index.json"
+    entry = {"id": "frame", "cache": str(cache)}
+    write_json(index, [entry])
+
+    def consume() -> None:
+        if consumer == "extract":
+            extract(index, tmp_path / "features", "test", device="cpu")
+        elif consumer == "baselines":
+            prepare_baselines(index, tmp_path, tmp_path, tmp_path, tmp_path, tmp_path)
+        else:
+            Frame(entry, tmp_path)
+
+    with pytest.raises(ValueError, match="Target cache version mismatch"):
+        consume()
 
 
 def test_encoder_stays_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,24 +136,42 @@ def test_encoder_stays_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
     assert all(p.requires_grad for p in model.deep_head.output.parameters())
 
 
-def parity(fixture: Path) -> None:
-    values = np.resize(np.array([*VALUES, -1000, -0.001, np.inf, -np.inf, np.nan], np.float32), 32)
-    image = torch.as_tensor(values.copy()).expand(3, 32, -1)
+def parity(fixture: Path, oracle: Path) -> None:
+    knee = np.float32(0.6 / 0.72)
+    values = np.resize(
+        np.concatenate(
+            (
+                np.array([*VALUES, -1000, -0.001, np.inf, -np.inf, np.nan], np.float32),
+                np.linspace(-1, 4, 480, dtype=np.float32),
+                np.geomspace(1e-9, 1e30, 480, dtype=np.float32),
+                np.array(
+                    [np.nextafter(knee, np.float32(0)), knee, np.nextafter(knee, np.float32(2))]
+                ),
+            )
+        ),
+        1023,
+    )
+    image = torch.as_tensor(values.copy()).expand(3, 1, -1)
     maximum = 0.0
-    for stops in (-4, 0, 2):
+    exposures = (-4, 0, 2, 0.1, -0.3)
+    encoded = np.stack([display(image, "Linear Rec.709", stops).numpy() for stops in exposures])
+    save_arrays(oracle, linear=image.numpy(), exposures=np.array(exposures), encoded=encoded)
+    for stops in exposures:
         result = subprocess.run(
             [str(fixture), str(stops)],
             input=" ".join(map(str, values)).encode(),
             capture_output=True,
             check=True,
         )
-        actual = np.frombuffer(result.stdout, np.float32).reshape(3, 32, 32)
-        expected = normalize(display(image, "Linear Rec.709", stops)).numpy()
+        actual = np.frombuffer(result.stdout, np.float32).reshape(3, 32, 1024)
+        expected = torch.nn.functional.pad(
+            normalize(display(image, "Linear Rec.709", stops)), (0, 1, 0, 31), mode="replicate"
+        ).numpy()
         error = float(np.max(np.abs(actual - expected)))
         maximum = max(maximum, error)
-        np.testing.assert_allclose(actual, expected, rtol=0, atol=5e-7)
-    print(f"C/training encoder parity: 9216 values, max_abs={maximum:.9g}, tolerance=5e-7")
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=0)
+    print(f"C/training encoder parity: 491520 values, max_abs={maximum:.9g}, tolerance=0")
 
 
 if __name__ == "__main__":
-    parity(Path(sys.argv[1]))
+    parity(Path(sys.argv[1]), Path(sys.argv[2]))

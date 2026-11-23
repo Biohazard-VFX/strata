@@ -15,7 +15,7 @@ struct cli_options {
 	const char *position;
 	const char *camera;
 	float focal;
-	float exposure;
+	double exposure;
 };
 
 static double milliseconds(void)
@@ -50,7 +50,7 @@ static int numeric_option(struct cli_options *options, const char *key,
 	if (!strcmp(key, "--f-px") && number > 0 && number <= 1e9)
 		options->focal = (float)number;
 	else if (!strcmp(key, "--exposure") && fabs(number) <= 100)
-		options->exposure = (float)number;
+		options->exposure = number;
 	else if (!strcmp(key, "--device") && number >= 0 && number <= 1024 &&
 		 number == floor(number))
 		options->session.device_id = (int)number;

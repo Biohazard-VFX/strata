@@ -10,6 +10,7 @@ from torch import nn
 
 from strata_training.augment.deep import DeepSamples, save_samples
 from strata_training.config import training_defaults, validate_config
+from strata_training.data.cache import CACHE_VERSION
 from strata_training.data.dataset import Frame
 from strata_training.data.feature_cache import base_arrays
 from strata_training.data.online import OnlineLoader, image_digest
@@ -77,6 +78,7 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
     cache = tmp_path / "target.npz"
     save_arrays(
         cache,
+        version=np.array(CACHE_VERSION),
         alpha=target,
         inverse_depth=inverse,
         rgb=colour,

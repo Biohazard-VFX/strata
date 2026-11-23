@@ -11,7 +11,7 @@ import torch
 from numpy.testing import assert_allclose
 
 from strata_training.data import mapped
-from strata_training.data.cache import display_rgb
+from strata_training.data.cache import CACHE_VERSION, display_rgb
 from strata_training.data.dataset import Frame, batch
 from strata_training.data.metadata import CONTRACT
 from strata_training.io import save_arrays, write_json
@@ -28,12 +28,13 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
     alpha[0] = 1
     save_arrays(
         cache,
+        version=np.array(CACHE_VERSION),
         alpha=alpha,
         inverse_depth=alpha * 0.5,
         rgb=np.zeros((4, 3, 32, 32)),
         beauty=denoised * 2,
         denoised=denoised,
-        srgb=np.full((3, 32, 32), 255, np.uint8),
+        srgb=display_rgb(denoised, "ACEScg"),
         mixed=np.zeros((32, 32), bool),
     )
     write_json(
@@ -82,6 +83,8 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
     monkeypatch.setattr(features, "_load", load)
     root = tmp_path / "features"
     features.extract(index, root, "depthpro2-s", clip_length=2, device="cpu")
+    assert len(observed) == 1
+    assert observed[0].shape[0] == 2
     display = display_rgb(denoised, "ACEScg").astype(np.float32)
     expected = (display - np.array([0.485, 0.456, 0.406])[:, None, None]) / np.array(
         [0.229, 0.224, 0.225]

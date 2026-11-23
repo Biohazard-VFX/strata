@@ -58,6 +58,9 @@ def cache_readers(*indexes: Path) -> Generator[None]:
     with ExitStack() as leases:
         for directory in sorted(directories):
             leases.enter_context(cache_lock(directory, shared=True))
+        for index in indexes:
+            for entry in json.loads(index.read_text()):
+                validate_target(Path(entry["cache"]))
         yield
 
 
@@ -70,6 +73,12 @@ def cache_reader[**P, R](
             return function(index, *args, **kwargs)
 
     return locked
+
+
+def validate_target(path: Path) -> None:
+    with np.load(path) as data:
+        if "version" not in data or str(data["version"]) != CACHE_VERSION:
+            raise ValueError("Target cache version mismatch; rebuild target caches")
 
 
 def digest_stat(stat: stat_result) -> list[int]:
@@ -194,7 +203,9 @@ def _prepare(dataset: Path, output: Path, layers: int) -> list[dict[str, Any]]:
             if cache.exists():
                 with np.load(cache) as existing:
                     reusable = (
-                        "content_identity" in existing
+                        "version" in existing
+                        and str(existing["version"]) == CACHE_VERSION
+                        and "content_identity" in existing
                         and str(existing["content_identity"]) == identity
                     )
             if not reusable:
@@ -214,6 +225,7 @@ def _prepare(dataset: Path, output: Path, layers: int) -> list[dict[str, Any]]:
                 ).astype(np.float32)
                 save_arrays(
                     cache,
+                    version=np.array(CACHE_VERSION),
                     inverse_depth=target.inverse_depth,
                     alpha=target.alpha,
                     rgb=fp16_safe(target.rgb),

@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import torch
 
+from strata_training.data.cache import CACHE_VERSION
 from strata_training.data.feature_cache import base_arrays
 from strata_training.io import atomic_path, save_array, save_arrays, write_json
 from strata_training.train import train
@@ -22,6 +23,7 @@ def _configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
     inverse[:2] = np.array([0.5, 0.25], dtype=np.float32)[:, None, None]
     save_arrays(
         cache,
+        version=np.array(CACHE_VERSION),
         alpha=alpha,
         inverse_depth=inverse,
         rgb=np.zeros((4, 3, 32, 32)),
@@ -83,7 +85,9 @@ def test_frame_pickle_and_crop_reads_are_bounded_and_exact(tmp_path: Path) -> No
             np.testing.assert_array_equal(value.numpy()[0], archive[key])
     restored = pickle.loads(pickle.dumps(frame))
     assert restored.crop(np.random.default_rng(3), 32) == frame.crop(np.random.default_rng(3), 32)
-    save_arrays(Path(entry["cache"]), mixed=np.zeros((32, 32), dtype=bool))
+    save_arrays(
+        Path(entry["cache"]), version=np.array(CACHE_VERSION), mixed=np.zeros((32, 32), dtype=bool)
+    )
     with pytest.raises(ValueError, match="Source cache changed"):
         Frame(entry, Path(config["features"]))
 

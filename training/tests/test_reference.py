@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import unittest
 
 import numpy as np
@@ -34,4 +35,10 @@ class ReferenceTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    if len(sys.argv) == 2:
+        with np.load(sys.argv[1]) as fixture:
+            for stops, expected in zip(fixture["exposures"], fixture["encoded"], strict=True):
+                np.testing.assert_array_equal(encode(fixture["linear"], float(stops)), expected)
+        print("Reference/training encoder parity: bit-identical")
+    else:
+        unittest.main()
