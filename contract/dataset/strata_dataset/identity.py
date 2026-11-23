@@ -19,8 +19,12 @@ r present or absent, and the expected mislabelled share accepted per merged samp
 numerically on all ids, not a guarantee for any one chosen merge.
 """
 
+from functools import cache
+
 import numpy as np
 from numpy.typing import NDArray
+
+from strata_dataset import segmented
 
 VERSION = "instance-check-3"
 MAX_ID = 1 << 15
@@ -68,22 +72,57 @@ def decode(
     instance_check: NDArray[np.floating],
     instance_check2: NDArray[np.floating],
     coverage: NDArray[np.floating],
+    *,
+    order: NDArray[np.int64] | None = None,
 ) -> NDArray[np.int64]:
-    """Per-sample ids; UNLABELLED where coverage, id domain, integer residual or either check fails.
+    """Owned ids, optionally gathered in `order`; borrowed channels stay immutable and calls are thread-safe.
 
-    All four inputs are the deep channels as stored: premultiplied by the sample's float alpha.
+    UNLABELLED marks failed coverage, id domain, integer residual or either check. All four
+    inputs are the stored deep channels, premultiplied by the sample's float alpha.
     """
-    alpha = coverage.astype(np.float64)
-    positive = alpha > 0.0
-    scale = np.where(positive, alpha, 1.0)
-    quotient = np.where(positive, instance_id / scale, -1.0)
-    ids = np.rint(np.clip(quotient, -1.0, MAX_ID)).astype(np.int64)
-    integral = np.abs(quotient - ids) <= np.maximum(RESIDUAL, RELATIVE_RESIDUAL * np.abs(quotient))
-    passed = positive & (ids >= 0) & (ids < MAX_ID) & integral
-    safe = np.where(passed, ids, 0)
-    for channel, hashed in ((instance_check, check), (instance_check2, check2)):
-        passed &= np.abs(channel / scale - hashed(safe).astype(np.float64)) <= TOLERANCE
-    return np.where(passed, ids, UNLABELLED)
+    channels = np.broadcast_arrays(instance_id, instance_check, instance_check2, coverage)
+    values = tuple(
+        channel.astype(np.float32).ravel() if channel.dtype == np.float16 else channel.ravel()
+        for channel in channels
+    )
+    if order is not None:
+        segmented.validate_order(order, order.size, values[0].size)
+    return _decode(values, _checks(), order).reshape(channels[0].shape if order is None else order.shape)
+
+
+@cache
+def _checks() -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+    ids = np.arange(MAX_ID, dtype=np.int64)
+    return check(ids), check2(ids)
+
+
+@segmented.jit(cache=True)
+def _decode(
+    channels: tuple[NDArray[np.floating], ...],
+    checks: tuple[NDArray[np.float32], NDArray[np.float32]],
+    order: NDArray[np.int64] | None,
+) -> NDArray[np.int64]:
+    raw, first, second, coverage = channels
+    output = np.full(raw.size if order is None else order.size, UNLABELLED, np.int64)
+    for i in range(output.size):
+        source = i if order is None else order[i]
+        alpha = np.float64(coverage[source])
+        if alpha <= 0 or not np.isfinite(alpha):
+            continue
+        quotient = np.float64(raw[source]) / alpha
+        if not np.isfinite(quotient):
+            continue
+        rounded = np.rint(min(max(quotient, -1.0), float(MAX_ID)))
+        if rounded < 0 or rounded >= MAX_ID:
+            continue
+        decoded = int(rounded)
+        if abs(quotient - decoded) > max(RESIDUAL, RELATIVE_RESIDUAL * abs(quotient)):
+            continue
+        one = abs(np.float64(first[source]) / alpha - np.float64(checks[0][decoded]))
+        two = abs(np.float64(second[source]) / alpha - np.float64(checks[1][decoded]))
+        if one <= TOLERANCE and two <= TOLERANCE:
+            output[i] = decoded
+    return output
 
 
 def range_errors(first_id: int, count: int) -> list[str]:

@@ -153,7 +153,13 @@ def _sample_errors(arrays: dict[str, NDArray[np.generic]], pixels: int) -> list[
     if offsets.shape != (pixels + 1,) or int(offsets[0]) != 0 or np.any(np.diff(offsets) < 0):
         return ["offsets must start at 0, be nondecreasing and have H*W+1 entries"]
     count = int(offsets[-1])
-    expected = {"z": (count,), "alpha": (count,), "rgb": (count, 3), "roles": (count, 3), "ids": (count,)}
+    expected = {
+        "z": (count,),
+        "alpha": (count,),
+        "rgb": (count, 3),
+        "roles": (count, 3),
+        "ids": (count,),
+    }
     errors = [
         f"{name}: shape {arrays[name].shape}, expected {s}"
         for name, s in expected.items()
@@ -161,33 +167,42 @@ def _sample_errors(arrays: dict[str, NDArray[np.generic]], pixels: int) -> list[
     ]
     if errors:
         return errors
-    z, alpha = arrays["z"].astype(np.float64), arrays["alpha"].astype(np.float64)
+    z = cast("NDArray[np.float32]", arrays["z"])
+    alpha = cast("NDArray[np.float32]", arrays["alpha"])
     if not (np.isfinite(z).all() and np.all(z > 0)):
         errors.append("z must be finite and positive")
     if not (np.isfinite(alpha).all() and np.all((alpha >= 0) & (alpha <= 1))):
         errors.append("alpha must be in [0, 1]")
     if not np.isfinite(arrays["rgb"]).all() or not all(np.isfinite(arrays[n]).all() for n in IMAGES):
         errors.append("rgb and images must be finite")
-    roles = arrays["roles"].astype(np.float64)
-    chain = np.concatenate([alpha[:, None], roles], axis=1)
-    if not (np.isfinite(roles).all() and np.all(roles >= 0) and np.all(np.diff(chain, axis=1) <= 0)):
+    roles = cast("NDArray[np.float32]", arrays["roles"])
+    nested = np.all(roles[:, 0] <= alpha) and np.all(roles[:, 1:] <= roles[:, :-1])
+    if not (np.isfinite(roles).all() and np.all(roles >= 0) and nested):
         errors.append("roles must satisfy 0 <= fur <= hero <= foreground <= alpha")
-    if np.any(arrays["ids"].astype(np.int64) < UNLABELLED):
+    if np.any(cast("NDArray[np.int64]", arrays["ids"]) < UNLABELLED):
         errors.append(f"ids must be nonnegative or {UNLABELLED} (unlabelled)")
-    pixel = np.repeat(np.arange(pixels), np.diff(offsets))
-    if np.any((pixel[1:] == pixel[:-1]) & (z[1:] < z[:-1])):
+    descending = z[1:] < z[:-1]
+    boundaries = offsets[1:-1]
+    boundaries = boundaries[(boundaries > 0) & (boundaries < count)]
+    descending[boundaries - 1] = False
+    if np.any(descending):
         errors.append("samples must be front to back within each pixel")
     return errors
 
 
-def errors(directory: Path, shape: tuple[int, int]) -> list[str]:
-    """Contract violations of one frame directory for an (H, W) frame; empty when it conforms."""
+def load_checked(directory: Path, shape: tuple[int, int]) -> tuple[dict[str, NDArray[np.generic]], list[str]]:
+    """Owned verified arrays and contract violations, with each sidecar read once; calls are thread-safe."""
     missing = [n for n in (*FILES, IDENTITY) if not (directory / n).is_file()]
     if missing:
-        return [f"{directory.name}: missing {', '.join(missing)}"]
+        return {}, [f"{directory.name}: missing {', '.join(missing)}"]
     try:
         arrays = load(directory)
     except ValueError as error:
-        return [f"{directory.name}: unreadable: {error}"]
+        return {}, [f"{directory.name}: unreadable: {error}"]
     found = _layout_errors(arrays, shape) or _sample_errors(arrays, shape[0] * shape[1])
-    return [f"{directory.name}: {e}" for e in found]
+    return arrays, [f"{directory.name}: {e}" for e in found]
+
+
+def errors(directory: Path, shape: tuple[int, int]) -> list[str]:
+    """Contract violations of one frame directory for an (H, W) frame; empty when it conforms."""
+    return load_checked(directory, shape)[1]

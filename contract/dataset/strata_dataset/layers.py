@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 
 from strata_dataset import segmented
 
-Array = NDArray[np.float64]
+Array = NDArray[np.float32] | NDArray[np.float64]
 LAYERS = 4
 GAP_RATIO = 1.15
 

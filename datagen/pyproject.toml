@@ -7,7 +7,7 @@ dependencies = [
   "jsonschema>=4.23",
   "materialx>=1.39",
   "numpy>=2.0",
-  "OpenEXR>=3.3",
+  "OpenEXR>=3.5.4",
   "pillow>=11.3",
   "scipy>=1.18.1",
   "strata-dataset",

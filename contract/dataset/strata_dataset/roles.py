@@ -29,16 +29,45 @@ def membership(name: str) -> tuple[float, float, float]:
     return (float(name != SKY), float(name in HERO), float(name in FUR))
 
 
-def nested(raw: NDArray[np.floating], alpha: NDArray[np.float32]) -> NDArray[np.float32]:
-    """Owned (N, 3) premultiplied sample role coverage, clamped to 0 <= fur <= hero <= foreground <= alpha.
+def nested(
+    raw: NDArray[np.floating] | tuple[NDArray[np.floating], ...],
+    alpha: NDArray[np.float32],
+    *,
+    order: NDArray[np.int64] | None = None,
+) -> NDArray[np.float32]:
+    """Owned nested roles; borrowed channels and alpha stay immutable and calls are thread-safe.
 
-    `raw` is the (N, 3) deep role channels in ROLES order, borrowed; float accumulation can leave
-    them a few ulps outside that order.
+    Raw is (N, 3), or three planar channels. Optional order gathers raw channels, not the already
+    ordered alpha. Float accumulation can leave rendered roles a few ulps outside nesting.
     """
-    foreground = np.clip(raw[:, 0], 0.0, alpha)
-    hero = np.clip(raw[:, 1], 0.0, foreground)
-    fur = np.clip(raw[:, 2], 0.0, hero)
-    return np.ascontiguousarray(np.stack([foreground, hero, fur], axis=1), np.float32)
+    if isinstance(raw, np.ndarray) and (raw.ndim != 2 or raw.shape[1] != len(ROLES)):
+        raise ValueError("raw roles must have three channels")
+    channels = (raw[:, 0], raw[:, 1], raw[:, 2]) if isinstance(raw, np.ndarray) else raw
+    if len(channels) != len(ROLES) or any(c.ndim != 1 or c.size != channels[0].size for c in channels):
+        raise ValueError("raw role channels must be flat and equally sized")
+    if order is None:
+        if alpha.size != channels[0].size:
+            raise ValueError("role channels must match sample alpha")
+    else:
+        segmented.validate_order(order, alpha.size, channels[0].size)
+    channels = tuple(c.astype(np.float32) if c.dtype == np.float16 else c for c in channels)
+    return _nested(channels, alpha, order)
+
+
+@segmented.jit(cache=True)
+def _nested(
+    channels: tuple[NDArray[np.floating], ...],
+    alpha: NDArray[np.float32],
+    order: NDArray[np.int64] | None,
+) -> NDArray[np.float32]:
+    output = np.empty((alpha.size, 3), np.float32)
+    for i in range(alpha.size):
+        source = i if order is None else order[i]
+        bound = np.float64(alpha[i])
+        for channel in range(3):
+            bound = np.minimum(np.maximum(np.float64(channels[channel][source]), 0.0), bound)
+            output[i, channel] = bound
+    return output
 
 
 class _Coverage[Mask](Protocol):
@@ -69,10 +98,9 @@ def coverage(
     if counts.size != shape[0] * shape[1]:
         raise ValueError("sample counts must match the image shape")
     transmitted = cast("NDArray[np.float64]", segmented.transmittance(alpha, counts))
-    pixel = np.repeat(np.arange(counts.size), counts)
-    out: dict[str, NDArray[np.float32]] = {}
-    for index, channel in enumerate(CHANNELS):
-        visible = weights[:, index].astype(np.float64) * transmitted
-        summed = np.bincount(pixel, weights=visible, minlength=counts.size)
-        out[channel] = np.clip(summed, 0.0, 1.0).astype(np.float32).reshape(shape)
-    return out
+    summed = cast("NDArray[np.float64]", segmented.weighted_sum(transmitted, weights, counts))
+    covered = np.clip(summed, 0.0, 1.0).astype(np.float32)
+    return {
+        channel: np.ascontiguousarray(covered[:, index].reshape(shape))
+        for index, channel in enumerate(CHANNELS)
+    }

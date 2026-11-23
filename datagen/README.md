@@ -48,6 +48,23 @@ not atomic: if a rename fails, units already moved stay, the rest keep their old
 removed and the lock is released. Re-running the same ingest completes it: identical published
 frames are skipped and every other file is replaced.
 
+## Deep decoding
+
+Scanline deep ingestion requires OpenEXR 3.5.4 or newer with the exported OpenEXR Core 3.5
+C API (provided by the Linux PyPI wheel). `exrcore.py` mirrors its version-sized decode and
+context structures. Core reads sample tables first, then decodes each chunk's pixel payload
+once directly into owned planar NumPy arrays, without per-pixel Python sample objects. Chunk
+workers share a read context, not ownership of the shot lock; the executor uses its library
+default worker count. Each worker verifies its sample table against the allocation before
+unpacking, and decode errors propagate without retrying another reader. Tiled deep retains
+the high-level OpenEXR reader.
+
+Raw QA composites one scanline at a time while carrying the full-frame cumulative sum across
+rows, so streaming does not reset its floating-point rounding history. Packing keeps stable
+equal-depth ordering and uses the shared double-accumulation contract kernels without making
+float64 copies of complete sample arrays. The writer lock, immutable sidecar publication,
+acceptance input hashes and QA-before-prune ordering are unchanged.
+
 ## Use
 
 ```sh

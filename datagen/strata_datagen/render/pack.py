@@ -22,7 +22,7 @@ from numpy.typing import NDArray
 from strata_datagen import shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.qa.deep import instance_ids
-from strata_dataset import records, roles
+from strata_dataset import records, roles, segmented
 from strata_dataset import samples as contract_samples
 from strata_dataset.layers import Layers, reduce_samples
 
@@ -88,28 +88,27 @@ def samples(deep: Deep) -> Samples:
     Role coverage is the deep role channels, nested within the sample alpha. Samples failing the
     identity check keep their colour, alpha and roles but carry `identity.UNLABELLED`.
     """
-    pixel = deep.pixel_index()
-    order = np.lexsort((deep.channels["Z"], pixel))
-    rgb = np.stack([deep.channels[c] for c in "RGB"], axis=-1)
+    order = segmented.order(deep.channels["Z"], deep.counts)
     alpha = np.ascontiguousarray(np.clip(deep.channels["coverage"][order], 0.0, 1.0), np.float32)
-    raw = np.stack([deep.channels[role][order] for role in roles.ROLES], axis=-1)
+    nested = roles.nested(tuple(deep.channels[role] for role in roles.ROLES), alpha, order=order)
+    rgb = cast("NDArray[np.float32]", segmented.gather(tuple(deep.channels[c] for c in "RGB"), order))
     return Samples(
         (deep.height, deep.width),
         deep.offsets.astype(np.int64),
         np.ascontiguousarray(deep.channels["Z"][order], np.float32),
         alpha,
-        np.ascontiguousarray(rgb[order], np.float32),
-        roles.nested(raw, alpha),
-        np.ascontiguousarray(instance_ids(deep)[order], np.int64),
+        rgb,
+        nested,
+        instance_ids(deep, order),
     )
 
 
 def layers(frame: Samples) -> Layers:
     """The contract's K-layer rule with the sky kept: sky clusters keep colour and alpha, depth 0."""
     return reduce_samples(
-        frame.z.astype(np.float64),
-        frame.alpha.astype(np.float64),
-        frame.rgb.astype(np.float64),
+        frame.z,
+        frame.alpha,
+        frame.rgb,
         np.diff(frame.offsets),
         frame.shape,
         sky=roles.sky(frame.alpha, frame.roles[:, 0]),
@@ -220,7 +219,11 @@ def pack(shot: Path, frames: range) -> None:
     with shotlock.held(shot):
         for frame in frames:
             name = f"{frame:04d}.exr"
-            frame_samples = samples(read_deep(shot / "deep" / name))
+            deep = read_deep(shot / "deep" / name)
+            for channel in ("A", "ZBack"):
+                del deep.channels[channel]
+            frame_samples = samples(deep)
+            del deep
             write_layers(targets(frame_samples), shot / "layers" / name)
             if plan.recomposition(frame):
                 write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))

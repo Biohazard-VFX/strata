@@ -588,7 +588,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "materialx", specifier = ">=1.39" },
     { name = "numpy", specifier = ">=2.0" },
-    { name = "openexr", specifier = ">=3.3" },
+    { name = "openexr", specifier = ">=3.5.4" },
     { name = "pillow", specifier = ">=11.3" },
     { name = "scipy", specifier = ">=1.18.1" },
     { name = "strata-dataset", editable = "../contract/dataset" },

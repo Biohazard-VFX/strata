@@ -105,6 +105,18 @@ def _id_ranges(manifest: dict[str, object]) -> list[tuple[int, int]]:
     return [(r["first_id"], r["first_id"] + r["count"]) for r in ranges]
 
 
+@segmented.jit(cache=True)
+def _identity_counts(ids: NDArray[np.int64], declared: NDArray[np.bool_]) -> tuple[int, int]:
+    labelled = 0
+    valid = 0
+    for value in ids:
+        if value != identity.UNLABELLED:
+            labelled += 1
+            if 0 <= value < declared.size and declared[value]:
+                valid += 1
+    return labelled, valid
+
+
 def _identity_metrics(frame: pack.Samples, ranges: list[tuple[int, int]]) -> dict[str, float]:
     """Identity check failures, undeclared ids among checked samples, and the coverage left without an id.
 
@@ -113,23 +125,41 @@ def _identity_metrics(frame: pack.Samples, ranges: list[tuple[int, int]]) -> dic
     """
     counts = np.diff(frame.offsets)
     labelled = frame.ids != identity.UNLABELLED
-    declared = np.zeros(frame.ids.size, bool)
+    declared = np.zeros(identity.MAX_ID, bool)
     for low, high in ranges:
-        declared |= (frame.ids >= low) & (frame.ids < high)
-    visible = frame.alpha.astype(np.float64) * segmented.transmittance(frame.alpha, counts)
+        declared[max(low, 0) : max(0, min(high, identity.MAX_ID))] = True
+    labelled_count, valid_count = _identity_counts(frame.ids, declared)
+    visible = segmented.transmittance(frame.alpha, counts)
+    visible *= frame.alpha
     return {
-        "id_check_failure_fraction": float((~labelled).mean()) if labelled.size else 0.0,
-        "valid_id_fraction": float(declared[labelled].mean()) if labelled.any() else 1.0,
+        "id_check_failure_fraction": (frame.ids.size - labelled_count) / frame.ids.size
+        if frame.ids.size
+        else 0.0,
+        "valid_id_fraction": valid_count / labelled_count if labelled_count else 1.0,
         "unlabelled_coverage": float(visible[~labelled].sum() / counts.size),
     }
 
 
+@segmented.jit(cache=True)
+def _role_excess(chain: tuple[NDArray[np.float32], ...]) -> float:
+    if not chain[0].size:
+        return 0.0
+    excess = -np.inf
+    lowest = np.inf
+    for i in range(chain[0].size):
+        previous = np.float64(chain[0][i])
+        lowest = np.minimum(lowest, previous)
+        for channel in range(1, len(chain)):
+            value = np.float64(chain[channel][i])
+            excess = np.maximum(excess, value - previous)
+            lowest = np.minimum(lowest, value)
+            previous = value
+    return float(max(excess, -lowest, 0.0))
+
+
 def role_excess(deep: Deep) -> float:
     """How far the raw role channels leave 0 <= fur <= hero <= foreground <= coverage, at most."""
-    chain = np.stack([deep.channels[name].astype(np.float64) for name in ("coverage", *roles.ROLES)])
-    if not chain.size:
-        return 0.0
-    return float(max(np.diff(chain, axis=0).max(), -chain.min(), 0.0))
+    return _role_excess(tuple(deep.channels[name] for name in ("coverage", *roles.ROLES)))
 
 
 def _role_metrics(deep: Deep, frame: pack.Samples) -> dict[str, float]:
@@ -157,22 +187,11 @@ def role_beauty_metrics(frame: pack.Samples, beauty: dict[str, NDArray[np.float3
     return {"beauty_roles": 1.0, "role_beauty_error": float(max(errors))}
 
 
-def deep_metrics(
-    deep: Deep, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
-) -> dict[str, float]:
+def _base_metrics(deep: Deep, beauty: dict[str, NDArray[np.float32]]) -> dict[str, float]:
     flat = flatten(deep)
     z, zback = deep.channels["Z"], deep.channels["ZBack"]
-    present = all(name in deep.channels for name in IDENTITY_CHANNELS)
-    labelled = all(name in deep.channels for name in roles.ROLES)
-    metrics: dict[str, float] = {"identity_channels": float(present), "role_channels": float(labelled)}
-    if present and labelled:
-        frame = pack.samples(deep)
-        metrics |= _identity_metrics(frame, ranges) | _role_metrics(deep, frame)
-        metrics |= role_beauty_metrics(frame, beauty)
-        difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
-        metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
     residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
-    return metrics | {
+    metrics = {
         "mean_samples": float(deep.counts.mean()),
         "max_samples": float(deep.counts.max()),
         "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z * (1.0 - 1e-6) - 1e-4)).sum()),
@@ -181,6 +200,34 @@ def deep_metrics(
         "uncovered": float((flat.alpha < COVERED).mean()),
         "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
     }
+    if all(name in deep.channels for name in (*IDENTITY_CHANNELS, *roles.ROLES)):
+        difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
+        metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
+    return metrics
+
+
+def _measure_samples(
+    deep: Deep,
+    beauty: dict[str, NDArray[np.float32]],
+    ranges: list[tuple[int, int]],
+    frame: pack.Samples | None,
+    base: dict[str, float],
+) -> dict[str, float]:
+    present = all(name in deep.channels for name in IDENTITY_CHANNELS)
+    labelled = all(name in deep.channels for name in roles.ROLES)
+    metrics: dict[str, float] = {"identity_channels": float(present), "role_channels": float(labelled)}
+    if present and labelled:
+        frame = pack.samples(deep) if frame is None else frame
+        metrics |= _identity_metrics(frame, ranges) | _role_metrics(deep, frame)
+        metrics |= role_beauty_metrics(frame, beauty)
+        metrics["coverage_alpha_error"] = base.pop("coverage_alpha_error")
+    return metrics | base
+
+
+def deep_metrics(
+    deep: Deep, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
+) -> dict[str, float]:
+    return _measure_samples(deep, beauty, ranges, None, _base_metrics(deep, beauty))
 
 
 def _layer_dtypes(path: Path) -> dict[str, np.dtype[np.generic]]:
@@ -226,10 +273,9 @@ def _target_mismatch(path: Path, frame: pack.Samples) -> float:
 
 
 def _samples_mismatch(directory: Path, frame: pack.Samples, beauty_path: Path) -> tuple[float, list[str]]:
-    errors = contract_samples.errors(directory, frame.shape)
+    stored, errors = contract_samples.load_checked(directory, frame.shape)
     if errors:
         return 1.0, errors
-    stored = contract_samples.load(directory)
     expected: dict[str, NDArray[np.generic]] = {**frame.arrays(), **pack.images(beauty_path)}
     return float(any(not np.array_equal(stored[k], v) for k, v in expected.items())), []
 
@@ -258,7 +304,8 @@ def _intrinsics_error(path: Path, record: dict[str, object]) -> float:
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _canonical(value: object) -> str:
@@ -303,11 +350,17 @@ def _raw_metrics(
 ) -> tuple[dict[str, float], list[str]]:
     paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
     deep = read_deep(paths["deep"])
-    metrics = deep_metrics(deep, beauty, ranges)
+    base = _base_metrics(deep, beauty)
+    for channel in ("A", "ZBack"):
+        del deep.channels[channel]
     frame_samples = pack.samples(deep)
+    for channel in "RGB":
+        del deep.channels[channel]
+    metrics = _measure_samples(deep, beauty, ranges, frame_samples, base)
     failures: list[str] = []
     if paths["layers"].exists():
         metrics["target_mismatch"] = _target_mismatch(paths["layers"], frame_samples)
+    del deep
     if plan.recomposition(frame):
         mismatch, failures = _samples_mismatch(plan.sample_dir(shot, frame), frame_samples, paths["beauty"])
         metrics["samples_mismatch"] = mismatch

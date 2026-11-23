@@ -161,6 +161,26 @@ def _merged_deep(pixels: list[list[tuple[float, ...]]]) -> Deep:
 
 
 class RoleChannelTest(unittest.TestCase):
+    def test_planar_role_gather_matches_prefix_minimum(self) -> None:
+        alpha = np.array([0.3, 0.5, 1.0], np.float32)
+        order = np.array([2, 0, 1], np.int64)
+        for dtype in (np.float16, np.float32, np.float64):
+            raw = np.array([[0.8, 0.9, 0.2], [0.2, 0.1, -0.1], [0.7, 0.6, 0.4]], dtype)
+            expected = np.minimum.accumulate(np.maximum(np.column_stack([alpha, raw[order]]), 0), axis=1)
+            np.testing.assert_array_equal(
+                roles.nested(tuple(raw[:, i] for i in range(3)), alpha, order=order),
+                expected[:, 1:].astype(np.float32),
+            )
+            np.testing.assert_array_equal(roles.nested(raw[order], alpha), expected[:, 1:].astype(np.float32))
+        invalid = (np.zeros((3, 2)), (raw[:, 0], raw[:, 1]), (raw[:, 0], raw[:2, 1], raw[:, 2]))
+        for channels in invalid:
+            with self.assertRaises(ValueError):
+                roles.nested(channels, alpha)
+        with self.assertRaises(ValueError):
+            roles.nested(raw, alpha[:2])
+        with self.assertRaises(ValueError):
+            roles.nested(raw, alpha, order=np.array([0, 1, 3], np.int64))
+
     def test_role_channels_out_of_order_or_missing_fail_raw_qa(self) -> None:
         deep = _deep([[(0, 0, 1, 1.0, 5.0, 3)], [(0, 1, 0, 0.5, 2.0, 2), (0, 1, 0, 1.0, 3000.0, 0)]])
         beauty = {c: flatten(deep).rgba[..., i].astype(np.float32) for i, c in enumerate("RGB")}
@@ -309,8 +329,20 @@ class IdentityTest(unittest.TestCase):
             coverage,
         )
         np.testing.assert_array_equal(decoded, ids)
-        zero = np.zeros(1, np.float32)
-        self.assertEqual(identity.decode(zero, zero, zero, zero).tolist(), [identity.UNLABELLED])
+        order = np.array([identity.MAX_ID - 1, 0, 100, 0], np.int64)
+        channels = (
+            ids.astype(np.float32) * coverage,
+            identity.check(ids) * coverage,
+            identity.check2(ids) * coverage,
+            coverage,
+        )
+        np.testing.assert_array_equal(identity.decode(*channels, order=order), ids[order])
+        for outside in (-1, identity.MAX_ID):
+            with self.assertRaises(ValueError):
+                identity.decode(*channels, order=np.array([outside], np.int64))
+        for dtype in (np.float16, np.float32, np.float64):
+            zero = np.zeros(1, dtype)
+            self.assertEqual(identity.decode(zero, zero, zero, zero).tolist(), [identity.UNLABELLED])
         self.assertEqual(identity.range_errors(0, identity.MAX_ID), [])
         self.assertTrue(identity.range_errors(identity.MAX_ID - 1, 2))
 

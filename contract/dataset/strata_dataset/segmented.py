@@ -4,8 +4,39 @@ from importlib import import_module
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
+
+
+def validate_order(order: NDArray[np.int64], size: int, source: int) -> None:
+    if order.ndim != 1 or order.size != size or np.any(order < 0) or np.any(order >= source):
+        raise ValueError("sample order must gather valid flat source indices")
+
 
 jit: Any = import_module("numba").njit
+
+
+@jit(cache=True)
+def _sort(depth: Any, result: Any, first: int, count: int) -> None:
+    for j in range(count):
+        source = first + j
+        value = depth[source]
+        k = j
+        while k > 0 and (depth[result[k - 1]] > value or np.isnan(depth[result[k - 1]])):
+            if np.isnan(value):
+                break
+            result[k] = result[k - 1]
+            k -= 1
+        result[k] = source
+
+
+@jit(cache=True)
+def order(depth: Any, counts: Any) -> Any:
+    result = np.empty(depth.size, dtype=np.int64)
+    first = 0
+    for count in counts:
+        _sort(depth, result[first : first + count], first, count)
+        first += count
+    return result
 
 
 @jit(cache=True)
@@ -22,6 +53,27 @@ def transmittance(alpha: Any, counts: Any) -> Any:
             result[j] = np.exp(before - origin)
         first += count
     return result
+
+
+@jit(cache=True)
+def gather(channels: Any, indices: Any) -> Any:
+    output = np.empty((indices.size, len(channels)), dtype=np.float32)
+    for i in range(indices.size):
+        for channel in range(len(channels)):
+            output[i, channel] = channels[channel][indices[i]]
+    return output
+
+
+@jit(cache=True)
+def weighted_sum(transmitted: Any, weights: Any, counts: Any) -> Any:
+    output = np.zeros((counts.size, weights.shape[1]), dtype=np.float64)
+    first = 0
+    for pixel in range(counts.size):
+        for j in range(first, first + counts[pixel]):
+            for channel in range(weights.shape[1]):
+                output[pixel, channel] += np.float64(weights[j, channel]) * transmitted[j]
+        first += counts[pixel]
+    return output
 
 
 @jit(cache=True)
@@ -46,14 +98,7 @@ def fill(
     cumulative = 0.0
     for pixel in range(counts.size):
         count = counts[pixel]
-        for j in range(count):
-            source = first + j
-            value = depth[source]
-            k = j
-            while k > 0 and depth[order[k - 1]] > value:
-                order[k] = order[k - 1]
-                k -= 1
-            order[k] = source
+        _sort(depth, order, first, count)
         length = 0
         origin = cumulative
         previous_log = 0.0
