@@ -71,6 +71,22 @@ choices the shot was built from), `scene` (sampled terrain, lighting, hero, came
 samples, frame range, AOV lists) and `timings` (filled after rendering: device, per-frame seconds,
 VRAM).
 
+New shots include `render.sampling_seed = {"mode": "per-frame" | "fixed", "seeds": [int, ...]}`.
+The seeds align with every frame in the inclusive `render.frames` range, not with farm task chunks.
+`strata_dataset.sampling.schedule` is the shared deterministic rule: SHA-256 named keys
+`<shot seed>:render:mode` and `<shot seed>:render:seed` supply the low 31 bits of the first
+little-endian digest word. The mode key low bit assigns per-frame (1) or fixed (0), a 50/50 default.
+A fixed 31-bit integer mixer hashes the seed key plus the frame in per-frame mode, or the seed
+key alone in fixed mode. Seeds lie in [0, 2147483647]. Validation rejects a present schedule
+that differs from this rule. Existing 0.4.0 records may omit this additive render metadata.
+
+Render settings author `int karma:global:randomseed` on `/Render/settings`: time samples
+for per-frame mode, a constant default for fixed mode. The property and type are verified
+against Houdini 22.0.466 `houdini/RenderPropertiesKA.json` and the bundled
+`houdini/dso/usd_plugins/usdKarma/resources/usdKarma/schema.usda` (`KarmaRenderSettingsAPI`).
+External farm HIP builders must read the schedule and author the listed seed at each frame,
+not replace it with `$F` or override it using husk `--lock-random`. Spp is unchanged.
+
 ## beauty/NNNN.exr
 
 Multi-part scanline EXR, one part per AOV, all at the camera resolution:

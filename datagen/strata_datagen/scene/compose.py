@@ -360,6 +360,7 @@ def write(shot: Shot, library: Library, root: Path, render: RenderParams) -> Pat
             shot.frames,
             shot.track.motion_blur,
             shot.track.depth_of_field,
+            shot.spec.seed,
         ),
     )
     stage.GetRootLayer().Save()

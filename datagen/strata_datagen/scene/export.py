@@ -29,7 +29,7 @@ from strata_datagen.render import settings
 from strata_datagen.scene import audit
 from strata_datagen.scene.compose import FIRST_SCATTER_ID, TERRAIN_ID, RenderParams, Shot, samples_for
 from strata_datagen.scene.spec import RECIPE_VERSION
-from strata_dataset import records
+from strata_dataset import records, sampling
 
 CONTRACT_VERSION = records.VERSION
 GENERATORS = {
@@ -167,6 +167,7 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
             "aovs": [a.name for a in settings.BEAUTY_AOVS],
             "deep_aovs": list(settings.DEEP_AOVS),
             "deep_stride": render.deep_stride,
+            "sampling_seed": sampling.schedule(shot.spec.seed, shot.frames),
         },
         "timings": {},
     }

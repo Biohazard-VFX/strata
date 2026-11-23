@@ -19,6 +19,9 @@
 - Beauty, AOVs and deep share a one-pixel box filter so the flattened deep reproduces the beauty.
 - Beauty EXRs are multi-part, one part per AOV, ZIPS-compressed; no LPE lighting splits (unused by training, 43% of beauty size).
 - Every product name is time-sampled per frame; outputs never rely on `$F` expansion.
+- Karma noise stays: spp remains 64 (128 with DoF or blur), never raised for noise; noisy pairs learn the average without added render or storage cost.
+- Sampling seed modes default to 50/50 per-frame/fixed, assigned deterministically from each shot seed; integer-hashed frame seeds vary noise without new randomness.
+- New shots record render.sampling_seed mode and ordered seeds; existing 0.4.0 records may omit this metadata, but present schedules must match the shot seed.
 - Camera focal length and apertures are authored in tenths of a scene unit (mm / 100 at metres), per UsdGeomCamera.
 - Dome lights set `inputs:karma:light:renderlightgeo` so the HDRI is visible to camera rays.
 - HDRI directions use Karma's latlong frame: image centre at +Z, top row at +Y.

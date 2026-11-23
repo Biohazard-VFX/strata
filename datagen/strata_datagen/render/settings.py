@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 from pxr import Gf, Sdf, Usd, UsdRender
 
-from strata_dataset import roles
+from strata_dataset import roles, sampling
 
-VERSION = "render-settings-0.4.0"
+VERSION = "render-settings-0.4.1"
 SETTINGS_PATH = "/Render/settings"
 
 
@@ -51,6 +51,7 @@ class RenderConfig:
     frames: tuple[int, ...]
     motion_blur: bool
     depth_of_field: bool
+    shot_seed: int
 
 
 def _var(stage: Usd.Stage, aov: Aov) -> UsdRender.Var:
@@ -111,6 +112,13 @@ def _karma(settings: UsdRender.Settings, config: RenderConfig) -> None:
         ("karma:object:geosamples", Sdf.ValueTypeNames.Int, 1),
     ):
         prim.CreateAttribute(name, kind).Set(value)
+    schedule = sampling.schedule(config.shot_seed, config.frames)
+    seed = prim.CreateAttribute("karma:global:randomseed", Sdf.ValueTypeNames.Int)
+    if schedule["mode"] == "fixed":
+        seed.Set(schedule["seeds"][0])
+    else:
+        for frame, value in zip(config.frames, schedule["seeds"], strict=True):
+            seed.Set(value, Usd.TimeCode(frame))
 
 
 def author(stage: Usd.Stage, camera: str, config: RenderConfig) -> UsdRender.Settings:

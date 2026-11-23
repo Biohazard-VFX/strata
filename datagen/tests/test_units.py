@@ -423,7 +423,7 @@ class RelativeAssetTest(unittest.TestCase):
 class SettingsTest(unittest.TestCase):
     def test_deep_and_beauty_share_a_box_filter_and_per_frame_files(self) -> None:
         stage = Usd.Stage.CreateInMemory()
-        config = settings.RenderConfig(64, 36, 8, (1, 2), motion_blur=False, depth_of_field=True)
+        config = settings.RenderConfig(64, 36, 8, (1, 2), motion_blur=False, depth_of_field=True, shot_seed=0)
         render = settings.author(stage, "/cam", config)
         prim = render.GetPrim()
         self.assertEqual(prim.GetAttribute("karma:global:pixelfilter").Get(), "box")
@@ -471,7 +471,9 @@ class SettingsTest(unittest.TestCase):
                 UsdGeom.Mesh.Define(stage, "/outside").GetPrim(), np.array([identity.MAX_ID]), "rock"
             )
         settings.author(
-            stage, "/cam", settings.RenderConfig(4, 4, 8, (1,), motion_blur=False, depth_of_field=False)
+            stage,
+            "/cam",
+            settings.RenderConfig(4, 4, 8, (1,), motion_blur=False, depth_of_field=False, shot_seed=0),
         )
         self.assertTrue({"instance_check", "instance_check2", *roles.ROLES} <= set(settings.DEEP_AOVS))
         names = {aov.name: aov for aov in settings.BEAUTY_AOVS}
@@ -482,7 +484,9 @@ class SettingsTest(unittest.TestCase):
     def test_deep_never_merges_samples_across_depths(self) -> None:
         stage = Usd.Stage.CreateInMemory()
         settings.author(
-            stage, "/cam", settings.RenderConfig(64, 36, 8, (1,), motion_blur=False, depth_of_field=False)
+            stage,
+            "/cam",
+            settings.RenderConfig(64, 36, 8, (1,), motion_blur=False, depth_of_field=False, shot_seed=0),
         )
         deep = stage.GetPrimAtPath("/Render/products/deep")
         self.assertEqual(deep.GetAttribute("karma:product:dcmzbias").Get(), 0.0)

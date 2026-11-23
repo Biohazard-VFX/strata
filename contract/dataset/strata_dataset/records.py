@@ -6,7 +6,7 @@ Readers and writers refuse records of any other version instead of reinterpretin
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from strata_dataset import identity
+from strata_dataset import identity, sampling
 
 VERSION = "strata-dataset-0.4.0"
 
@@ -20,4 +20,4 @@ def errors(manifest: Mapping[str, object], camera: Mapping[str, object]) -> list
     ]
     for record in cast("Sequence[Mapping[str, int]]", manifest.get("instance_ids", [])):
         found += identity.range_errors(record["first_id"], record["count"])
-    return found
+    return found + sampling.errors(manifest)

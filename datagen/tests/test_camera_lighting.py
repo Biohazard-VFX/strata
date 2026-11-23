@@ -112,7 +112,9 @@ class ForegroundTest(unittest.TestCase):
         self.assertEqual(sky.GetPrimvar("foreground").Get(), 0.0)
         self.assertEqual(UsdGeom.PrimvarsAPI(ground).GetPrimvar("foreground").Get(), 1.0)
         settings.author(
-            stage, "/cam", settings.RenderConfig(4, 4, 8, (1,), motion_blur=False, depth_of_field=False)
+            stage,
+            "/cam",
+            settings.RenderConfig(4, 4, 8, (1,), motion_blur=False, depth_of_field=False, shot_seed=0),
         )
 
         def variables(product: str) -> list[str]:
