@@ -32,6 +32,8 @@ Rules for anyone, human or agent, changing Strata. They are not suggestions. Whe
 
 `DECISIONS.md` files record architecture: one line per entry, at most 200 characters, stating the choice and, briefly, why.
 
+- Any change to how the system behaves (representation, sampling, losses, augmentation, exposure, architecture, data design, retention) is decided with the owner, after a plain walkthrough of how that stage works and its options. Never pick a value silently and build on it.
+- Each such decision is recorded in `DECISIONS.md` and enforced by a deterministic check that fails when it is violated.
 - A decision constrains future code (formats, semantics, boundaries, algorithms, conventions).
 - Not decisions, and never written there: caveats, incident logs, measurements, benchmark methodology, build steps, branch or worktree notes, coordination between agents, what one machine could or could not run. Results and measurements go to the results docs outside the repo; build steps go in the README.
 
