@@ -1,37 +1,58 @@
 # Strata
 
-Deep data from live-action footage.
+Strata is a research project by Biohazard VFX. The goal is to get deep data, a solved camera and per-layer PBR materials straight out of live-action footage, inside the tools compositors already use.
 
-Strata turns an image or a plate into deep EXRs: several depth samples per pixel, each with its own color and coverage. That lets CG sit behind and in front of hair, fur, foliage, motion blur and defocus without roto. Our own model will also solve the camera and recover PBR materials (albedo, normals, roughness, metallic) per layer, for relighting plates in comp.
+Today, a holdout through hair, fur, motion blur or defocus means roto or a hard, chewed depth matte. Deep keeps several samples per pixel, each with its own depth, colour and coverage. Strata predicts it from the plate.
 
-Status: early development. Not production-ready.
+![Holdout comparison](docs/images/holdout_comparison.jpg)
 
-[Runtime build, export, CLI usage and qualification](runtime/README.md).
+*A CG card behind a creature the model never saw in training. Bottom row: holdout matte.*
 
-## Layout
+On early tests with a small dataset, a post-trained Depth Pro 2 already produces coherent deep data. We're now scaling the dataset up.
 
-- `runtime/`: C library, `strata` CLI and `strata_bench` on ONNX Runtime (CPU and CUDA). Embeddable through a C API.
-- `training/`: model export, post-training and evaluation.
-- `contract/`: versioned model spec shared by runtime and training.
-- `datagen/`: synthetic dataset generation (USD + MaterialX, rendered in Karma), with deep, cameras and material AOVs per frame.
-- `hosts/`: integrations built only on the public C API: Nuke (native deep), OFX, ComfyUI.
-- `tools/`: repository checks.
+## Status
 
-## Roadmap
-
-1. Runtime running Depth Pro 2, writing depth plus a direct depth-to-deep baseline.
-2. Host integrations: Nuke nodes first, then OFX and ComfyUI.
-3. Depth Pro 2 post-trained to output deep, on single images and video.
-4. Our own model, trained from scratch: footage in, deep, camera and per-layer PBR out.
-5. Desktop app (Rust + Rune), also on the web.
+| | Status |
+|---|---|
+| Runtime: C library and command-line tool (CPU and NVIDIA GPU) | Done |
+| Synthetic training data: Houdini/Karma shots with rendered deep ground truth | Done |
+| Strata 1 training | In progress |
+| Nuke node (native deep) | Planned |
+| OFX and ComfyUI | Planned |
+| Desktop app | Planned |
 
 ## Models
 
-The first model is post-trained from Apple's Depth Pro 2. Those weights stay under Apple's research license. Strata's own models will ship under Strata's license.
+| | Input | Output | Base model | Use |
+|---|---|---|---|---|
+| Strata 1 | Video | Deep | Apple Depth Pro 2 | Research and testing |
+| Strata 2 | Video | Deep, solved camera, early PBR | Apple Depth Pro 2 | Research and testing |
+| Strata 3 | Video | Deep, solved camera, PBR | Meta DINOv3 | Commercial work |
+
+## FAQ
+
+**Do I need to train it on my own footage?**
+No.
+
+**Is it open source?**
+Source-available under the Elastic License 2.0: use and modify it in your pipeline, commercial work included, but don't sell it as a hosted service. Weights are licensed per model (see Models).
+
+**Which apps will it run in?**
+Nuke first, with native deep. Then OFX hosts and ComfyUI.
+
+## For developers
+
+| Folder | What's in it |
+|---|---|
+| `runtime/` | C library, `strata` CLI and `strata_bench`, on ONNX Runtime. [Build and usage](runtime/README.md). |
+| `training/` | Model export, post-training and evaluation. |
+| `datagen/` | Synthetic dataset generation: USD and MaterialX scenes rendered in Karma, with deep, cameras and material AOVs per frame. |
+| `contract/` | The versioned model and dataset specs shared by the other folders. |
+| `tools/` | Repository checks. |
+
+Host plugins will live in `hosts/` and use only the public C API.
 
 ## References
-
-Strata builds on:
 
 - Bochkovskii et al., *Depth Pro: Sharp Monocular Metric Depth in Less Than a Second*, 2024. [arXiv:2410.02073](https://arxiv.org/abs/2410.02073)
 - Hu et al., *Depth Pro 2: Sharp and Temporally Consistent Metric Monocular Depth*, 2026. [arXiv:2611.26603](https://arxiv.org/abs/2611.26603)
@@ -41,6 +62,6 @@ BibTeX is in [`CITATION.bib`](CITATION.bib).
 
 ## License
 
-Elastic License 2.0. Use, modify and fork it freely, including in commercial studio pipelines. You may not offer Strata as a hosted or managed service. Contributions require the CLA (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+Code: Elastic License 2.0. Contributions require the CLA ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
-Part of Materia by Biohazard VFX.
+Strata is part of Materia by Biohazard VFX.
