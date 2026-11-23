@@ -13,8 +13,8 @@
 - Parity gates every image alike vs FP16 PyTorch: p99.9 1%, max 5% beyond 2 px of a log step >0.3, median and signed bias 0.25%, focal 0.1%; no per-image exemptions.
 - Against an FP32 oracle, native median and |signed bias| may exceed PyTorch FP16's own by 0.2 pp, the most PyTorch moves under 1-fp16-ulp input perturbations.
 - Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; deep RGB preserves source values and alpha is always one.
-- sRGB encoding is computed in double precision and rounded once to float32 in C and in the oracle, so both feed identical tensors.
-- Non-finite input samples clamp after exposure (+inf to 1, NaN and -inf to 0); each result reports how many pixels were affected.
+- Shoulder and sRGB math use double precision, rounded once to float32 before ImageNet normalization; encoder_input parity is bit-identical (atol 0).
+- Negative and NaN scene-linear input map to zero; +inf maps to one and -inf to zero; each result counts non-finite pixels.
 - Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
 - `strata_run` infers one frame; temporal inference will be a separate stream API rather than a frame count on this call.
 - Filled outputs take a zeroed or previously filled object, free its old contents first and hold nothing on failure, so hosts reuse them per frame.
@@ -33,3 +33,8 @@
 - K-slot visible coverage is a simplex with opaque terminal alpha, closing holes by construction; check: test_head_coverage_is_exactly_one.
 - Gate GT-opaque interior behind-surface leakage by brightness and select with mixed-alpha error; checks: test_behind_surface_leakage, test_leakage_gate_and_selection_require_both_metrics.
 - Detach alpha only in per-layer colour supervision; preserve colour space and composite gradients; check: test_layer_colour_does_not_steer_coverage_but_composite_still_does.
+- Depth Pro 2 encoder stays frozen to train only downstream weights; test_encoder_stays_frozen checks parameters and training mode.
+- Fable shoulder uses gain 0.72, knee 0.6, span 0.4 and sRGB, preserving midtones and compressing HDR; test_fable_fixed_points_and_float_cache fixes values.
+- Exposure is fixed per shot, never inferred per frame; --exposure is an additive stop override; test_exposure_is_fixed_across_frames_and_crops checks invariance.
+- Encoder input stays float32 end to end; reject old target/feature caches, never quantize; encoder_input parity and float-cache checks enforce it.
+- No second encoder pass: frozen features run once per frame; test_native_denoised_extraction_persists_matching_inference_image_and_rejects_changes counts pyramid calls.

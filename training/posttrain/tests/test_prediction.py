@@ -12,10 +12,32 @@ from strata_training.baselines.cached import cached_baselines
 from strata_training.baselines.prepare import prepare_baselines
 from strata_training.baselines.probe import FrozenProbe, predict_probe
 from strata_training.data import mapped
+from strata_training.data.cache import CACHE_VERSION
 from strata_training.data.feature_cache import base_arrays
 from strata_training.eval.predict import cache_predictions
 from strata_training.io import save_array, save_arrays, write_json
 from strata_training.model.head import DeepHead
+
+
+def test_probe_preserves_float_srgb_and_rejects_quantized_input(tmp_path: Path) -> None:
+    model = FrozenProbe().eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.stem.weight[0, 0, 0, 0] = 1
+        model.output.weight[0, 0, 0, 0] = 1
+    checkpoint, norm = tmp_path / "probe.pt", tmp_path / "norm.npz"
+    torch.save(model.state_dict(), checkpoint)
+    save_arrays(norm, mean=np.zeros(132), std=np.ones(132))
+    srgb = np.full((3, 2, 3), 0.40123, np.float32)
+    inverse = np.ones((2, 3), np.float32)
+    features = np.zeros((128, 2, 3), np.float32)
+    actual = predict_probe(checkpoint, norm, srgb, inverse, features, srgb)
+    expected = torch.nn.functional.silu(torch.tensor(0.40123)).sigmoid().item()
+    assert_allclose(actual.alpha[0], expected, rtol=0, atol=1e-7)
+    for dtype in (np.uint8, np.float64):
+        with pytest.raises(ValueError, match="float32"):
+            predict_probe(checkpoint, norm, srgb.astype(dtype), inverse, features, srgb)
 
 
 def test_metric_inputs_and_frozen_ood_calibration_preserve_training_provenance(
@@ -28,8 +50,9 @@ def test_metric_inputs_and_frozen_ood_calibration_preserve_training_provenance(
     shape = (16, 16)
     save_arrays(
         cache,
+        version=np.array(CACHE_VERSION),
         beauty=np.ones((3, *shape)),
-        srgb=np.full((3, *shape), 128),
+        srgb=np.full((3, *shape), 0.501, np.float32),
         mixed=np.ones(shape, dtype=bool),
         inverse_depth=np.full((4, *shape), 0.25),
     )
@@ -89,7 +112,7 @@ def test_metric_inputs_and_frozen_ood_calibration_preserve_training_provenance(
     expected_probe = predict_probe(
         probe,
         norm,
-        np.full((3, *shape), 128),
+        np.full((3, *shape), 0.501, np.float32),
         np.full(shape, 0.5),
         np.zeros((128, *shape), dtype=np.float32),
         np.ones((3, *shape), dtype=np.float32),

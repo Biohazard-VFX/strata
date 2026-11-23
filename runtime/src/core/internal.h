@@ -30,7 +30,7 @@ int strata_read_exr(const char *path, struct strata_image *image,
 float strata_srgb(float x);
 int strata_padded_size(int w, int h, int *pw, int *ph,
 		       struct strata_error *err);
-size_t strata_prepare(const struct strata_image *image, float exposure,
+size_t strata_prepare(const struct strata_image *image, double exposure,
 		      const struct strata_tensor *padded);
 int strata_fov_input(const struct strata_tensor *padded, int w, int h,
 		     struct strata_tensor *crop, struct strata_error *err);

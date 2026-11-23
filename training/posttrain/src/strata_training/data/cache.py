@@ -12,16 +12,18 @@ from pathlib import Path
 from typing import Any, Concatenate
 
 import numpy as np
+import torch
 from strata_dataset.samples import recorded_identity
 
 from strata_training.data.compact import read_layers
+from strata_training.data.encoder_input import display
 from strata_training.data.exr import read_rgb, read_roles
 from strata_training.data.metadata import camera_frames, category
 from strata_training.data.policy import is_test_only
 from strata_training.io import save_arrays, write_json
 from strata_training.types import Array, Layers, fp16_safe
 
-CACHE_VERSION = "targets-content-v1"
+CACHE_VERSION = "targets-fable-float-v2"
 
 
 @contextmanager
@@ -56,6 +58,9 @@ def cache_readers(*indexes: Path) -> Generator[None]:
     with ExitStack() as leases:
         for directory in sorted(directories):
             leases.enter_context(cache_lock(directory, shared=True))
+        for index in indexes:
+            for entry in json.loads(index.read_text()):
+                validate_target(Path(entry["cache"]))
         yield
 
 
@@ -68,6 +73,12 @@ def cache_reader[**P, R](
             return function(index, *args, **kwargs)
 
     return locked
+
+
+def validate_target(path: Path) -> None:
+    with np.load(path) as data:
+        if "version" not in data or str(data["version"]) != CACHE_VERSION:
+            raise ValueError("Target cache version mismatch; rebuild target caches")
 
 
 def digest_stat(stat: stat_result) -> list[int]:
@@ -192,7 +203,9 @@ def _prepare(dataset: Path, output: Path, layers: int) -> list[dict[str, Any]]:
             if cache.exists():
                 with np.load(cache) as existing:
                     reusable = (
-                        "content_identity" in existing
+                        "version" in existing
+                        and str(existing["version"]) == CACHE_VERSION
+                        and "content_identity" in existing
                         and str(existing["content_identity"]) == identity
                     )
             if not reusable:
@@ -207,11 +220,12 @@ def _prepare(dataset: Path, output: Path, layers: int) -> list[dict[str, Any]]:
                 srgb = display_rgb(image, manifest.get("color_space", "ACEScg"))
                 mixed = (target.alpha[0] > 0.03) & (target.alpha[0] < 0.97)
                 reference = read_roles(packed)
-                reference["denoised"] = fp16_safe(
-                    read_rgb(shot / "beauty" / f"{int(frame):04d}.exr", part_name="denoised")
-                )
+                reference["denoised"] = read_rgb(
+                    shot / "beauty" / f"{int(frame):04d}.exr", part_name="denoised"
+                ).astype(np.float32)
                 save_arrays(
                     cache,
+                    version=np.array(CACHE_VERSION),
                     inverse_depth=target.inverse_depth,
                     alpha=target.alpha,
                     rgb=fp16_safe(target.rgb),
@@ -244,18 +258,8 @@ def _prepare(dataset: Path, output: Path, layers: int) -> list[dict[str, Any]]:
     return entries
 
 
-DISPLAY_MATRIX = np.array(
-    [[1.70505, -0.62179, -0.08326], [-0.13026, 1.1408, -0.01055], [-0.024, -0.12897, 1.15297]]
-)
-DISPLAY_EXPOSURE = 0.71619818
-
-
 def display_rgb(image: Array, color_space: str) -> Array:
-    if color_space == "ACEScg":
-        image = np.einsum("ij,jhw->ihw", DISPLAY_MATRIX, image)
-    image = np.clip(image * DISPLAY_EXPOSURE, 0, 1)
-    display = np.where(image <= 0.0031308, image * 12.92, 1.055 * image ** (1 / 2.4) - 0.055)
-    return (display * 255 + 0.5).astype(np.uint8)
+    return display(torch.as_tensor(image), color_space).numpy()
 
 
 def load_layers(path: Path) -> tuple[Layers, dict[str, Array]]:

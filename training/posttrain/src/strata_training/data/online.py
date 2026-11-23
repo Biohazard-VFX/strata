@@ -25,8 +25,8 @@ from strata_training.augment.pipeline import (
     photometric,
     roles,
 )
-from strata_training.data.cache import display_rgb
 from strata_training.data.dataset import Frame, input_batch
+from strata_training.data.encoder_input import display, normalize
 from strata_training.data.exr import read_rgb
 from strata_training.data.policy import require_supervision
 from strata_training.data.targets import composite
@@ -230,11 +230,7 @@ class OnlineLoader:
                 targets[key].append(values[key][..., halo : halo + crop, halo : halo + crop])
         normalized: torch.Tensor | None = None
         if live:
-            display = [display_rgb(images[i], "ACEScg") for i in live]
-            rgb = _tensor(display, device) / 255
-            mean = torch.tensor([0.485, 0.456, 0.406], device=device)[None, :, None, None]
-            std = torch.tensor([0.229, 0.224, 0.225], device=device)[None, :, None, None]
-            normalized = (rgb - mean) / std
+            normalized = normalize(display(_tensor([images[i] for i in live], device), "ACEScg"))
         return PreparedBatch(
             _tensor(images, device),
             {k: _tensor(v, device) for k, v in targets.items()},

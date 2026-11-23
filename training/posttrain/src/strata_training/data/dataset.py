@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from strata_training.data import mapped
+from strata_training.data.cache import validate_target
 from strata_training.data.feature_cache import read_base
 from strata_training.data.targets import composite
 from strata_training.types import Array
@@ -19,6 +20,7 @@ class Frame:
     feature_root: Path
 
     def __post_init__(self) -> None:
+        validate_target(Path(self.entry["cache"]))
         mapped.unpack(Path(self.entry["cache"]))
         read_base(self.root / "base.npz")
         context_path = self.root / "context.json"

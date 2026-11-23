@@ -53,6 +53,7 @@ def test_native_parts_and_role_masks_are_preserved_in_target_cache(
         assert entry["split"] == ("test" if protected else "train")
         assert not entry["compact_scene_only"]
         with np.load(entry["cache"]) as data:
+            assert str(data["version"]) == "targets-fable-float-v2"
             assert data["alpha"].shape == (4, 1, 4)
             assert_array_equal(data["foreground"], [[0.5, 0.25, 0.5, 0]])
             assert_array_equal(data["hero"], [[0.25, 0.25, 0, 0]])

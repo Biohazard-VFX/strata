@@ -157,15 +157,10 @@ def prepare_raw(
 
 
 def normalize(images: torch.Tensor) -> torch.Tensor:
-    from strata_training.data.cache import DISPLAY_EXPOSURE, DISPLAY_MATRIX
+    from strata_training.data.encoder_input import display
+    from strata_training.data.encoder_input import normalize as normalize_display
 
-    matrix = torch.tensor(DISPLAY_MATRIX, device=images.device)
-    linear = (torch.einsum("ij,bjhw->bihw", matrix, images.double()) * DISPLAY_EXPOSURE).clamp(0, 1)
-    srgb = torch.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
-    display = ((srgb * 255 + 0.5).floor() / 255).float()
-    mean = torch.tensor([0.485, 0.456, 0.406], device=images.device)[None, :, None, None]
-    std = torch.tensor([0.229, 0.224, 0.225], device=images.device)[None, :, None, None]
-    return (display - mean) / std
+    return normalize_display(display(images, "ACEScg"))
 
 
 def finalize(prepared: "PreparedBatch", crop: int, halo: int) -> "PreparedBatch":

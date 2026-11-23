@@ -34,6 +34,8 @@ def predict_probe(
     features: Array,
     beauty: Array,
 ) -> Layers:
+    if srgb.dtype != np.float32:
+        raise ValueError("Probe input must be float32; rebuild target caches")
     model = FrozenProbe().eval()
     model.load_state_dict(torch.load(checkpoint, map_location="cpu", weights_only=True))
     norm = np.load(normalization)
@@ -45,7 +47,7 @@ def predict_probe(
             y1, x1 = min(y + 288, height), min(x + 288, width)
             inputs = np.concatenate(
                 (
-                    srgb[:, y0:y1, x0:x1].astype(np.float32) / 255,
+                    srgb[:, y0:y1, x0:x1],
                     inverse[None, y0:y1, x0:x1],
                     features[:, y0:y1, x0:x1],
                 )

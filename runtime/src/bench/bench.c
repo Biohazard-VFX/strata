@@ -10,7 +10,7 @@ struct bench_options {
 	struct strata_options session;
 	const char *input;
 	float focal;
-	float exposure;
+	double exposure;
 	long frames;
 };
 
@@ -41,7 +41,7 @@ static int parse(int argc, char **argv, struct bench_options *options)
 		else if (!strcmp(key, "--f-px") && numeric && number > 0)
 			options->focal = (float)number;
 		else if (!strcmp(key, "--exposure") && numeric)
-			options->exposure = (float)number;
+			options->exposure = number;
 		else if (!strcmp(key, "--frames") && numeric && number >= 1 &&
 			 number <= 100000 && number == floor(number))
 			options->frames = (long)number;
