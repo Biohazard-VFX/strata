@@ -227,3 +227,4 @@ def pack(shot: Path, frames: range) -> None:
             write_layers(targets(frame_samples), shot / "layers" / name)
             if plan.recomposition(frame):
                 write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))
+            del frame_samples

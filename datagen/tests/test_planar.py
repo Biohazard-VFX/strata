@@ -3,6 +3,7 @@
 import ctypes as c
 import tempfile
 import unittest
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
@@ -13,6 +14,8 @@ import OpenEXR
 from strata_datagen import exrcore
 from strata_datagen.exr import Deep, read_deep
 from strata_datagen.qa.deep import FRONT_SLAB, LAYER_GAP_M, OPAQUE, VISIBLE, flatten
+from strata_datagen.render import pack
+from tests.fixtures import SKY, Sample, write_shot
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -37,6 +40,33 @@ def _write(path: Path) -> None:
 
 
 class PlanarTests(unittest.TestCase):
+    def test_batch_releases_frame_before_reading_next_deep(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            write_shot(shot, [[Sample(0.1, 0.5, 2), SKY]] * 2, 2)
+            references: list[weakref.ReferenceType[pack.Samples]] = []
+            original_samples, original_read = pack.samples, pack.read_deep
+
+            def tracked(deep: Deep) -> pack.Samples:
+                value = original_samples(deep)
+                references.append(weakref.ref(value))
+                return value
+
+            def checked(path: Path) -> Deep:
+                self.assertTrue(
+                    all(reference() is None for reference in references),
+                    "previous frame retained into the next EXR read",
+                )
+                return original_read(path)
+
+            with (
+                patch.object(pack, "samples", side_effect=tracked),
+                patch.object(pack, "read_deep", side_effect=checked),
+            ):
+                pack.pack(shot, range(1, 3))
+            self.assertEqual(len(references), 2)
+            self.assertTrue(all(reference() is None for reference in references))
+
     def test_deep_values_and_empty_pixels_match_binding(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "deep.exr"
