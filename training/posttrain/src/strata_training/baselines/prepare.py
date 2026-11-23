@@ -37,12 +37,13 @@ def prepare_baselines(
         target.mkdir(exist_ok=True)
         data = np.load(entry["cache"])
         base = read_base(features / entry["id"] / "base.npz")
+        values = base_arrays(base["inverse_depth"], float(base["metric_scale"]))
         if (target / "base.npz").exists():
-            read_base(target / "base.npz")
-        save_arrays(
-            target / "base.npz",
-            **base_arrays(base["inverse_depth"], float(base["metric_scale"])),
-        )
+            existing = read_base(target / "base.npz")
+            if any(not np.array_equal(existing[key], value) for key, value in values.items()):
+                raise ValueError("Existing baseline cache input changed; use a new directory")
+        else:
+            save_arrays(target / "base.npz", **values)
         for radius in (6, 16):
             path = target / f"r{radius}.npz"
             if not path.exists():

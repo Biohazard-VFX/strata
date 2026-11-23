@@ -11,6 +11,7 @@ from torch import nn
 from strata_training.baselines.cached import cached_baselines
 from strata_training.baselines.prepare import prepare_baselines
 from strata_training.baselines.probe import FrozenProbe
+from strata_training.data import mapped
 from strata_training.data.feature_cache import base_arrays
 from strata_training.eval.predict import cache_predictions
 from strata_training.io import save_array, save_arrays, write_json
@@ -82,6 +83,16 @@ def test_metric_inputs_and_frozen_ood_calibration_preserve_training_provenance(
     for name, prediction in baselines.items():
         if name.startswith(("fake", "analytic")):
             assert_allclose(prediction.inverse_depth[0], 0.5)
+    prepare_baselines(index, protocol, root, output, probe, norm, calibration)
+    mapped.arrays.cache_clear()
+    repeated = cached_baselines("ood", output, np.ones((3, *shape)))
+    for name, prediction in repeated.items():
+        for key, value in prediction.arrays().items():
+            np.testing.assert_array_equal(value, baselines[name].arrays()[key])
+    changed = tmp_path / "changed"
+    save_arrays(changed / "ood/base.npz", **base_arrays(np.full(shape, 0.25), 1.0))
+    with pytest.raises(ValueError, match="baseline cache input changed"):
+        prepare_baselines(index, protocol, changed, output, probe, norm, calibration)
     torch.save(
         {
             "config": {**config, "scale_mode": "raw"},

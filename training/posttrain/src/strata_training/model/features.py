@@ -102,14 +102,12 @@ def extract(
             clip = [shot[i] for i in indices]
             ids = [e["id"] for e in clip]
             denoises = [_denoised(e, samples) for e in clip]
+            for entry, denoise in zip(clip, denoises, strict=True):
+                if (output / entry["id"] / "base.npz").exists() and denoise is not None:
+                    context = json.loads((output / entry["id"] / "context.json").read_text())
+                    if context.get("image_sha256") != image_digest(denoise):
+                        raise ValueError("Existing clean cache input changed; use a new directory")
             if all((output / e["id"] / "base.npz").exists() for e in clip):
-                for entry, denoise in zip(clip, denoises, strict=True):
-                    if denoise is not None:
-                        context = json.loads((output / entry["id"] / "context.json").read_text())
-                        if context.get("image_sha256") != image_digest(denoise):
-                            raise ValueError(
-                                "Existing clean cache input changed; use a new directory"
-                            )
                 completed += len(clip)
                 continue
             arrays = [
@@ -124,6 +122,9 @@ def extract(
             with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16, cache_enabled=False):
                 pyramid = model.pyramid(normalized)
                 for i, entry in enumerate(clip):
+                    if (output / entry["id"] / "base.npz").exists():
+                        completed += 1
+                        continue
                     frame_pyramid = [p[i : i + 1] for p in pyramid]
                     features = model.decode(frame_pyramid)
                     with torch.autocast(device, enabled=False):
