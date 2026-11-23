@@ -5,6 +5,8 @@ from collections.abc import Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from multiprocessing.connection import Listener
+from multiprocessing.util import get_temp_dir
 from typing import Any
 
 import numpy as np
@@ -171,13 +173,28 @@ def device_batches(dataset: NativeBatches, device: str) -> Generator[Iterator[Lo
                 stream.synchronize()
 
 
+def check_worker_socket(_worker_id: int = 0) -> None:
+    directory = get_temp_dir()
+    try:
+        Listener(family="AF_UNIX").close()
+    except OSError as error:
+        raise RuntimeError(
+            f"Loader workers cannot create Unix sockets in the multiprocessing temp directory "
+            f"{directory!r}: {error}. Set TMPDIR to a shorter, writable directory on a "
+            "filesystem supporting Unix sockets before starting Python, or set loader_workers=0"
+        ) from error
+
+
 def batches(dataset: NativeBatches) -> DataLoader[LoadedBatch]:
     """Own a bounded worker queue; caller releases the loader when training stops."""
     workers = int(dataset.config["loader_workers"])
+    if workers:
+        check_worker_socket()
     return DataLoader(
         dataset,
         batch_size=None,
         num_workers=workers,
+        worker_init_fn=check_worker_socket if workers else None,
         persistent_workers=workers > 0,
         prefetch_factor=int(dataset.config["loader_prefetch"]) if workers else None,
         multiprocessing_context="spawn" if workers else None,

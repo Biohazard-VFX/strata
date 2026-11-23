@@ -18,8 +18,10 @@ for name in tracked:
     path = Path(name)
     if any(part in ('build','models','.venv','__pycache__') for part in path.parts) or path.suffix in ('.exr','.onnx','.npz','.weights','.pt','.log'):
         errors.append(f'generated artifact is tracked: {name}')
-    if name.startswith('docs/') and path.name not in ('DECISIONS.md','BUILD.md','USAGE.md'):
-        errors.append(f'docs may only contain decisions and build/usage: {name}')
+    readme_image = (len(path.parts) == 3 and path.parts[1] == 'images' and path.suffix in ('.jpg','.png')
+                    and f'({name})' in Path('README.md').read_text())
+    if name.startswith('docs/') and path.name not in ('DECISIONS.md','BUILD.md','USAGE.md') and not readme_image:
+        errors.append(f'docs may only contain decisions, build/usage and README images: {name}')
 for name in ('runtime/src/core','runtime/src/backend','runtime/src/cli','runtime/include','training/strata_train',
              'contract/strata_contract','contract/dataset/strata_dataset','datagen/strata_datagen'):
     if not Path(name).is_dir() or not any(Path(name).iterdir()):
