@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M
-from strata_datagen.qa.deep import IDENTITY_CHANNELS, flatten
+from strata_datagen.qa.deep import IDENTITY_CHANNELS, flatten, partial_coverage
 from strata_datagen.render import pack
 from strata_dataset import identity, merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
@@ -23,24 +23,27 @@ VALIDATION = "raw-qa-7"
 LUMA = (0.2126, 0.7152, 0.0722)
 ROLE_EXCESS = 2.0**-15
 ROLE_BEAUTY = 2.0**-15
-LIMITS = {
-    "median_luma": (0.02, 1.5),
-    "clipped_fraction": (0.0, 0.02),
+RAW_ONLY_LIMITS = {
     "mean_samples": (1.0, 48.0),
     "max_samples": (1.0, 1024.0),
+    "coverage_alpha_error": (0.0, 2.0**-11),
+}
+LIMITS = {
+    **RAW_ONLY_LIMITS,
+    "median_luma": (0.02, 1.5),
+    "clipped_fraction": (0.0, 0.02),
+    "bad_depth": (0.0, 0.0),
     "partial_share": (0.005, 1.0),
     "flatten_error": (0.0, 0.005),
     "flatten_excess": (0.0, 0.005),
     "uncovered": (0.0, 0.0),
     "valid_id_fraction": (0.99995, 1.0),
-    "id_check_failure_fraction": (0.0, 2e-4),
     "unlabelled_coverage": (0.0, 2e-4),
     "identity_channels": (1.0, 1.0),
     "role_channels": (1.0, 1.0),
     "role_excess": (0.0, ROLE_EXCESS),
     "beauty_roles": (1.0, 1.0),
     "role_beauty_error": (0.0, ROLE_BEAUTY),
-    "coverage_alpha_error": (0.0, 2.0**-11),
     "sky_in_front": (0.0, 1e-5),
     "camera_error": (0.0, 1e-3),
     "intrinsics_error": (0.0, 1e-4),
@@ -95,30 +98,30 @@ def _identity_counts(ids: NDArray[np.int64], declared: NDArray[np.bool_]) -> tup
 
 
 def _identity_metrics(frame: pack.Samples | merged.Merged, ranges: list[tuple[int, int]]) -> dict[str, float]:
-    """Identity check failures, undeclared ids among checked samples, and the coverage left without an id.
-
-    `unlabelled_coverage` is the mean over pixels of the visible coverage of samples with id -1:
-    per-object uses lose it; roles do not, they come from the role channels.
-    """
-    counts = np.diff(frame.offsets)
+    """Visible unlabelled coverage gates identity; raw sample counts are diagnostic only."""
     labelled = frame.ids != identity.UNLABELLED
     declared = np.zeros(identity.MAX_ID, bool)
     for low, high in ranges:
         declared[max(low, 0) : max(0, min(high, identity.MAX_ID))] = True
     labelled_count, valid_count = _identity_counts(frame.ids, declared)
-    visible = segmented.transmittance(frame.alpha, counts)
-    visible *= frame.alpha
-    return {
-        "id_check_failure_fraction": (frame.ids.size - labelled_count) / frame.ids.size
-        if frame.ids.size
-        else 0.0,
+    visible = (
+        frame.statistics[:, 1]
+        if isinstance(frame, merged.Merged)
+        else segmented.transmittance(frame.alpha, np.diff(frame.offsets)) * frame.alpha
+    )
+    metrics = {
         "valid_id_fraction": valid_count / labelled_count if labelled_count else 1.0,
-        "unlabelled_coverage": float(visible[~labelled].sum() / counts.size),
+        "unlabelled_coverage": float(visible[~labelled].sum() / (frame.offsets.size - 1)),
     }
+    if isinstance(frame, pack.Samples):
+        metrics["id_check_failure_fraction"] = (
+            (frame.ids.size - labelled_count) / frame.ids.size if frame.ids.size else 0.0
+        )
+    return metrics
 
 
 @segmented.jit(cache=True)
-def _role_excess(chain: tuple[NDArray[np.float32], ...]) -> float:
+def _role_excess(chain: tuple[NDArray[np.floating], ...]) -> float:
     if not chain[0].size:
         return 0.0
     excess = -np.inf
@@ -139,12 +142,22 @@ def role_excess(deep: Deep) -> float:
     return _role_excess(tuple(deep.channels[name] for name in ("coverage", *roles.ROLES)))
 
 
+def _sky_metrics(frame: pack.Samples | merged.Merged) -> dict[str, float]:
+    """Visible sky fraction in near runs, with raw canonicalized across threshold-straddling runs."""
+    runs = (
+        frame
+        if isinstance(frame, merged.Merged)
+        else merged.merge(
+            frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+        )
+    )
+    sky = runs.statistics[:, 3]
+    total = float(sky.sum())
+    return {"sky_in_front": float(sky[runs.z < SKY_MIN_Z_M].sum() / total) if total else 0.0}
+
+
 def _role_metrics(deep: Deep, frame: pack.Samples) -> dict[str, float]:
-    near_sky = roles.sky(frame.alpha, frame.roles[:, 0]) & (frame.z < SKY_MIN_Z_M)
-    return {
-        "role_excess": role_excess(deep),
-        "sky_in_front": float(near_sky.mean()) if near_sky.size else 0.0,
-    }
+    return {"role_excess": role_excess(deep)} | _sky_metrics(frame)
 
 
 def role_beauty_metrics(
@@ -309,6 +322,7 @@ def inputs(shot: Path, frame: int) -> dict[str, str | None]:
         "deep": digest(paths["deep"]) if paths["deep"].exists() else None,
         "targets": digest(paths["layers"]) if paths["layers"].exists() else None,
         "samples": contract_samples.recorded_identity(plan.sample_dir(shot, frame)),
+        **{f"raw_{key}_policy": json.dumps(LIMITS[key]) for key in RAW_ONLY_LIMITS},
     }
 
 
@@ -341,6 +355,23 @@ def _raw_metrics(
     return metrics, failures
 
 
+def _merged_deep_metrics(runs: merged.Merged, beauty: dict[str, NDArray[np.float32]]) -> dict[str, float]:
+    counts = np.diff(runs.offsets)
+    transmitted = segmented.transmittance(runs.alpha, counts)
+    rgba = segmented.weighted_sum(transmitted, np.c_[runs.rgb, runs.alpha], counts)
+    residual = np.stack([beauty[c].ravel() for c in "RGB"], -1) - rgba[:, :3]
+    return {
+        "identity_channels": 1.0,
+        "role_channels": 1.0,
+        "bad_depth": float((~np.isfinite(runs.z) | (runs.z <= 0) | (runs.zback < runs.z)).sum()),
+        "partial_share": float(partial_coverage(runs.z, runs.alpha, counts, rgba[:, 3]).mean()),
+        "flatten_error": float(np.abs(residual).mean()),
+        "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
+        "uncovered": float((rgba[:, 3] < COVERED).mean()),
+        "role_excess": _role_excess((runs.alpha, *(np.ascontiguousarray(c) for c in runs.roles.T))),
+    } | _sky_metrics(runs)
+
+
 def _rebuilt_metrics(
     shot: Path, frame: int, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
 ) -> tuple[dict[str, float], list[str]]:
@@ -368,6 +399,7 @@ def _rebuilt_metrics(
         if name.endswith((".A", ".invdepth"))
     )
     measured = _identity_metrics(runs, ranges) | role_beauty_metrics(runs, beauty)
+    measured |= _merged_deep_metrics(runs, beauty)
     metrics = {f"merged_{name}": value for name, value in measured.items()}
     return metrics | {"rebuilt_mismatch": float(not masks)}, []
 
@@ -393,9 +425,14 @@ def _acceptance_errors(shot: Path, frame: int) -> list[str]:
     current = inputs(shot, frame)
     if any(checked.get(key) != current[key] for key in ("merge_version", "rebuild_version")):
         return ["merge/rebuild version changed; re-render required"]
-    changed = any(
-        current[key] is None or checked.get(key) != current[key] for key in ("beauty", "targets", "merged")
-    )
+    policy = [
+        f"{key}: raw QA policy changed; raw evidence required"
+        for key in RAW_ONLY_LIMITS
+        if checked.get(f"raw_{key}_policy") != current[f"raw_{key}_policy"]
+    ]
+    if policy:
+        return policy
+    changed = any(checked.get(key) != current[key] for key in ("beauty", "targets", "merged"))
     changed_raw = any(
         current[key] is not None and current[key] != checked.get(key) for key in ("deep", "samples")
     )
@@ -443,7 +480,8 @@ def check_frame(
     failures += found + found_merged
     metrics["camera_error"] = _camera_error(paths["beauty"], record)
     metrics["intrinsics_error"] = _intrinsics_error(paths["beauty"], record)
-    failures += [f"{k}={metrics[k]:.4g}" for k in ("nonfinite", "bad_depth") if metrics.get(k, 0.0) > 0]
+    if metrics["nonfinite"] > 0:
+        failures.append(f"nonfinite={metrics['nonfinite']:.4g}")
     failures += [
         f"{name}={metrics[name]:.4g} outside {low}..{high}"
         for k, (low, high) in LIMITS.items()
@@ -473,6 +511,8 @@ def _accept(shot: Path, frames: range) -> list[FrameResult]:
         paths = _paths(shot, frame)
         checked = inputs(shot, frame)
         result = check_frame(shot, frame, records[frame], ranges)
+        if checked != inputs(shot, frame):
+            result.failures.append("inputs changed during QA; retry required")
         results.append(result)
         if result.failures:
             if paths["deep"].exists():

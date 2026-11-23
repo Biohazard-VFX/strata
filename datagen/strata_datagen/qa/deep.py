@@ -50,17 +50,28 @@ def _flatten_row(deep: Deep, cumulative: float) -> tuple[Flattened, float]:
     rgba = np.zeros((size, 4))
     for i, name in enumerate("RGBA"):
         rgba[:, i] = np.bincount(pixel, weights=deep.channels[name][order] * transmittance, minlength=size)
-    depth = deep.channels["Z"][order].astype(np.float64)
-    near = np.full(size, np.inf)
-    populated = deep.counts > 0
-    near[populated] = np.minimum.reduceat(depth, starts[populated])
-    front = depth <= near[pixel] * (1.0 + FRONT_SLAB) + LAYER_GAP_M
-    clear = np.bincount(pixel[front], weights=np.log1p(-alpha[front]), minlength=size)
-    front_cover = 1.0 - np.exp(clear)
     covered = rgba[:, 3]
-    partial = (front_cover > VISIBLE) & (front_cover < OPAQUE) & (covered > VISIBLE)
+    partial = partial_coverage(deep.channels["Z"][order], alpha, deep.counts, covered)
     shape = (deep.height, deep.width)
     return Flattened(rgba.reshape(*shape, 4), covered.reshape(shape), partial.reshape(shape)), cumulative
+
+
+def partial_coverage(
+    depth: NDArray[np.float32],
+    alpha: NDArray[np.floating],
+    counts: NDArray[np.int64],
+    covered: NDArray[np.float64],
+) -> NDArray[np.bool_]:
+    size = counts.size
+    pixel = np.repeat(np.arange(size), counts)
+    starts = np.r_[np.int64(0), np.cumsum(counts)[:-1]]
+    near = np.full(size, np.inf)
+    populated = counts > 0
+    near[populated] = np.minimum.reduceat(depth, starts[populated])
+    front = depth <= near[pixel] * (1.0 + FRONT_SLAB) + LAYER_GAP_M
+    clear = np.bincount(pixel[front], weights=np.log1p(-np.minimum(alpha[front], 0.999999)), minlength=size)
+    front_cover = 1.0 - np.exp(clear)
+    return (front_cover > VISIBLE) & (front_cover < OPAQUE) & (covered > VISIBLE)
 
 
 def flatten(deep: Deep) -> Flattened:

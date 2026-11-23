@@ -141,9 +141,7 @@ class QaTest(unittest.TestCase):
         self.assertEqual(metrics["valid_id_fraction"], 1.0)
         self.assertEqual(metrics["id_check_failure_fraction"], 0.4)
         self.assertAlmostEqual(metrics["unlabelled_coverage"], (0.5 + 0.25) / 3, places=6)
-        self.assertGreater(
-            metrics["id_check_failure_fraction"], checks.LIMITS["id_check_failure_fraction"][1]
-        )
+        self.assertGreater(metrics["unlabelled_coverage"], checks.LIMITS["unlabelled_coverage"][1])
 
 
 def _merged_deep(pixels: list[list[tuple[float, ...]]]) -> Deep:

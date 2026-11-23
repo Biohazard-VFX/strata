@@ -1,5 +1,7 @@
+import hashlib
 import tomllib
 import unittest
+from collections.abc import Mapping
 from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -78,7 +80,49 @@ def boundaries(
     return output
 
 
+def version_fixture() -> pack.Samples:
+    alpha = np.array([0.25, 0.5, 0.125, 0.75, 1, 0, 0.25, 0.5, 1, 0.5, 1, 0.25], np.float32)
+    return pack.Samples(
+        (2, 2),
+        np.array([0, 5, 9, 12, 12], np.int64),
+        np.array([1, 1.1, 1.3, 1.6, 3000, 1, 1.1, 1.3, 3000, 2, 2.1, 3], np.float32),
+        alpha,
+        np.arange(36, dtype=np.float32).reshape(12, 3) * alpha[:, None] / np.float32(32),
+        np.array([[1, 0.5, 0.25]] * 4 + [[0, 0, 0]] * 5 + [[1, 1, 0]] * 3, np.float32) * alpha[:, None],
+        np.array([1, 1, 1, 2, 0, -1, -1, -1, 0, 2, 2, 2], np.int64),
+    )
+
+
+def array_digest(arrays: Mapping[str, NDArray[np.generic]]) -> str:
+    digest = hashlib.sha256()
+    for name, value in sorted(arrays.items()):
+        digest.update(f"{name}:{value.dtype.str}:{value.shape}".encode())
+        digest.update(value.tobytes())
+    return digest.hexdigest()
+
+
 class MergedDeepTest(unittest.TestCase):
+    def test_algorithm_versions_pin_merge_and_rebuild_outputs(self) -> None:
+        frame = version_fixture()
+        runs = merged.merge(
+            frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+        )
+        self.assertEqual(
+            array_digest(runs.arrays()),
+            {"merge-1": "d2e2696419dffea040cd81437883488a2e04bf61d35fb7deae39e95b63b201ac"}[
+                merged.MERGE_VERSION
+            ],
+        )
+        rebuilt = pack.layer_channels(runs.targets()) | roles.coverage(
+            runs.alpha, runs.roles, np.diff(runs.offsets), runs.shape
+        )
+        self.assertEqual(
+            array_digest(rebuilt),
+            {"rebuild-1": "d1e5a9b1a5fd143488babaaac9bfe12d3f95b0b084ea454a7a096ca7fb487b28"}[
+                merged.REBUILD_VERSION
+            ],
+        )
+
     def test_archive_dependency_excludes_numpy_without_the_pickle_control(self) -> None:
         project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
         dependencies = cast("list[str]", project["project"]["dependencies"])

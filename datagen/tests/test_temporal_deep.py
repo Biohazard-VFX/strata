@@ -350,22 +350,35 @@ class TemporalDeepTest(unittest.TestCase):
                     self.assertFalse(checks.check_shot(shot)["passed"])
             self.assertTrue(checks.check_shot(shot)["passed"])
 
-    def test_merged_identity_fractions_cannot_override_failing_raw_qa(self) -> None:
-        with TemporaryDirectory() as temporary:
-            shot = Path(temporary) / "shot"
-            pixel = [Sample(0.003, 0.01, 1 + i % 2) for i in range(10)] + [SKY]
-            unlabelled = [Sample(0.0, 1e-6, 2, checks=(0.0, 0.0)) for _ in range(10)]
-            write_shot(shot, [[unlabelled + pixel, *[pixel for _ in range(999)]]])
-            pack.pack(shot, range(1, 2))
-            result = checks.accept(shot, range(1, 2))[0]
-            limit = checks.LIMITS["id_check_failure_fraction"][1]
-            self.assertGreater(result.metrics["id_check_failure_fraction"], limit)
-            self.assertLessEqual(result.metrics["merged_id_check_failure_fraction"], limit)
-            self.assertEqual(len(result.failures), 1, result.failures)
-            self.assertTrue(result.failures[0].startswith("id_check_failure_fraction="))
-            self.assertTrue((shot / "deep" / "0001.exr").is_file())
-            self.assertTrue(pack.ShotFrames.load(shot).sample_dir(shot, 1).is_dir())
-            self.assertFalse(json.loads((shot / "qa" / "0001.json").read_text())["passed"])
+    def test_unlabelled_visible_coverage_gates_but_raw_count_is_diagnostic(self) -> None:
+        for opacity in (1e-6, 0.5):
+            with self.subTest(opacity=opacity), TemporaryDirectory() as temporary:
+                shot = Path(temporary) / "shot"
+                pixel = [Sample(0.003, 0.01, 1 + i % 2) for i in range(10)] + [SKY]
+                unlabelled = [Sample(0.0, opacity, 2, checks=(0.0, 0.0)) for _ in range(10)]
+                write_shot(shot, [[unlabelled + pixel, *[pixel for _ in range(999)]]])
+                pack.pack(shot, range(1, 2))
+                result = checks.accept(shot, range(1, 2))[0]
+                self.assertGreater(result.metrics["id_check_failure_fraction"], 2e-4)
+                self.assertNotIn("merged_id_check_failure_fraction", result.metrics)
+                self.assertAlmostEqual(
+                    result.metrics["unlabelled_coverage"],
+                    result.metrics["merged_unlabelled_coverage"],
+                    places=14,
+                )
+                self.assertEqual(bool(result.failures), opacity == 0.5)
+                self.assertEqual((shot / "deep" / "0001.exr").is_file(), opacity == 0.5)
+                if opacity == 0.5:
+                    self.assertTrue(all("unlabelled_coverage=" in f for f in result.failures), result)
+                else:
+                    self.assertTrue(checks.check_shot(shot)["passed"])
+                    with mock.patch.dict(checks.LIMITS, {"unlabelled_coverage": (0.0, 1e-10)}):
+                        self.assertTrue(
+                            any(
+                                "merged_unlabelled_coverage=" in f
+                                for f in checks.accept(shot, range(1, 2))[0].failures
+                            )
+                        )
 
     def test_contract_validator_rejects_strided_camera_frames(self) -> None:
         with (
