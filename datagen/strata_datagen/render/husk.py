@@ -19,7 +19,7 @@ GPU_ONLY = {"KARMA_XPU_DISABLE_EMBREE_DEVICE": "1"}
 
 
 CHUNK_FRAMES = 60
-OUTPUTS = ("beauty", "deep", "layers", "samples", "qa")
+OUTPUTS = ("beauty", "deep", "layers", "samples", "merged", "qa")
 TASK = ("strata-datagen", "render-task")
 
 

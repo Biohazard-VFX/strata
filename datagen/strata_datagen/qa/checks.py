@@ -22,10 +22,10 @@ from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M
 from strata_datagen.qa.deep import IDENTITY_CHANNELS, flatten
 from strata_datagen.render import pack
-from strata_dataset import identity, records, roles, segmented
+from strata_dataset import identity, merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
 
-VALIDATION = "raw-qa-5"
+VALIDATION = "raw-qa-6"
 LUMA = (0.2126, 0.7152, 0.0722)
 ROLE_EXCESS = 2.0**-15
 ROLE_BEAUTY = 2.0**-15
@@ -56,6 +56,7 @@ LIMITS = {
     "target_excess": (0.0, 0.005),
     "target_mismatch": (0.0, 0.0),
     "samples_mismatch": (0.0, 0.0),
+    "merged_mismatch": (0.0, 0.0),
 }
 COVERED = 0.999
 SKY_MIN_Z_M = 0.25 * BACKDROP_M
@@ -280,6 +281,17 @@ def _samples_mismatch(directory: Path, frame: pack.Samples, beauty_path: Path) -
     return float(any(not np.array_equal(stored[k], v) for k, v in expected.items())), []
 
 
+def _merged_mismatch(directory: Path, frame: pack.Samples) -> float:
+    try:
+        stored = merged.read(directory / "deep.npz").arrays()
+    except (OSError, ValueError, KeyError):
+        return 1.0
+    expected = merged.merge(
+        frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+    ).arrays()
+    return float(any(not np.array_equal(stored[name], value) for name, value in expected.items()))
+
+
 def _camera_error(path: Path, record: dict[str, object]) -> float:
     world_to_camera = np.asarray(record["world_to_camera"], dtype=np.float64)
     husk = np.asarray(header(path)["worldToCamera_d"], dtype=np.float64)
@@ -318,7 +330,9 @@ def inputs(shot: Path, frame: int) -> dict[str, str | None]:
     manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
     camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
     records = cast("list[dict[str, object]]", camera.pop("frames"))
+    merged_path = plan.merged_dir(shot, frame) / "deep.npz"
     return {
+        "merged": digest(merged_path) if merged_path.is_file() else None,
         "validation": _canonical({"version": VALIDATION, "limits": LIMITS, "deep_keys": DEEP_KEYS}),
         "manifest": _canonical({k: v for k, v in manifest.items() if k != "timings"}),
         "camera": _canonical({**camera, "frame": [r for r in records if r["frame"] == frame]}),
@@ -364,6 +378,7 @@ def _raw_metrics(
     if plan.recomposition(frame):
         mismatch, failures = _samples_mismatch(plan.sample_dir(shot, frame), frame_samples, paths["beauty"])
         metrics["samples_mismatch"] = mismatch
+    metrics["merged_mismatch"] = _merged_mismatch(plan.merged_dir(shot, frame), frame_samples)
     return metrics, failures
 
 

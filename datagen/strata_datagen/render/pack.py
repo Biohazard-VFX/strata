@@ -1,4 +1,4 @@
-"""After rendering: K-layer targets and role coverage for every frame, raw-sample sidecars on the stride.
+"""Every frame keeps layer targets, roles and merged deep; raw-sample sidecars stay on the stride.
 
 Roles come from the deep role channels (`strata_dataset.roles`), never from instance ids.
 
@@ -22,7 +22,7 @@ from numpy.typing import NDArray
 from strata_datagen import shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.qa.deep import instance_ids
-from strata_dataset import records, roles, segmented
+from strata_dataset import merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
 from strata_dataset.layers import Layers, reduce_samples
 
@@ -80,6 +80,9 @@ class ShotFrames:
 
     def sample_dir(self, shot: Path, frame: int) -> Path:
         return shot / "samples" / contract_samples.frame_id(self.shot_id, frame)
+
+    def merged_dir(self, shot: Path, frame: int) -> Path:
+        return shot / "merged" / contract_samples.frame_id(self.shot_id, frame)
 
 
 def samples(deep: Deep) -> Samples:
@@ -192,26 +195,52 @@ def write_samples(frame: Samples, beauty_path: Path, published: Path) -> None:
         _verify_published(published, encoded)
 
 
+def write_merged(frame: Samples, published: Path) -> None:
+    """Atomically publish immutable merged deep, including the layer rule's sufficient statistics."""
+    runs = merged.merge(
+        frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+    )
+    arrays = runs.arrays()
+    if published.exists():
+        found = merged.read(published / "deep.npz").arrays()
+        if not all(np.array_equal(value, found[name]) for name, value in arrays.items()):
+            raise ValueError(
+                f"{published} holds different merged deep; published sidecars are immutable: {REMOVE}"
+            )
+        return
+    staging = _staging(published)
+    try:
+        staging.mkdir(parents=True)
+        np.savez_compressed(staging / "deep.npz", allow_pickle=False, **arrays)
+        published.parent.mkdir(parents=True, exist_ok=True)
+        staging.rename(published)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def remove_samples(shot: Path, frames: range) -> list[int]:
     """Offline: delete the published sidecars of `frames` and abandoned staging; readers must be stopped."""
     plan = ShotFrames.load(shot)
     removed: list[int] = []
     with shotlock.held(shot):
         for frame in frames:
-            published = plan.sample_dir(shot, frame)
-            if not published.exists(follow_symlinks=False):
-                continue
-            doomed = _staging(published)
-            doomed.parent.mkdir(parents=True, exist_ok=True)
-            published.rename(doomed)
-            removed.append(frame)
+            removed_frame = False
+            for published in (plan.sample_dir(shot, frame), plan.merged_dir(shot, frame)):
+                if not published.exists(follow_symlinks=False):
+                    continue
+                doomed = _staging(published)
+                doomed.parent.mkdir(parents=True, exist_ok=True)
+                published.rename(doomed)
+                removed_frame = True
+            if removed_frame:
+                removed.append(frame)
         if (shot / STAGING).is_dir():
             shutil.rmtree(shot / STAGING)
     return removed
 
 
 def pack(shot: Path, frames: range) -> None:
-    """Write targets for `frames` and sidecars for their recomposition frames; never removes raw deep.
+    """Write targets and merged deep for every frame, raw sidecars on the stride; never removes raw deep.
 
     Role coverage comes from each frame's own deep, so every frame keeps it after raw deep is pruned.
     """
@@ -227,4 +256,5 @@ def pack(shot: Path, frames: range) -> None:
             write_layers(targets(frame_samples), shot / "layers" / name)
             if plan.recomposition(frame):
                 write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))
+            write_merged(frame_samples, plan.merged_dir(shot, frame))
             del frame_samples

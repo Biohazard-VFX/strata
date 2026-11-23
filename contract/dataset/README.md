@@ -1,10 +1,16 @@
-# Strata dataset contract (v0.4.0)
+# Strata dataset contract (v0.5.0)
 
-The training side reads exactly this. Version string: `strata-dataset-0.4.0` (in every
+The training side reads exactly this. Version string: `strata-dataset-0.5.0` (in every
 `manifest.json` and `camera.json`, `strata_dataset.records.VERSION`). `schema.json` is the JSON
 Schema for both files; `validate.py` checks a shot directory against it, against
 `strata_dataset.records.errors` and against the image files. Datagen packing and raw QA refuse
 records of any other version.
+
+0.5.0 adds an immutable merged-deep sidecar on **every** frame, preserving both over-compositing
+and the sufficient statistics of the layer rule. Existing K=4 targets still come from raw samples,
+without changing their arithmetic or bytes. Older shots must be repacked from their original raw
+deep; changing a record's version does not create the new sidecars. The training loader continues
+to use raw recomposition sidecars; adoption of merged deep by that loader is separate.
 
 0.4.0 carries roles in linear deep and beauty channels (`foreground`, `hero`, `fur`): Karma sums
 the channels of samples it merges, so role coverage stays exact through any merge, and role targets
@@ -30,6 +36,7 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   beauty/0001.exr ... 0024.exr
   deep/0001.exr ... 0024.exr     raw deep, kept on the frame stride (`manifest.render.deep_stride`)
   layers/0001.exr ... 0024.exr   K = 4 sky-inclusive layer targets and role coverage, every frame
+  merged/<shot_id>_NNNN/deep.npz  merged deep and layer statistics, every frame
   samples/<shot_id>_NNNN/        raw-sample sidecars of every recomposition frame (the deep stride)
   qa/NNNN.json      raw QA acceptance of each frame (identity of every input it validated)
   scene/            optional: the USD the shot was rendered from (reproducibility, not training input)
@@ -120,6 +127,46 @@ its sources' share of each role; instance ids play no part. Every surface's role
 
 `0 <= fur <= hero <= foreground <= 1` in every pixel; the sky's coverage is the pixel coverage minus
 `foreground`.
+
+## merged/<shot_id>_NNNN/deep.npz
+
+Every packed frame has this compressed, pickle-free NPZ, published as a whole immutable directory
+by rename. `strata_dataset.merged.read` returns owned arrays; `Merged.targets(K)` calls the same
+`layers.reduce_samples` implementation used by raw packing. Offline `remove-samples` removes both
+raw and merged sidecars for the requested frames; repacking refuses a different published value.
+
+| array | dtype, shape | meaning |
+| --- | --- | --- |
+| `shape`, `offsets` | int64 (2,), (H*W+1,) | image shape and row-major run offsets |
+| `z`, `zback` | float32 (N,) | first and last source depth of each run, not a representative mean |
+| `ids` | int64 (N,) | the run's decoded id, including -1 for unlabelled |
+| `alpha`, `rgb`, `roles` | float64 (N,), (N,3), (N,3) | exact front-to-back over-composite, accumulated in float64 |
+| `statistics` | float64 (N,4) | source front transmittance T, summed visible alpha W, summed visible inverse-depth moment M, summed visible sky coverage S |
+
+Runs join only consecutive depth-sorted samples with the same decoded id and consecutive log gap
+at most ln(`layers.GAP_RATIO`) = ln(1.15). Equal-depth order stays stable. Samples discarded by the
+layer rule (visible alpha <= 1e-12) remain singletons: absorbing one could change the rule's visible
+endpoints or threshold membership. No identity is inferred from roles, including id -1.
+
+For original sample i, the statistics use the raw rule's transmittance t_i, w_i = t_i alpha_i,
+M = sum(w_i / z_i), S = sum(w_i for sky samples), and W = sum(w_i). Keeping T and W also preserves
+the raw rule's visibility cutoff and cumulative-log rounding across pixels; recomputing only a
+representative depth or merged alpha loses these facts. Physical over-composites include all source
+RGB and role contributions. Layer RGB uses the run's physical over-composite; float64 avoids an
+extra float32 quantization before the final layer cast.
+
+The layer rule measures a gap from the previous **kept sample's back** to the next front. Raw
+samples have back = front and their own inverse-depth contribution, so their existing operation
+order is unchanged. Merged statistics supply visible sums and moments to that same rule. Sky is
+carried by S, not reclassified from a run's averaged roles. For depths [1, 1.1, 1.2] and ids [1, 1, 2],
+the first run ends at 1.1: there is no false 1-to-1.2 split.
+
+Deterministic tests exercise K=1..8, multi-id boundary chains, empty and occluded pixels, zero and
+opaque alpha, sky and mixed roles. Raw and merged targets require identical nonempty and sky layer
+masks, alpha and inverse depth within 1e-5 absolute, and RGB within 1e-5 relative (1e-12 absolute
+floor for numerical zero). These bounds allow only float32-scale final rounding and float64
+regrouping/cumulative-log error, not different clustering. Flattened RGB, alpha and roles must also
+agree independently of the layer statistics. K=4 production targets remain packed from raw.
 
 ## samples/<shot_id>_NNNN/
 

@@ -167,7 +167,7 @@ class RawEvidenceTest(unittest.TestCase):
                 (shot / name).write_text(json.dumps(record | change))
                 for step in (pack.pack, checks.accept, checks.prune):
                     with self.assertRaisesRegex(
-                        ValueError, r"not 'strata-dataset-0.4.0'|leaves \[0, 32768\)"
+                        ValueError, r"not 'strata-dataset-0.5.0'|leaves \[0, 32768\)"
                     ):
                         step(shot, range(1, 3))
                 self.assertFalse((shot / "layers").exists())

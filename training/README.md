@@ -17,14 +17,14 @@ The tests protect independently computed compositing/depth values, occlusion/emp
 
 ## Dataset migration
 
-New ingestion accepts only `strata-dataset-0.4.0` through the shared records check.
+New ingestion accepts only `strata-dataset-0.5.0` through the shared records check.
 The historical v004 converter is removed: older images lack linear role channels
 and both identity checks, so relabelling their JSON cannot produce conformant data.
 Re-render or drop old shots, and rebuild old role caches. Training configs, readers and evaluation labels must describe the current contract.
 
 Run `bash tools/check_training.sh` from the checkout root for the isolated
 post-training lint, strict types and CPU tests. It generates a tiny packed shot with
-the real 0.4.0 producer and supplies it through `STRATA_DATASET_FIXTURE`; training
+the real 0.5.0 producer and supplies it through `STRATA_DATASET_FIXTURE`; training
 tests only consume the files through the dataset contract, never import datagen.
 For direct pytest runs, generate that fixture with the datagen environment first
 and set the variable to the packed shot directory. CUDA math tests require the
@@ -266,7 +266,7 @@ Raw deep crop reads gather contiguous sample spans for the requested pixel rows.
 
 ### Native datagen layout and supervision boundary
 
-Only `strata-dataset-0.4.0` records are accepted, checked by
+Only `strata-dataset-0.5.0` records are accepted, checked by
 `strata_dataset.records.errors`. Target preparation reads sky-inclusive
 `layers/NNNN.exr` and linear `roles.foreground`, `roles.hero`, `roles.fur` for every
 frame, including frames without raw deep. Caches use `linear-roles-v3`; older role

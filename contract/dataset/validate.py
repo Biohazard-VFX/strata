@@ -113,6 +113,11 @@ def validate(shot: Path) -> list[str]:
         for folder, check in (("beauty", _beauty_errors), ("layers", _layer_errors)):
             path = shot / folder / name
             errors += check(path, size) if path.is_file() else [f"missing {folder}/{name}"]
+        merged_path = (
+            shot / "merged" / samples.frame_id(str(manifest["shot_id"]), record["frame"]) / "deep.npz"
+        )
+        if not merged_path.is_file():
+            errors.append(f"missing merged deep for frame {record['frame']}")
         if (shot / "deep" / name).is_file():
             deep_frames += 1
             errors += _deep_errors(shot / "deep" / name, size)

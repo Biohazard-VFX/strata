@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://strata.dev/contract/dataset/0.4.0/schema.json",
+  "$id": "https://strata.dev/contract/dataset/0.5.0/schema.json",
   "title": "Strata dataset shot records",
   "$defs": {
-    "contract": {"const": "strata-dataset-0.4.0"},
+    "contract": {"const": "strata-dataset-0.5.0"},
     "matrix4": {
       "type": "array", "minItems": 4, "maxItems": 4,
       "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}

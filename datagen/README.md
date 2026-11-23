@@ -26,7 +26,8 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   time samples. QA bounds per-frame camera steps.
 - `strata_datagen/render/pack.py`: after each render task, sky-inclusive K-layer targets and role
   coverage for every frame (`strata_dataset.layers` and `strata_dataset.roles`, in
-  `../contract/dataset`) and raw-sample sidecars on the deep stride. Roles come from the linear deep
+  `../contract/dataset`), contract 0.5.0 merged-deep sidecars on every frame and raw-sample sidecars
+  on the deep stride. Roles come from the linear deep
   role channels (`foreground`, `hero`, `fur`), which every surface carries as 0/1 primvars chosen by
   its id range name (`usdutil.tag_instances`); instance ids are only a best-effort per-object label
   (`strata_dataset.identity.decode`, id -1 where the integer residual or either hash check fails).
@@ -42,7 +43,8 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
 ## Ingest contract
 
 `strata-datagen ingest` moves a download in unit by unit under the shot lock. A unit is one file
-outside `samples/`, or one whole published sidecar frame (`samples/<frame>`), and lands by a single
+outside `samples/` and `merged/`, or one whole published sidecar frame (`samples/<frame>` or
+`merged/<frame>`), and lands by a single
 rename, so a reader sees the old unit or the new one, never part of either. The ingest as a whole is
 not atomic: if a rename fails, units already moved stay, the rest keep their old contents, staging is
 removed and the lock is released. Re-running the same ingest completes it: identical published

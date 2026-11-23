@@ -1,7 +1,7 @@
 # Native hybrid supervision
 
 The authoritative producer format is `contract/dataset/README.md` and
-`strata_dataset.records.VERSION`: only `strata-dataset-0.4.0` is accepted.
+`strata_dataset.records.VERSION`: only `strata-dataset-0.5.0` is accepted.
 Re-render or drop older datasets; changing their version strings does not add
 linear roles or recover missing identity checks.
 

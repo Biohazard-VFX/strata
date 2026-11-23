@@ -86,6 +86,8 @@ def fill(
     sky: Any,
     layers: int,
     threshold: float,
+    zback: Any,
+    statistics: Any,
 ) -> None:
     largest = int(counts.max()) if counts.size else 0
     order = np.empty(largest, dtype=np.int64)
@@ -109,10 +111,13 @@ def fill(
             cumulative += np.log1p(-min(a, 1 - 1e-15))
             t = np.exp(before - origin)
             weight = t * a
+            if statistics is not None:
+                t = statistics[j, 0]
+                weight = statistics[j, 1]
             if weight > 1e-12:
                 log = np.log(np.float64(depth[j]))
                 gaps[length] = log - previous_log if length else -np.inf
-                previous_log = log
+                previous_log = np.log(np.float64(zback[j]))
                 kept[length] = j
                 trans[length] = t
                 weights[length] = weight
@@ -140,7 +145,10 @@ def fill(
             maximum_t = 0.0
             for k in range(start, end):
                 visible += weights[k]
-                inverse += weights[k] / depth[kept[k]]
+                if statistics is None:
+                    inverse += weights[k] / depth[kept[k]]
+                else:
+                    inverse += statistics[kept[k], 2]
                 maximum_t = max(maximum_t, trans[k])
             index = pixel * layers + slot
             sky_coverage = 0.0
@@ -150,7 +158,9 @@ def fill(
                     local = trans[k] / maximum_t
                     for channel in range(3):
                         output[index, channel + 2] += local * rgb[j, channel]
-                    if sky[j]:
+                    if statistics is not None:
+                        sky_coverage += statistics[j, 3] / maximum_t
+                    elif sky[j]:
                         sky_coverage += local * np.float64(alpha[j])
                 output[index, 1] = visible / maximum_t
             if visible > 1e-12 and np.float32(sky_coverage) <= np.float32(1e-12):
@@ -159,3 +169,64 @@ def fill(
                 output[index] = 0
             start = end
             slot += 1
+
+
+@jit(cache=True)
+def merge_runs(
+    depth: Any,
+    alpha: Any,
+    rgb: Any,
+    roles: Any,
+    ids: Any,
+    counts: Any,
+    sky: Any,
+    threshold: float,
+) -> Any:
+    transmitted = transmittance(alpha, counts)
+    starts = np.empty(depth.size, dtype=np.int64)
+    offsets = np.zeros(counts.size + 1, dtype=np.int64)
+    first = 0
+    runs = 0
+    for pixel in range(counts.size):
+        for j in range(first, first + counts[pixel]):
+            join = False
+            if j > first:
+                join = (
+                    ids[j] == ids[j - 1]
+                    and np.log(np.float64(depth[j])) - np.log(np.float64(depth[j - 1])) <= threshold
+                    and transmitted[j] * alpha[j] > 1e-12
+                    and transmitted[j - 1] * alpha[j - 1] > 1e-12
+                )
+            if not join:
+                starts[runs] = j
+                runs += 1
+        first += counts[pixel]
+        offsets[pixel + 1] = runs
+    z = np.empty(runs, dtype=np.float32)
+    back = np.empty(runs, dtype=np.float32)
+    coverage = np.zeros(runs, dtype=np.float64)
+    color = np.zeros((runs, 3), dtype=np.float64)
+    semantic = np.zeros((runs, 3), dtype=np.float64)
+    labels = np.empty(runs, dtype=np.int64)
+    statistics = np.zeros((runs, 4), dtype=np.float64)
+    for run in range(runs):
+        start = starts[run]
+        end = starts[run + 1] if run + 1 < runs else depth.size
+        z[run] = depth[start]
+        back[run] = depth[end - 1]
+        labels[run] = ids[start]
+        statistics[run, 0] = transmitted[start]
+        local = 1.0
+        for j in range(start, end):
+            a = np.float64(alpha[j])
+            coverage[run] += local * a
+            for channel in range(3):
+                color[run, channel] += local * rgb[j, channel]
+                semantic[run, channel] += local * roles[j, channel]
+            weight = transmitted[j] * a
+            statistics[run, 1] += weight
+            statistics[run, 2] += weight / depth[j]
+            if sky[j]:
+                statistics[run, 3] += weight
+            local *= 1.0 - a
+    return offsets, z, back, coverage, color, semantic, labels, statistics

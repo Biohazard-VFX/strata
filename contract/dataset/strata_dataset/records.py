@@ -8,7 +8,7 @@ from typing import cast
 
 from strata_dataset import identity
 
-VERSION = "strata-dataset-0.4.0"
+VERSION = "strata-dataset-0.5.0"
 
 
 def errors(manifest: Mapping[str, object], camera: Mapping[str, object]) -> list[str]:
