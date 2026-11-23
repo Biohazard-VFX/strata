@@ -67,7 +67,7 @@ class RenderLockTest(unittest.TestCase):
         """A packed, accepted two-frame shot with its job list; returns the environment for its job."""
         self.root = Path(self.directory.name) / name
         self.shot = self.root / "shots" / "s"
-        write_shot(self.shot, [FIRST, FIRST], stride=24)
+        write_shot(self.shot, [FIRST, FIRST])
         pack.pack(self.shot, FRAMES)
         self.assertEqual([r.failures for r in checks.accept(self.shot, FRAMES)], [[], []])
         husk.write_job_list(self.root, husk.jobs(self.shot, self.root, tuple(FRAMES), husk.CHUNK_FRAMES))
@@ -89,7 +89,7 @@ class RenderLockTest(unittest.TestCase):
 
     def assert_competitors_refused(self) -> None:
         with self.assertRaisesRegex(shotlock.ShotLockedError, "locked by"):
-            checks.prune(self.shot, FRAMES)
+            checks.accept(self.shot, FRAMES)
         self.assertTrue((self.shot / "deep" / "0002.exr").exists())
         with self.assertRaisesRegex(shotlock.ShotLockedError, "locked by"):
             cli.main(["qa", "--root", str(self.root)])
@@ -114,7 +114,7 @@ class RenderLockTest(unittest.TestCase):
                     (self.barrier / GO).touch()
                     job.wait(TIMEOUT_S)
                 self.assertEqual(job.returncode, 0)
-                self.assertFalse((self.shot / "deep" / "0002.exr").exists())
+                self.assertTrue((self.shot / "deep" / "0002.exr").exists())
                 self.assertTrue(free(self.shot))
 
     def test_the_shot_stays_locked_while_the_renderer_outlives_a_killed_render(self) -> None:

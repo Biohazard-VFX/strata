@@ -1,10 +1,10 @@
-"""Every frame keeps layer targets, roles and merged deep; raw-sample sidecars stay on the stride.
+"""Every frame keeps raw deep, layer targets, roles and raw/merged sample sidecars.
 
 Roles come from the deep role channels (`strata_dataset.roles`), never from instance ids.
 
-Packing never removes raw deep: it is QA evidence, and only `qa.checks.prune` removes it, after the
-frame has passed raw QA. Sidecars are write-once: a frame's directory is published whole and never
-changed; only the offline `remove_samples` deletes it. Every change holds the shot's writer lock.
+Raw deep stays on every frame for temporal supervision and QA evidence. Sidecars are write-once:
+a frame's directory is published whole and never changed; only offline `remove_samples` deletes it.
+Every change holds the shot's writer lock.
 """
 
 import json
@@ -26,7 +26,6 @@ from strata_dataset import merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
 from strata_dataset.layers import Layers, reduce_samples
 
-DEEP_STRIDE = 24
 STAGING = ".staging"
 REMOVE = "remove them with `strata-datagen remove-samples` while no reader runs, then pack again"
 
@@ -57,11 +56,9 @@ class Samples:
 
 @dataclass(frozen=True)
 class ShotFrames:
-    """The frame plan a manifest declares: frames on the deep stride are recomposition frames."""
+    """The validated shot identity shared by every frame directory."""
 
     shot_id: str
-    first: int
-    stride: int
 
     @staticmethod
     def load(shot: Path) -> "ShotFrames":
@@ -71,12 +68,7 @@ class ShotFrames:
         errors = records.errors(manifest, camera)
         if errors:
             raise ValueError(f"{shot}: {'; '.join(errors)}")
-        render = cast("dict[str, object]", manifest["render"])
-        frames = cast("list[int]", render["frames"])
-        return ShotFrames(str(manifest["shot_id"]), frames[0], cast("int", render["deep_stride"]))
-
-    def recomposition(self, frame: int) -> bool:
-        return (frame - self.first) % self.stride == 0
+        return ShotFrames(str(manifest["shot_id"]))
 
     def sample_dir(self, shot: Path, frame: int) -> Path:
         return shot / "samples" / contract_samples.frame_id(self.shot_id, frame)
@@ -240,9 +232,9 @@ def remove_samples(shot: Path, frames: range) -> list[int]:
 
 
 def pack(shot: Path, frames: range) -> None:
-    """Write targets and merged deep for every frame, raw sidecars on the stride; never removes raw deep.
+    """Write targets and raw/merged sidecars for every frame; never removes raw deep.
 
-    Role coverage comes from each frame's own deep, so every frame keeps it after raw deep is pruned.
+    Role coverage comes from each frame's own retained deep.
     """
     plan = ShotFrames.load(shot)
     with shotlock.held(shot):
@@ -254,7 +246,6 @@ def pack(shot: Path, frames: range) -> None:
             frame_samples = samples(deep)
             del deep
             write_layers(targets(frame_samples), shot / "layers" / name)
-            if plan.recomposition(frame):
-                write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))
+            write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))
             write_merged(frame_samples, plan.merged_dir(shot, frame))
             del frame_samples

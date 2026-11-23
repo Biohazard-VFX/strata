@@ -104,9 +104,6 @@ def validate(shot: Path) -> list[str]:
     errors = errors or records.errors(manifest, camera)
     if errors:
         return errors
-    render = cast("dict[str, object]", manifest["render"])
-    first, stride = cast("list[int]", render["frames"])[0], cast("int", render["deep_stride"])
-    deep_frames = 0
     for record in cast("list[dict[str, int]]", camera["frames"]):
         name = f"{record['frame']:04d}.exr"
         size = (record["width"], record["height"])
@@ -118,14 +115,12 @@ def validate(shot: Path) -> list[str]:
         )
         errors += merged.errors(merged_path, (record["height"], record["width"]))
         if (shot / "deep" / name).is_file():
-            deep_frames += 1
             errors += _deep_errors(shot / "deep" / name, size)
-        if (record["frame"] - first) % stride == 0:
-            directory = shot / "samples" / samples.frame_id(str(manifest["shot_id"]), record["frame"])
-            errors += samples.errors(directory, (record["height"], record["width"]))
-            if not (shot / "deep" / name).is_file():
-                errors.append(f"recomposition frame {name} lacks raw deep")
-    return errors if deep_frames else [*errors, "no raw deep frame"]
+        else:
+            errors.append(f"missing raw deep for frame {record['frame']}")
+        directory = shot / "samples" / samples.frame_id(str(manifest["shot_id"]), record["frame"])
+        errors += samples.errors(directory, (record["height"], record["width"]))
+    return errors
 
 
 def main() -> None:

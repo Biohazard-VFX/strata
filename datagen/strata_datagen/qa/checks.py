@@ -1,10 +1,8 @@
 """Per-shot acceptance checks; a shot that fails any check is rejected from the dataset.
 
-Raw deep is checked before anything is removed: `accept` records each frame's raw QA result with the
-identity of every input it validated (`inputs`), `prune` removes off-stride raw deep only from
-accepted frames whose inputs are unchanged, and `check_shot` re-checks every packed target and holds
-pruned frames to a recorded acceptance whose inputs, all but the removed deep, still match. `accept`
-and `prune` hold the shot's writer lock.
+Raw deep stays on every frame. `accept` records each frame's raw QA result and the identity of every
+input it validated (`inputs`); `check_shot` re-checks every raw frame and packed target. A receipt
+never replaces missing raw deep. Acceptance holds the shot's writer lock.
 """
 
 import hashlib
@@ -338,17 +336,8 @@ def inputs(shot: Path, frame: int) -> dict[str, str | None]:
         "beauty": digest(paths["beauty"]) if paths["beauty"].exists() else None,
         "deep": digest(paths["deep"]) if paths["deep"].exists() else None,
         "targets": digest(paths["layers"]) if paths["layers"].exists() else None,
-        "samples": (
-            contract_samples.recorded_identity(plan.sample_dir(shot, frame))
-            if plan.recomposition(frame)
-            else None
-        ),
+        "samples": contract_samples.recorded_identity(plan.sample_dir(shot, frame)),
     }
-
-
-def changed_inputs(record: dict[str, object], current: dict[str, str | None]) -> list[str]:
-    recorded = cast("dict[str, str | None]", record.get("inputs", {}))
-    return [name for name, value in current.items() if name not in recorded or recorded[name] != value]
 
 
 def _paths(shot: Path, frame: int) -> dict[str, Path]:
@@ -374,26 +363,10 @@ def _raw_metrics(
     if paths["layers"].exists():
         metrics["target_mismatch"] = _target_mismatch(paths["layers"], frame_samples)
     del deep
-    if plan.recomposition(frame):
-        mismatch, failures = _samples_mismatch(plan.sample_dir(shot, frame), frame_samples, paths["beauty"])
-        metrics["samples_mismatch"] = mismatch
+    mismatch, failures = _samples_mismatch(plan.sample_dir(shot, frame), frame_samples, paths["beauty"])
+    metrics["samples_mismatch"] = mismatch
     metrics["merged_mismatch"] = _merged_mismatch(plan.merged_dir(shot, frame), frame_samples)
     return metrics, failures
-
-
-def _accepted(shot: Path, frame: int) -> tuple[dict[str, float], list[str]]:
-    """A pruned frame stands on its recorded raw acceptance, valid only for the targets it saw."""
-    paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
-    if plan.recomposition(frame):
-        return {}, ["recomposition frame lost its raw deep"]
-    if not paths["acceptance"].exists():
-        return {}, ["no raw deep and no raw acceptance"]
-    record = cast("dict[str, object]", json.loads(paths["acceptance"].read_text()))
-    failures = [] if record["passed"] else ["raw acceptance failed"]
-    changed = [name for name in changed_inputs(record, inputs(shot, frame)) if name != "deep"]
-    failures += [f"{name} changed since raw acceptance" for name in changed]
-    metrics = cast("dict[str, float]", record["metrics"])
-    return {k: v for k, v in metrics.items() if k in DEEP_KEYS}, failures
 
 
 def check_frame(
@@ -410,7 +383,7 @@ def check_frame(
     else:
         failures.append("missing layers")
     raw, found = (
-        _raw_metrics(shot, frame, beauty, ranges) if paths["deep"].exists() else _accepted(shot, frame)
+        _raw_metrics(shot, frame, beauty, ranges) if paths["deep"].exists() else ({}, ["missing raw deep"])
     )
     metrics.update(raw)
     failures += found
@@ -433,10 +406,7 @@ def _records(shot: Path) -> tuple[dict[int, dict[str, object]], list[tuple[int, 
 
 
 def accept(shot: Path, frames: range) -> list[FrameResult]:
-    """Raw QA of rendered, packed frames; records each result with the identity of its inputs.
-
-    A frame whose raw deep is already pruned is checked against its recorded acceptance, never re-recorded.
-    """
+    """Raw QA of every rendered, packed frame; record each result and its inputs without removing deep."""
     with shotlock.held(shot):
         return _accept(shot, frames)
 
@@ -466,37 +436,6 @@ def _accept(shot: Path, frames: range) -> list[FrameResult]:
             + "\n",
         )
     return results
-
-
-def prune(shot: Path, frames: range) -> list[int]:
-    """Delete off-stride raw deep of accepted frames whose every input is unchanged since QA."""
-    with shotlock.held(shot):
-        return _prune(shot, frames)
-
-
-def _prune(shot: Path, frames: range) -> list[int]:
-    plan = pack.ShotFrames.load(shot)
-    removable: list[Path] = []
-    refused: list[str] = []
-    for frame in frames:
-        paths = _paths(shot, frame)
-        if plan.recomposition(frame) or not paths["deep"].exists():
-            continue
-        record: dict[str, object] = (
-            cast("dict[str, object]", json.loads(paths["acceptance"].read_text()))
-            if paths["acceptance"].exists()
-            else {"passed": False}
-        )
-        changed = changed_inputs(record, inputs(shot, frame))
-        if not record["passed"] or changed or not paths["layers"].exists():
-            refused.append(f"{frame} ({', '.join(changed) or 'not accepted'})")
-        else:
-            removable.append(paths["deep"])
-    if refused:
-        raise ValueError(f"raw deep kept: frames {'; '.join(refused)} have no matching passed acceptance")
-    for path in removable:
-        path.unlink()
-    return [int(p.stem) for p in removable]
 
 
 def camera_steps(frames: list[dict[str, object]]) -> dict[str, float]:

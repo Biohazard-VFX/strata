@@ -79,7 +79,7 @@ class ShotLockTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.shot = Path(self.directory.name) / "s"
-        write_shot(self.shot, [FIRST], stride=1)
+        write_shot(self.shot, [FIRST])
         pack.pack(self.shot, FRAMES)
 
     def tearDown(self) -> None:
@@ -94,7 +94,6 @@ class ShotLockTest(unittest.TestCase):
             writers: list[Callable[[Path, range], object]] = [
                 pack.pack,
                 checks.accept,
-                checks.prune,
                 pack.remove_samples,
             ]
             for write in writers:

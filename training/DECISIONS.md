@@ -43,8 +43,8 @@
 - Sky membership comes from linear foreground coverage; sky keeps colour and alpha while clusters containing visible sky have no depth supervision.
 - Select best checkpoints by OOD-validation mixed-alpha MAE every 250 steps; stop after four stale checks and treat step budgets as ceilings.
 - Canary shots and real-matte sets are test-only: no training, early stopping or tuning; inherited manifest split=test-only blocks supervision, and validation uses held-out synthetic shots.
-- Index sample eligibility routes off-stride frames through cached targets and photometric-only augmentation; donor selection uses eligible frames only.
+- Index sample eligibility routes unavailable-sample views through cached targets and photometric-only augmentation; donor selection uses eligible frames only.
 - Target cache names include a digest of manifest, camera, packed beauty/layers, published sample identity, K and cache version; source changes never overwrite live mappings.
-- Beauty supervision always composites the view's final K-layer alpha/RGB through one NumPy/Torch arithmetic rule, including clean and off-stride views.
+- Beauty supervision always composites the view's final K-layer alpha/RGB through one NumPy/Torch arithmetic rule, including clean and sample-ineligible views.
 - EXR digest memos bind size, mtime/ctime, inode and device; timestamps within two seconds of the last hash force rehashing.
 - Target readers lock all referenced cache directories in sorted order, never index directories; offline writers take exclusive leases.

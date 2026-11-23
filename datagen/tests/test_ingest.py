@@ -31,7 +31,7 @@ class IngestTest(unittest.TestCase):
         base = Path(self.directory.name)
         self.root = base / "build"
         self.shot = self.root / "shots" / "s"
-        write_shot(self.shot, [FIRST], stride=1)
+        write_shot(self.shot, [FIRST])
         self.download = base / "download"
 
     def tearDown(self) -> None:
@@ -42,7 +42,7 @@ class IngestTest(unittest.TestCase):
         remote = Path(self.directory.name) / "remote" / "s"
         shutil.rmtree(remote.parent, ignore_errors=True)
         shutil.rmtree(self.download, ignore_errors=True)
-        write_shot(remote, [pixels], stride=1)
+        write_shot(remote, [pixels])
         pack.pack(remote, FRAMES)
         for folder in husk.OUTPUTS:
             if (remote / folder).is_dir():
@@ -102,7 +102,7 @@ class IngestTest(unittest.TestCase):
         self.assertGreater(len(units), 2)
         for failing_move in range(1, len(downloaded) + 2):
             shot = self.root / "shots" / f"retry{failing_move}"
-            write_shot(shot, [FIRST], stride=1)
+            write_shot(shot, [FIRST])
             before = contents(shot)
             try:
                 with self.failing_move(failing_move):

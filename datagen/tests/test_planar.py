@@ -43,7 +43,7 @@ class PlanarTests(unittest.TestCase):
     def test_batch_releases_frame_before_reading_next_deep(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             shot = Path(temporary) / "shot"
-            write_shot(shot, [[Sample(0.1, 0.5, 2), SKY]] * 2, 2)
+            write_shot(shot, [[Sample(0.1, 0.5, 2), SKY]] * 2)
             references: list[weakref.ReferenceType[pack.Samples]] = []
             original_samples, original_read = pack.samples, pack.read_deep
 

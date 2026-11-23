@@ -1,4 +1,4 @@
-"""Raw-sample sidecars: the per-frame memory-mappable deep samples and images of a recomposition frame.
+"""Raw-sample sidecars: the memory-mappable deep samples and images of every frame.
 
 A frame directory holds `noisy.npy` and `denoised.npy` (float32, 3 x H x W) and `deep/` with
 `shape.npy` (int64 (2,)), `offsets.npy` (int64 (H*W+1,)), `z.npy`, `alpha.npy` (float32 (N,)),

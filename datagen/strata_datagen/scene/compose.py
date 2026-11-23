@@ -21,7 +21,6 @@ from strata_datagen.generators import (
 from strata_datagen.generators.scatter import Disk, Layer
 from strata_datagen.library.catalogue import Hero, HeroPose, Library, Model
 from strata_datagen.render import settings
-from strata_datagen.render.pack import DEEP_STRIDE
 from strata_datagen.rng import stream
 from strata_datagen.scene import creature, deformation, hair, layers, looks
 from strata_datagen.scene.spec import DEFAULT_FRAMES, REFERENCE_WIDTH_PX, ShotSpec, frames
@@ -40,7 +39,6 @@ class RenderParams:
     width: int
     height: int
     path_traced_samples: int
-    deep_stride: int = DEEP_STRIDE
 
 
 @dataclass

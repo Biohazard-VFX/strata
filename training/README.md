@@ -269,7 +269,7 @@ Raw deep crop reads gather contiguous sample spans for the requested pixel rows.
 Only `strata-dataset-0.5.0` records are accepted, checked by
 `strata_dataset.records.errors`. Target preparation reads sky-inclusive
 `layers/NNNN.exr` and linear `roles.foreground`, `roles.hero`, `roles.fur` for every
-frame, including frames without raw deep. Caches use `linear-roles-v3`; older role
+frame; conformant shots retain raw and merged deep on every frame. Caches use `linear-roles-v3`; older role
 caches must be regenerated. Roles retain fractional coverage without renormalising.
 
 Recomposition reads `deep/roles.npy` alongside the other immutable sample sidecars.
@@ -306,6 +306,6 @@ an offline writer or prune holds it.
 
 Loader startup logs the fraction of producer-published, recomposition-eligible views.
 `eligibility_warning_fraction` sets the warning threshold (default `0.25`, in `[0, 1]`).
-Ineligible views use photometric-only inputs. Every clean, augmented and off-stride view
+Ineligible views use photometric-only inputs. Every clean, augmented and sample-ineligible view
 uses the composite of its final K-layer targets for beauty supervision, including cached
 training and validation; rendered or denoised beauty remains an input, not a loss target.

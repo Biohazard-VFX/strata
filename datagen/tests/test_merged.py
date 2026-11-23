@@ -112,7 +112,7 @@ class MergedDeepTest(unittest.TestCase):
         np.testing.assert_allclose(runs.alpha, [0.64, 0.4], atol=1e-7)
         np.testing.assert_allclose(runs.rgb[:, 0], [0.32, 0.2], atol=1e-7)
 
-    def test_every_frame_publishes_and_qa_binds_merged_deep_before_pruning(self) -> None:
+    def test_every_frame_publishes_and_qa_binds_merged_deep(self) -> None:
         with TemporaryDirectory() as temporary:
             shot = Path(temporary) / "shot"
             pixels: list[Sample | list[Sample]] = [
@@ -120,13 +120,13 @@ class MergedDeepTest(unittest.TestCase):
                 [Sample(0.2, 0.5, 1), SKY],
                 SKY,
             ]
-            write_shot(shot, [pixels, pixels], stride=24)
+            write_shot(shot, [pixels, pixels])
             pack.pack(shot, range(1, 3))
             plan = pack.ShotFrames.load(shot)
             for frame in (1, 2):
                 runs = merged.read(plan.merged_dir(shot, frame) / "deep.npz")
                 self.assertEqual(runs.shape, (1, 3))
-            self.assertFalse(plan.sample_dir(shot, 2).exists())
+            self.assertTrue(plan.sample_dir(shot, 2).exists())
             self.assertEqual([result.failures for result in checks.accept(shot, range(1, 3))], [[], []])
             path = plan.merged_dir(shot, 2) / "deep.npz"
             good = path.read_bytes()
@@ -137,12 +137,10 @@ class MergedDeepTest(unittest.TestCase):
             corrupt = merged.read(path)
             corrupt.statistics[0, 2] += 1
             np.savez_compressed(path, allow_pickle=False, **corrupt.arrays())
-            with self.assertRaisesRegex(ValueError, "merged"):
-                checks.prune(shot, range(2, 3))
             self.assertTrue(checks.accept(shot, range(2, 3))[0].failures)
             path.write_bytes(good)
             self.assertEqual(checks.accept(shot, range(2, 3))[0].failures, [])
-            self.assertEqual(checks.prune(shot, range(2, 3)), [2])
+            self.assertTrue((shot / "deep" / "0002.exr").is_file())
             path.unlink()
             self.assertFalse(checks.check_shot(shot)["passed"])
             self.assertEqual(pack.remove_samples(shot, range(1, 3)), [1, 2])
@@ -160,7 +158,7 @@ class MergedDeepTest(unittest.TestCase):
                 [Sample(0.2, 0.5, 1), SKY],
                 SKY,
             ]
-            write_shot(shot, [pixels, pixels], stride=24)
+            write_shot(shot, [pixels, pixels])
             pack.pack(shot, range(1, 3))
             self.assertEqual(validate.validate(shot), [])
             path = pack.ShotFrames.load(shot).merged_dir(shot, 2) / "deep.npz"

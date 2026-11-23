@@ -16,7 +16,7 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   (local sync, or fetched with nxc), HDRIs and an external hero library (`hero.json` + USD poses).
 - `strata_datagen/render/`: render settings in USD and the husk driver. Farm job lists run
   `strata-datagen render-task`, which holds the shot lock, renders with a husk that inherits it,
-  then packs, accepts and prunes under the same hold. A farm renders its own copy of a shot; its
+  then packs and accepts under the same hold, retaining deep on every frame. A farm renders its own copy of a shot; its
   downloaded output folders enter a local shot only through `strata-datagen ingest`, which stages
   them in the shot and renames them in under the lock (sidecar frames stay write-once).
 - `strata_datagen/qa/`: per-shot acceptance checks and the contact sheet.
@@ -26,16 +26,15 @@ contract in `../contract/dataset/` (beauty AOVs, deep, cameras, manifests).
   time samples. QA bounds per-frame camera steps.
 - `strata_datagen/render/pack.py`: after each render task, sky-inclusive K-layer targets and role
   coverage for every frame (`strata_dataset.layers` and `strata_dataset.roles`, in
-  `../contract/dataset`), contract 0.5.0 merged-deep sidecars on every frame and raw-sample sidecars
-  on the deep stride. Roles come from the linear deep
+  `../contract/dataset`), contract 0.5.0 raw and merged sidecars on every frame. Raw deep also stays
+  on every frame: the video model needs consecutive deep targets for temporal stability. Roles come from the linear deep
   role channels (`foreground`, `hero`, `fur`), which every surface carries as 0/1 primvars chosen by
   its id range name (`usdutil.tag_instances`); instance ids are only a best-effort per-object label
   (`strata_dataset.identity.decode`, id -1 where the integer residual or either hash check fails).
-  Pack, accept and prune refuse a shot whose records are not the current contract version. It never
-  deletes: `accept` runs raw QA per frame and records it, then `prune` drops
-  off-stride raw deep of accepted, unchanged frames only. Sidecars are write-once; to repack a
+  Pack and accept refuse records of any other contract version or any frame-skipping deep policy.
+  `accept` runs raw QA per frame and records it; raw deep is never pruned. Sidecars are write-once; to repack a
   changed frame, stop every reader and run `remove-samples` first. Every command that changes a shot (build, render,
-  render-task, pack, accept, prune, remove-samples, qa) holds an exclusive `flock` on `<shot>/.lock`; a locked shot is
+  render-task, pack, accept, remove-samples, qa) holds an exclusive `flock` on `<shot>/.lock`; a locked shot is
   refused, not waited for. The kernel releases the lock when the last process holding it exits.
 - `strata_datagen/regions.py`: the one form of named skin regions for every hero (below).
 - `blender/`: FBX to USD conversion, MPFB human export and creature export, run inside Blender.
@@ -65,7 +64,7 @@ Raw QA composites one scanline at a time while carrying the full-frame cumulativ
 rows, so streaming does not reset its floating-point rounding history. Packing keeps stable
 equal-depth ordering and uses the shared double-accumulation contract kernels without making
 float64 copies of complete sample arrays. The writer lock, immutable sidecar publication,
-acceptance input hashes and QA-before-prune ordering are unchanged.
+acceptance input hashes and full raw QA remain; deep is retained on every frame.
 
 ## Use
 

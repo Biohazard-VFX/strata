@@ -18,6 +18,9 @@ def errors(manifest: Mapping[str, object], camera: Mapping[str, object]) -> list
         for name, record in (("manifest", manifest), ("camera", camera))
         if record.get("contract") != VERSION
     ]
+    render = cast("Mapping[str, object]", manifest.get("render", {}))
+    if "deep_stride" in render:
+        found.append("render.deep_stride is forbidden: every frame requires deep")
     for record in cast("Sequence[Mapping[str, int]]", manifest.get("instance_ids", [])):
         found += identity.range_errors(record["first_id"], record["count"])
     return found

@@ -17,7 +17,7 @@ def main() -> None:
         [Sample(0.1, 0.5, 3, roles=(1, 0, 0)), SKY],
         SKY,
     ]
-    write_shot(shot, [pixels, pixels], stride=2)
+    write_shot(shot, [pixels, pixels])
     path = shot / "manifest.json"
     manifest = json.loads(path.read_text())
     manifest["instance_ids"] += [
@@ -28,7 +28,6 @@ def main() -> None:
     temporary.write_text(json.dumps(manifest))
     temporary.replace(path)
     pack(shot, range(1, 3))
-    (shot / "deep/0002.exr").unlink()
 
 
 if __name__ == "__main__":

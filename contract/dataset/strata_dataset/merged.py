@@ -117,9 +117,7 @@ def read(path: Path) -> Merged:
     return Merged(shape, *values)
 
 
-def load_checked(
-    path: Path, shape: tuple[int, int]
-) -> tuple[dict[str, NDArray[np.generic]], list[str]]:
+def load_checked(path: Path, shape: tuple[int, int]) -> tuple[dict[str, NDArray[np.generic]], list[str]]:
     """Owned arrays and format violations, read once; immutable inputs and thread-safe calls."""
     try:
         arrays = _arrays(path)

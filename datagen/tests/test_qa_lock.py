@@ -14,7 +14,7 @@ class QaLockTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.shot = self.root / "shots" / "s"
-        write_shot(self.shot, [FIRST], stride=1)
+        write_shot(self.shot, [FIRST])
 
     def tearDown(self) -> None:
         self.directory.cleanup()

@@ -6,11 +6,11 @@ Re-render or drop older datasets; changing their version strings does not add
 linear roles or recover missing identity checks.
 
 Read sky-inclusive K=4 targets and `roles.foreground`, `roles.hero`, `roles.fur`
-from every packed frame, even after raw deep is pruned. Role coverage is fractional,
+from every packed frame; raw and merged deep are retained on every frame. Role coverage is fractional,
 not binary and not renormalised. The flat `coverage` AOV includes sky and is not a
 foreground mask. Sky membership comes only from the linear foreground role.
 
-Each recomposition frame needs the producer's immutable `samples/<frame-id>/`
+Every frame needs the producer's immutable `samples/<frame-id>/`
 sidecar, including `deep/roles.npy`, or conformant raw deep with both identity
 checks and linear roles. The reader verifies sidecar identities through
 `strata_dataset.samples.read`. Native alpha comes from float `coverage`, never

@@ -17,7 +17,7 @@ from tests.concurrency import free
 from tests.fixtures import SKY, Sample, write_deep, write_shot
 from tests.shotwrites import watching
 
-SHOT_WRITERS = {"build", "render", "render-task", "ingest", "pack", "accept", "prune", "remove-samples", "qa"}
+SHOT_WRITERS = {"build", "render", "render-task", "ingest", "pack", "accept", "remove-samples", "qa"}
 SHOT_FREE = {"fetch", "prepare", "humans", "morphs", "creatures"}
 PIXELS: list[Sample | list[Sample]] = [[Sample(0.5, 1.0, 2), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
 
@@ -91,9 +91,9 @@ class ShotWriterTest(unittest.TestCase):
 
     def test_frame_commands_write_only_under_the_lock(self) -> None:
         shot = self.root / "shots" / "s"
-        write_shot(shot, [PIXELS], stride=1)
+        write_shot(shot, [PIXELS])
         with watching(self.root) as watch:
-            for name in ("pack", "accept", "prune", "remove-samples"):
+            for name in ("pack", "accept", "remove-samples"):
                 self.run_command(frame_args(name, shot))
         self.assertGreater(watch.writes, 0)
         self.assertEqual((watch.unlocked, watch.unexplained), ([], []))
@@ -106,7 +106,7 @@ class ShotWriterTest(unittest.TestCase):
 
     def test_render_writes_only_under_one_hold_that_husk_inherits(self) -> None:
         shot = self.root / "shots" / "r"
-        write_shot(shot, [PIXELS], stride=1)
+        write_shot(shot, [PIXELS])
         husk.write_job_list(self.root, husk.jobs(shot, self.root, (1,), husk.CHUNK_FRAMES))
         with watching(self.root) as watch, mock.patch.object(cli.husk, "run", fake_render):
             cli.main(["render", "--root", str(self.root)])
@@ -120,9 +120,9 @@ class ShotWriterTest(unittest.TestCase):
         self.assertEqual((watch.unlocked, watch.unexplained), ([], []))
 
     def test_qa_writes_and_moves_only_under_the_lock(self) -> None:
-        write_shot(self.root / "shots" / "good", [PIXELS], stride=1)
+        write_shot(self.root / "shots" / "good", [PIXELS])
         cli.main(frame_args("pack", self.root / "shots" / "good"))
-        write_shot(self.root / "shots" / "bad", [PIXELS], stride=1)
+        write_shot(self.root / "shots" / "bad", [PIXELS])
         (self.root / "shots" / "bad" / "deep" / "0001.exr").unlink()
         with watching(self.root) as watch:
             cli.main(["qa", "--root", str(self.root)])
@@ -140,7 +140,7 @@ class AuditTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.shot = self.root / "shots" / "s"
-        write_shot(self.shot, [PIXELS], stride=1)
+        write_shot(self.shot, [PIXELS])
 
     def tearDown(self) -> None:
         self.directory.cleanup()

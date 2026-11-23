@@ -64,7 +64,7 @@ class PublicationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.shot = Path(self.directory.name) / "s"
-        write_shot(self.shot, [FIRST], stride=1)
+        write_shot(self.shot, [FIRST])
 
     def tearDown(self) -> None:
         self.directory.cleanup()
