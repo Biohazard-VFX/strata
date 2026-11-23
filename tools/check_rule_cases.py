@@ -94,6 +94,8 @@ CASES = [
     ('GT decoder pass', {'training/posttrain/src/unit.py': 'def _decoder_oracle_scale(model): return 1\n'}, 'obsolete training reference'),
     ('duplicate metric factor', {'training/posttrain/src/unit.py': 'key = "raw_metric_scale"\n'}, 'obsolete training reference'),
     ('GT scale function', {'training/posttrain/src/unit.py': 'def oracle_metric_scale(data, inverse): return 1\n'}, 'obsolete training reference'),
+    ('removed scale keys rejected', {'training/posttrain/src/strata_training/config.py': 'if {"scale", "scale_mode", "depth_scale"} & config.keys(): pass\n'}, None),
+    ('scale option outside rejection', {'training/posttrain/src/strata_training/config.py': 'if {"scale", "scale_mode", "depth_scale"} & config.keys(): pass\nvalue = "scale_mode"\n'}, 'obsolete training reference'),
     ('GT scale option', {'training/posttrain/configs/neutral.json': '{"scale_mode": "raw"}'}, 'obsolete training reference'),
     ('GT scale metric', {'training/posttrain/src/unit.py': 'def scale_align(inverse, truth): return inverse\n'}, 'obsolete training reference'),
     ('GT affine metric', {'training/posttrain/src/unit.py': 'def affine_align(inverse, truth): return inverse\n'}, 'obsolete training reference'),
