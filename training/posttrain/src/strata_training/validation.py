@@ -8,6 +8,7 @@ from torch import nn
 from strata_training.data.dataset import Frame
 from strata_training.data.policy import require_supervision
 from strata_training.data.targets import composite
+from strata_training.eval.coverage import coverage_samples, coverage_summary
 from strata_training.eval.leakage import leakage_samples, leakage_summary
 from strata_training.eval.predict import predict
 from strata_training.eval.protocol import entries_for
@@ -58,6 +59,7 @@ def evaluate_validation(
     error, pixels = 0.0, 0
     losses: list[float] = []
     leakage: dict[str, list[Array]] = {}
+    sweep: dict[str, list[Array]] = {}
     model.eval()
     try:
         for frame in frames:
@@ -75,6 +77,8 @@ def evaluate_validation(
                 result, target_layers, mixed, frame.arrays["beauty"]
             ).items():
                 leakage.setdefault(name, []).append(values)
+            for name, values in coverage_samples(result, target_layers, mixed).items():
+                sweep.setdefault(name, []).append(values)
             target = {
                 k: torch.tensor(frame.arrays[k][None]).float()
                 for k in ("inverse_depth", "alpha", "rgb", "mixed")
@@ -94,7 +98,13 @@ def evaluate_validation(
         raise ValueError("OOD validation requires GT-opaque interior pixels for leakage")
     if not np.isfinite(leak["worst_mean"]):
         raise FloatingPointError("Nonfinite OOD leakage")
+    sweep_result = coverage_summary(
+        {name: np.concatenate(values) for name, values in sweep.items()}
+    )
+    if not np.isfinite(sweep_result["selection"]):
+        raise FloatingPointError("Nonfinite OOD coverage sweep")
     return {
+        "coverage_sweep": sweep_result,
         "mixed_alpha_mae": metric,
         "leakage": leak,
         "loss": loss,

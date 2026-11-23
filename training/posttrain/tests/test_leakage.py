@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from strata_training.eval.leakage import leakage_samples, leakage_summary, validation_improves
+from strata_training.eval.leakage import leakage_samples, leakage_summary
 from strata_training.types import Layers
 
 
@@ -46,24 +46,49 @@ def test_leakage_uses_gt_plane_opacity_and_interior_not_prediction_mask() -> Non
     assert samples["all"].size == 111
     assert_allclose(samples["all"], 0.5)
     empty = leakage_summary(leakage_samples(_layers(1), _layers(0), mixed, np.zeros((3, 16, 16))))
-    assert empty["all"] == {"mean": None, "pixels": 0}
+    assert empty["all"]["mean"] is None
+    assert empty["all"]["pixels"] == 0
+    assert empty["all"]["status"] == "not evaluated"
     assert not empty["passed"]
 
 
-def test_leakage_gate_and_selection_require_both_metrics() -> None:
-    def metrics(mixed: float, leak: float) -> dict[str, object]:
-        return {
-            "mixed_alpha_mae": mixed,
-            "leakage": leakage_summary({"all": np.array([leak]), "dark": np.array([leak])}),
-        }
+@pytest.mark.parametrize(
+    ("count", "mean", "status"),
+    [
+        (0, 0.9, "not evaluated"),
+        (249, 0.9, "not evaluated"),
+        (250, 0.1, "pass"),
+        (250, 0.10001, "fail"),
+        (1000, 0.025, "pass"),
+        (1000, 0.02501, "fail"),
+        (25000, 0.001, "pass"),
+        (25000, 0.00101, "fail"),
+        (50000, 0.00101, "fail"),
+    ],
+)
+def test_count_aware_brightness_gate(count: int, mean: float, status: str) -> None:
+    report = leakage_summary({"all": np.array([0.0005]), "bright": np.full(count, mean)})
+    assert report["bright"]["status"] == status
+    assert report["passed"] == (status != "fail")
+    assert not leakage_summary({"all": np.array([0.00101]), "bright": np.zeros(count)})["passed"]
 
-    best = metrics(0.2, 0.1)
-    assert not validation_improves(metrics(0.1, 0.2), best)
-    assert not validation_improves(metrics(0.3, 0.05), best)
-    assert validation_improves(metrics(0.1, 0.05), best)
-    assert validation_improves(metrics(0.2, 0.05), best)
-    assert validation_improves(metrics(0.9, 0.001), best)
-    assert not validation_improves(best, metrics(0.9, 0.001))
-    assert not validation_improves(best, best)
-    assert validation_improves(best, None)
-    assert not leakage_summary({"all": np.array([0.0005]), "bright": np.array([0.002])})["passed"]
+
+def test_bright_gate_pools_pixels_before_count_threshold() -> None:
+    frames = [np.full(125, 0.2), np.zeros(125)]
+    for frame in frames:
+        assert (
+            leakage_summary({"all": np.array([0.0]), "bright": frame})["bright"]["status"]
+            == "not evaluated"
+        )
+    report = leakage_summary({"all": np.array([0.0]), "bright": np.concatenate(frames)})
+    assert report["bright"]["status"] == "pass"
+    assert report["bright"]["mean"] == pytest.approx(0.1)
+
+
+def test_premature_occlusion_is_report_only_and_gt_surface_is_visible() -> None:
+    mixed, beauty = np.zeros((16, 16)), np.zeros((3, 16, 16))
+    for depth, expected in [(1.0, 1.0), (2.0, 0.0), (4.0, 0.0)]:
+        report = leakage_summary(leakage_samples(_layers(1, 1 / depth), _layers(1), mixed, beauty))
+        assert report["premature"]["mean"] == expected
+        assert report["premature"]["status"] == "not evaluated"
+        assert report["passed"] == (depth <= 2)

@@ -51,10 +51,6 @@ the terminal stays one, including K=1. Total coverage `1 - product(1-alpha)`
 is exactly one. Explicitly summing float32 visible contributions has ordinary
 roundoff, not a transparency residual.
 
-Thirteen isolated ground/shadow pixels in the historical 33.2M-pixel Karma
-measurement had total coverage below 0.999. These exceptions are accepted: GT
-is not rewritten and the head still closes every pixel.
-
 ## Frozen evaluation
 
 `eval/leakage.py` owns the behind-surface leakage metric used by both final
@@ -70,10 +66,10 @@ The metric includes depth-placement errors; full coverage alone cannot pass it.
 
 Report pooled all/bright/normal/dark means and pixel counts, using GT scene-linear
 beauty max RGB: bright >1.4, normal (0.04,1.4], dark <=0.04. No empty bucket is
-repopulated. The gate requires every populated bucket mean <=0.001, matching the
-GT opacity tolerance; missing all-interior pixels fails. Selection uses the worst
-populated mean alongside mixed-alpha MAE. This implementation does not require
-semantic masks or a separately available background-only composite.
+repopulated. Overall mean leakage always gates at <=0.001. Each brightness bucket
+is not evaluated below 250 pooled pixels; otherwise its mean limit is
+max(0.001,25/n), with n pooled across frames. Report premature occlusion at the
+mirror plane just before the visible GT front surface, without gating on it.
 
 The saved protocol preserves all 28 train and 8 pose-240 holdout frames. Training uses native crops. Historical v004 checkpoints used fixed final steps; new runs use the separate OOD-validation policy below. `metrics.json` has pooled mixed-pixel alpha MAE, front/back and ordered inverse-depth median relative errors, layer color/count/order diagnostics, native directed boundary F1, silhouette recall, calibration reliability bins, composite and fixed-magenta-plane insertion errors, and edge-band recomposition errors. Every method is scored at its own metric scale with depth AbsRel/δ1; there are no global-scale or affine-aligned diagnostics. Ground truth never rescales predictions or model inputs, including fake deep, analytical and frozen-probe baselines.
 
@@ -82,6 +78,25 @@ The original v004 reference table compares the first predicted coverage/depth an
 Boundary evaluation is a documented paper-style adaptation: four directed adjacent-pixel contours; 5/10/15/20/25% thresholds weighted proportionally to threshold; exact native-pixel matching without depth alignment. The papers do not fully specify the discrete threshold weights. Silhouette recall uses alpha>0.1 and scanline connected-run nonmaximum suppression; v004 lacks true instance masks, so its silhouette is explicitly a Z<3m coverage proxy, not a published segmentation benchmark. No label interpolation occurs in evaluation either.
 
 Deep predictions retain every positive-coverage sample, including low-alpha HDR contributions. Outputs are NPZ plus point-sample deep EXRs (`R G B A Z ZBack`, ZBack=Z) for the requested first N holdout frames. Set the Nuke working color space to match the input EXR; legacy v004's scene-linear primaries are unverified and are not silently labeled ACEScg. No interactive Nuke canary acceptance is claimed.
+
+### Coverage sweep
+
+The frozen reference is the retained training layer target interpreted as point
+deep, not the retired raw sample list. Zero inverse depth (sky) maps to 200 m.
+For each pixel, integrate positive and negative parts of A_pred(z)-A_GT(z) in
+log depth from the minimum GT/prediction Z to 200 m, clamping farther depths.
+There is no range normalisation and no dependence on another model. An opaque
+point displaced from z_gt to z_pred costs |ln(z_pred)-ln(z_gt)| within the clamp.
+The kernel splits volumetric reference intervals using homogeneous Beer-Lambert
+transmission; point spans are exact, varying spans use 16-point Gauss-Legendre
+integration split at the coverage crossing. Selection does not reconstruct raw
+deep from clustered targets or claim that their coverage curves are identical.
+
+Report too-near (prematurely eats an element) and too-far (lets it show through)
+separately over the four-pixel band around GT mixed/front-alpha boundaries and
+GT-opaque interior outside that band. The selection score is the pixel-weighted
+mean of near+far over the union, pooled across frames; neither region is given
+an artificial equal weight. Final evaluation and validation share this rule.
 
 ## OOD-validation early stopping
 
@@ -100,15 +115,20 @@ feature/sample loading and direct validation evaluation refuse these sources. Fi
 test scoring remains allowed. Use held-out **synthetic** shots for early stopping.
 
 A step-zero validation establishes the initial best. Full native-frame validation
-then runs every N steps and at the ceiling. Selection first prefers a passing leakage
-gate over a failing one. Within the same gate state, mixed-alpha MAE and worst-region
-mean leakage must both not increase, with at least one strictly decreasing. Four
-consecutive checks without such an improvement stop training. `best.pt` is the selected checkpoint; `last.pt` and
-`final.pt` retain the actual stopping-step state. Pipeline evaluation uses `best.pt`.
+then runs every N steps and at the ceiling. Select the lowest coverage sweep among
+leakage-gate passes, with lower worst-region leakage then earliest checkpoint step
+breaking exact sweep ties.
+Before any pass retain the lowest worst-region leakage, breaking ties by sweep,
+and label the run `no production candidate`. Slot-alpha MAE is diagnostic only.
+Patience counts evaluations without a cumulative sweep improvement of at least
+0.0001 log metres; before the first pass a cumulative leakage fall of at least
+0.00001 resets it instead. The patience anchor is separate from the exact best.
+`best.pt` is the selected checkpoint; `last.pt` and `final.pt` retain the actual
+stopping-step state. Pipeline evaluation uses `best.pt`.
 `history.json` logs training loss and validation points, and `validation.json` retains
 all validation loss/MAE points, best step and patience state. Validation loss uses
 the same objective on full-frame predictions, with logits reconstructed from clipped
-inference probabilities; selection uses unclipped predicted alpha MAE.
+inference probabilities; selection uses unclipped coverage curves.
 
 Resume retains validation history/patience and requires identical validation sources,
 cadence and output directory. It rejects a checkpoint whose patience is exhausted.

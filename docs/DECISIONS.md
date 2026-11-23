@@ -31,10 +31,20 @@
 - The CLI refuses outputs inside the model's directory instead of parsing ONNX for external data, which ONNX Runtime confines to that directory.
 - Training, evaluation and baselines never align predicted depth to GT; learn and score metric scale directly against synthetic deep truth so scale errors remain visible.
 - K-slot visible coverage is a simplex with opaque terminal alpha, closing holes by construction; check: test_head_coverage_is_exactly_one.
-- Gate GT-opaque interior behind-surface leakage by brightness and select with mixed-alpha error; checks: test_behind_surface_leakage, test_leakage_gate_and_selection_require_both_metrics.
+- Gate GT-opaque interior leakage at 0.001; brightness bins use 1.4 and 0.04; checks: test_behind_surface_leakage, test_count_aware_brightness_gate.
 - Detach alpha only in per-layer colour supervision; preserve colour space and composite gradients; check: test_layer_colour_does_not_steer_coverage_but_composite_still_does.
 - Depth Pro 2 encoder stays frozen to train only downstream weights; test_encoder_stays_frozen checks parameters and training mode.
 - Fable shoulder uses gain 0.72, knee 0.6, span 0.4 and sRGB, preserving midtones and compressing HDR; test_fable_fixed_points_and_float_cache fixes values.
 - Exposure is fixed per shot, never inferred per frame; --exposure is an additive stop override; test_exposure_is_fixed_across_frames_and_crops checks invariance.
 - Encoder input stays float32 end to end; reject old target/feature caches, never quantize; encoder_input parity and float-cache checks enforce it.
 - No second encoder pass: frozen features run once per frame; test_native_denoised_extraction_persists_matching_inference_image_and_rejects_changes counts pyramid calls.
+- Coverage sweep uses retained layer targets as point deep, not slot MAE; test_pooled_regions_preserve_directions_and_ignore_other_contestants checks pooling.
+- Sweep integrates signed coverage differences in log metres without normalisation; test_opaque_sweep_is_log_distance_and_signed fixes scale and directions.
+- Sweep bounds use this pixel's GT/prediction minimum Z through 200 m; sky maps to 200 m; test_opaque_sweep_is_log_distance_and_signed fixes the far clamp.
+- Split volumetric intervals by Beer-Lambert transmission, not alpha interpolation; test_beer_lambert_overlaps_and_opaque_intervals_match_independent_quadrature checks it.
+- Select the pixel-pooled edge-band plus opaque-interior sweep among gate passes; test_checkpoint_selection_is_order_independent_and_slot_mae_is_diagnostic checks ranking.
+- Before any gate pass select least worst-region leakage and label no production candidate; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume checks it.
+- Patience resets on sweep improvement >=0.0001, or leakage fall >=0.00001 before first pass; test_patience_uses_explicit_deltas_not_every_new_best fixes both deltas.
+- Exact score ties prefer lower leakage then earliest checkpoint step, independent of arrival; test_checkpoint_selection_is_order_independent_and_slot_mae_is_diagnostic checks ties.
+- Brightness buckets pool pixels: below 250 are not evaluated; otherwise limit=max(0.001,25/n); overall always gates at 0.001; test_count_aware_brightness_gate fixes boundaries.
+- Report premature occlusion before the visible GT surface without gating; test_premature_occlusion_is_report_only_and_gt_surface_is_visible checks it.

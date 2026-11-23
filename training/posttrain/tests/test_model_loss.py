@@ -1,3 +1,5 @@
+from math import log
+
 import pytest
 import torch
 from torch import nn
@@ -47,6 +49,29 @@ def test_supervision_masks_invalid_depth_but_penalizes_extra_coverage() -> None:
         alpha + torch.tensor([[[[0.0]], [[0.0]], [[0.5]], [[0.0]]]]), eps=1e-7
     )
     assert deep_loss(bad, target)[0].item() > loss.item()
+
+
+@pytest.mark.parametrize("layers", [1, 2, 4])
+def test_coverage_bce_averages_only_learned_slots(layers: int) -> None:
+    alpha = torch.full((1, layers, 2, 2), 0.3)
+    alpha[:, -1] = 1
+    prediction = {
+        "inverse_depth": torch.ones_like(alpha),
+        "alpha": torch.full_like(alpha, 0.8),
+        "alpha_logits": torch.full_like(alpha, log(4)),
+        "rgb": torch.zeros((1, layers, 3, 2, 2)),
+        "layer_rgb": torch.zeros((1, layers, 3, 2, 2)),
+    }
+    target = {
+        "inverse_depth": torch.ones_like(alpha),
+        "alpha": alpha,
+        "rgb": prediction["rgb"],
+        "beauty": torch.zeros((1, 3, 2, 2)),
+        "mixed": torch.tensor([[[0, 1], [1, 0]]]),
+    }
+    _, terms = deep_loss(prediction, target)
+    expected = 0 if layers == 1 else -0.3 * log(0.8) - 0.7 * log(0.2)
+    assert terms["alpha"].item() == pytest.approx(expected)
 
 
 def test_coverage_supervision_recovers_from_opaque_saturation() -> None:
@@ -137,4 +162,4 @@ def test_layer_colour_does_not_steer_coverage_but_composite_still_does() -> None
     prediction = head(torch.zeros((1, 2, 8, 8)), image, torch.ones((1, 1, 8, 8)))
     _, terms = deep_loss(prediction, target)
     gradient = torch.autograd.grad(terms["composite"], bias)[0].reshape(4, 5)
-    assert gradient[:, 1].abs().sum() > 0
+    torch.testing.assert_close(gradient[:, 1], torch.tensor([3, -1, -1, -1]) / 16)

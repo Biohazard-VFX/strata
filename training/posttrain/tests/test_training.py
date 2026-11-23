@@ -153,9 +153,11 @@ def test_cached_training_refuses_protected_feature_roots(tmp_path: Path) -> None
         train(path)
 
 
+@pytest.mark.parametrize("passing", [False, True])
 def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    passing: bool,
 ) -> None:
     import shutil
 
@@ -178,7 +180,7 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     )
     config.update(
         early_stopping=True,
-        validation_every=2,
+        validation_every=1 if passing else 2,
         validation_patience=2,
         steps=20,
         validation_index=str(index),
@@ -187,36 +189,64 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
         log_every=1,
     )
     write_json(path, config)
-    metrics = chain([(0.4, 0.3), (0.3, 0.2), (0.2, 0.4)], repeat((0.1, 0.3)))
+    metrics = (
+        chain(
+            [
+                (0.4, 0.3, 0.5),
+                (0.3, 0.2, 0.9),
+                (0.2, 0.0005, 0.5),
+                (0.1, 0.0009, 0.2),
+                (0.05, 0.0001, 0.3),
+            ],
+            repeat((0.01, 0.0001, 0.21)),
+        )
+        if passing
+        else chain([(0.4, 0.3, 0.4), (0.3, 0.2, 0.3), (0.2, 0.4, 0.2)], repeat((0.1, 0.3, 0.1)))
+    )
 
     def evaluate(model: object, config: object, frames: object) -> dict[str, Any]:
         del model, config, frames
-        value, leak = next(metrics)
+        value, leak, sweep = next(metrics)
         return {
+            "coverage_sweep": {"selection": sweep},
             "mixed_alpha_mae": value,
             "loss": value * 2,
             "mixed_pixels": 1024,
             "frames": 1,
-            "leakage": {"worst_mean": leak, "passed": False},
+            "leakage": {"worst_mean": leak, "passed": leak <= 0.001},
         }
 
     trainer: Any = import_module("strata_training.train")
     monkeypatch.setattr(trainer, "evaluate_validation", evaluate)
     report = train(path)
-    assert report["stopped_step"] == 6
-    assert report["best_step"] == 2
+    assert report["stopped_step"] == (5 if passing else 6)
+    assert report["best_step"] == (3 if passing else 2)
     assert report["stopping_reason"] == "validation_patience"
-    assert report["best_validation_mixed_alpha_mae"] == 0.3
+    assert report["best_validation_mixed_alpha_mae"] == (0.1 if passing else 0.3)
+    assert report["candidate_status"] == (
+        "production candidate" if passing else "no production candidate"
+    )
     output = Path(config["output"])
     best = torch.load(output / "best.pt", weights_only=True)
     final = torch.load(output / "final.pt", weights_only=True)
-    assert best["step"] == 2
-    assert final["step"] == 6
+    assert best["step"] == (3 if passing else 2)
+    assert final["step"] == (5 if passing else 6)
     assert not torch.equal(best["model"]["output.weight"], final["model"]["output.weight"])
     state = json.loads((output / "validation.json").read_text())
-    assert [row["step"] for row in state["history"]] == [0, 2, 4, 6]
-    assert [row["mixed_alpha_mae"] for row in state["history"]] == [0.4, 0.3, 0.2, 0.1]
+    assert [row["step"] for row in state["history"]] == (
+        [0, 1, 2, 3, 4, 5] if passing else [0, 2, 4, 6]
+    )
+    assert [row["mixed_alpha_mae"] for row in state["history"]] == (
+        [0.4, 0.3, 0.2, 0.1, 0.05, 0.01] if passing else [0.4, 0.3, 0.2, 0.1]
+    )
     assert final["validation"]["stale_evals"] == 2
+    final["config"].pop("selection")
+    old_selection = output / "old-selection.pt"
+    with atomic_path(old_selection) as temporary:
+        torch.save(final, temporary)
+    write_json(path, {**config, "resume": str(old_selection)})
+    with pytest.raises(ValueError, match="Resume model/data"):
+        train(path)
     write_json(path, {**config, "resume": str(output / "last.pt")})
     with pytest.raises(ValueError, match="exhausted validation patience"):
         train(path)
@@ -247,6 +277,12 @@ def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode
     assert result["loss"] > 0
     assert model.training
     assert all(parameter.grad is None for parameter in model.parameters())
+    all_mixed_cache = tmp_path / "all-mixed.npz"
+    save_arrays(all_mixed_cache, **{**frame.arrays, "mixed": np.ones((32, 32), dtype=bool)})
+    no_interior = Frame({**entries[0], "cache": str(all_mixed_cache)}, Path(config["features"]))
+    with pytest.raises(ValueError, match="requires GT-opaque interior"):
+        evaluate_validation(model, config, [no_interior])
+    assert model.training
     empty_cache = tmp_path / "empty.npz"
     save_arrays(empty_cache, **{**frame.arrays, "mixed": np.zeros((32, 32), dtype=bool)})
     frame = Frame({**entries[0], "cache": str(empty_cache)}, Path(config["features"]))

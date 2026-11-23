@@ -15,8 +15,8 @@ from strata_training.data.online import OnlineLoader
 from strata_training.data.policy import require_supervision
 from strata_training.data.sequences import clip_indices
 from strata_training.data.workers import NativeBatches, device_batches
-from strata_training.eval.leakage import validation_improves
 from strata_training.eval.protocol import entries_for
+from strata_training.eval.selection import meaningful_improvement, validation_improves
 from strata_training.io import write_json
 from strata_training.losses.deep import deep_loss
 from strata_training.model.checkpoint import save_checkpoint
@@ -40,6 +40,8 @@ def train(config_path: Path) -> dict[str, Any]:
 def _train(config_path: Path) -> dict[str, Any]:
     config = training_defaults(json.loads(config_path.read_text()))
     config["objective"] = COVERAGE_OBJECTIVE
+    if config["early_stopping"]:
+        config["selection"] = "coverage-sweep-layer-v1"
     config["sampling"] = "step-seed-gpu-v2" if config["loader_math"] == "torch" else "step-seed-v2"
     validate_config(config)
     device = config.get("device", "cuda")
@@ -111,7 +113,13 @@ def _train(config_path: Path) -> dict[str, Any]:
     start_step = 0
     previous_seconds = 0.0
     validation_state: dict[str, Any] | None = (
-        {"best_metrics": None, "best_step": 0, "stale_evals": 0, "history": []}
+        {
+            "best_metrics": None,
+            "patience_anchor": None,
+            "best_step": 0,
+            "stale_evals": 0,
+            "history": [],
+        }
         if validation
         else None
     )
@@ -137,6 +145,7 @@ def _train(config_path: Path) -> dict[str, Any]:
         )
         if validation:
             keys += (
+                "selection",
                 "validation_index",
                 "validation_protocol",
                 "validation_features",
@@ -181,8 +190,21 @@ def _train(config_path: Path) -> dict[str, Any]:
     def check_validation(step: int) -> dict[str, Any]:
         assert validation_state is not None
         metrics = evaluate_validation(model, config, validation)
+        metrics["checkpoint_step"] = step
         improved = validation_improves(metrics, validation_state["best_metrics"])
-        validation_state["stale_evals"] = 0 if improved else validation_state["stale_evals"] + 1
+        meaningful = meaningful_improvement(metrics, validation_state["patience_anchor"])
+        validation_state["stale_evals"] = 0 if meaningful else validation_state["stale_evals"] + 1
+        if meaningful:
+            validation_state["patience_anchor"] = metrics
+        validation_state["candidate_status"] = (
+            "production candidate"
+            if metrics["leakage"]["passed"]
+            or (
+                validation_state["best_metrics"] is not None
+                and validation_state["best_metrics"]["leakage"]["passed"]
+            )
+            else "no production candidate"
+        )
         if improved:
             validation_state["best_metrics"], validation_state["best_step"] = metrics, step
         elapsed = previous_seconds + time.monotonic() - start
@@ -333,6 +355,12 @@ def _train(config_path: Path) -> dict[str, Any]:
         "best_validation_mixed_alpha_mae": validation_state["best_metrics"]["mixed_alpha_mae"]
         if validation_state
         else None,
+        "best_validation_coverage_sweep": validation_state["best_metrics"]["coverage_sweep"]
+        if validation_state
+        else None,
+        "candidate_status": validation_state["candidate_status"]
+        if validation_state
+        else "not evaluated",
         "selected_checkpoint": str(output / ("best.pt" if validation else "final.pt")),
     }
     write_json(output / "training.json", report)
