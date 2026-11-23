@@ -311,3 +311,5 @@ Loader startup logs the fraction of producer-published, recomposition-eligible v
 Ineligible views use photometric-only inputs. Every clean, augmented and off-stride view
 uses the composite of its final K-layer targets for beauty supervision, including cached
 training and validation; rendered or denoised beauty remains an input, not a loss target.
+
+Encoder preprocessing uses Fable's shoulder: x=max(0,0.72*C), unchanged through 0.6, then 0.6+0.4*(x-0.6)/(0.4+x-0.6), followed by sRGB and ImageNet normalization. Exposure is fixed per shot, not fitted per frame. The encoder stays frozen and runs once. Target sRGB and encoder tensors remain float32; rebuild target and feature caches after this change. Pre-shoulder feature caches are rejected. `encoder_input` compares the training mapping against C at fixed 5e-7 tolerance.
