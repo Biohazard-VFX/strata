@@ -10,7 +10,7 @@ from torch import nn
 
 from strata_training.baselines.cached import cached_baselines
 from strata_training.baselines.prepare import prepare_baselines
-from strata_training.baselines.probe import FrozenProbe
+from strata_training.baselines.probe import FrozenProbe, predict_probe
 from strata_training.data import mapped
 from strata_training.data.feature_cache import base_arrays
 from strata_training.eval.predict import cache_predictions
@@ -31,6 +31,7 @@ def test_metric_inputs_and_frozen_ood_calibration_preserve_training_provenance(
         beauty=np.ones((3, *shape)),
         srgb=np.full((3, *shape), 128),
         mixed=np.ones(shape, dtype=bool),
+        inverse_depth=np.full((4, *shape), 0.25),
     )
     save_array(frame / "features.npy", np.zeros((128, *shape), dtype=np.float32))
     for level in range(4):
@@ -46,6 +47,7 @@ def test_metric_inputs_and_frozen_ood_calibration_preserve_training_provenance(
         {
             "train": [],
             "test": ["ood"],
+            "version": 2,
             "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
         },
     )
@@ -76,7 +78,17 @@ def test_metric_inputs_and_frozen_ood_calibration_preserve_training_provenance(
     output = tmp_path / "baselines"
     prepare_baselines(index, protocol, root, output, probe, norm, calibration)
     assert json.loads((output / "curves.json").read_text()) == frozen
-    assert (output / "ood/probe.npz").exists()
+    expected_probe = predict_probe(
+        probe,
+        norm,
+        np.full((3, *shape), 128),
+        np.full(shape, 0.5),
+        np.zeros((128, *shape), dtype=np.float32),
+        np.ones((3, *shape), dtype=np.float32),
+    )
+    actual_probe = np.load(output / "ood/probe.npz")
+    assert_allclose(actual_probe["inv_fg"], expected_probe.inverse_depth[0])
+    assert_allclose(actual_probe["inv_bg"], expected_probe.inverse_depth[1])
     baselines = cached_baselines("ood", output, np.ones((3, *shape)))
     assert len(baselines) == 6
     assert all(name.endswith("raw metric") for name in baselines)

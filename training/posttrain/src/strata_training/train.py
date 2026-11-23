@@ -154,7 +154,7 @@ def _train(config_path: Path) -> dict[str, Any]:
         }
         validate_config(saved_config)
         if any(saved_config.get(key) != config.get(key) for key in keys):
-            raise ValueError("Resume model/data/scale does not match config")
+            raise ValueError("Resume model/data does not match config")
         missing, unexpected = cast(
             tuple[list[str], list[str]], model.load_state_dict(state["model"], strict=False)
         )

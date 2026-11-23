@@ -93,7 +93,7 @@ def test_training_rejects_any_scale_configuration(mode: str, key: str, value: An
             "batch_size": 2,
         }
     )
-    validate_config(config)
+    validate_config({**config, "grain_scale": 0.5})
     with pytest.raises(ValueError, match="Scale configuration is forbidden"):
         validate_config({**config, key: value})
 

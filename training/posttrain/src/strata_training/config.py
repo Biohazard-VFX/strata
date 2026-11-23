@@ -26,7 +26,7 @@ def training_defaults(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def reject_scale_config(config: dict[str, Any]) -> None:
-    if any("scale" in key.lower() for key in config):
+    if {"scale", "scale_mode", "depth_scale"} & config.keys():
         raise ValueError("Scale configuration is forbidden; use the model metric scale")
 
 

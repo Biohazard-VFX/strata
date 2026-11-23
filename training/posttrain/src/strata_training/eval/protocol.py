@@ -40,6 +40,8 @@ def entries_for(
 ) -> list[dict[str, Any]]:
     data: list[dict[str, Any]] = json.loads(index.read_text())
     frozen: dict[str, Any] = json.loads(protocol.read_text())
+    if frozen.get("version") != 2:
+        raise ValueError("Unsupported protocol version; expected 2")
     reject_scale_config(frozen)
     if hashlib.sha256(index.read_bytes()).hexdigest() != frozen["index_sha256"]:
         raise ValueError("Dataset index changed after protocol freeze")

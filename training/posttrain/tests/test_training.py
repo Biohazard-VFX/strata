@@ -38,7 +38,11 @@ def _configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
     )
     write_json(
         protocol,
-        {"train": ["train"], "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()},
+        {
+            "train": ["train"],
+            "version": 2,
+            "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+        },
     )
     config = {
         "index": str(index),
@@ -125,7 +129,7 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path, wo
     for key, value in (("steps", 5), ("learning_rate", 1e-3), ("warmup_steps", 1)):
         changed = {**config, "resume": str(tmp_path / "run/final.pt"), key: value}
         write_json(path, changed)
-        with pytest.raises(ValueError, match="Resume model/data/scale"):
+        with pytest.raises(ValueError, match="Resume model/data"):
             train(path)
     for key in ("input_mode", "clean_fraction", "compile_encoder"):
         state["config"].pop(key, None)
@@ -161,7 +165,11 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     write_json(index, [entry])
     write_json(
         protocol,
-        {"test": [entry["id"]], "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()},
+        {
+            "test": [entry["id"]],
+            "version": 2,
+            "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+        },
     )
     config.update(
         early_stopping=True,
@@ -245,7 +253,11 @@ def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode
     write_json(index, [alias])
     write_json(
         protocol,
-        {"test": [alias["id"]], "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()},
+        {
+            "test": [alias["id"]],
+            "version": 2,
+            "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+        },
     )
     with pytest.raises(ValueError, match="disjoint from training"):
         validation_frames(

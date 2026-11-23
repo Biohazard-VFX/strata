@@ -83,6 +83,7 @@ def test_compact_frame_without_raw_deep_preserves_targets_and_denoised_part(tmp_
         protocol,
         {
             "train": [entries[0]["id"]],
+            "version": 2,
             "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
         },
     )

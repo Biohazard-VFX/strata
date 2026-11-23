@@ -26,10 +26,26 @@ def test_test_only_manifests_cannot_be_relabelled_for_training_or_validation(
     write_json(index, [entry])
     digest = hashlib.sha256(index.read_bytes()).hexdigest()
     training, testing = tmp_path / "train.json", tmp_path / "test.json"
-    write_json(training, {"index_sha256": digest, "train": ["frame"], "test": []})
-    write_json(testing, {"index_sha256": digest, "train": [], "test": ["frame"]})
+    write_json(training, {"version": 2, "index_sha256": digest, "train": ["frame"], "test": []})
+    write_json(testing, {"version": 2, "index_sha256": digest, "train": [], "test": ["frame"]})
     with pytest.raises(ValueError, match="test-only"):
         entries_for(index, training, "train")
     with pytest.raises(ValueError, match="test-only"):
         entries_for(index, testing, "test", purpose="validation")
     assert entries_for(index, testing, "test") == [entry]
+
+
+def test_old_protocol_version_is_rejected(tmp_path: Path) -> None:
+    index = tmp_path / "index.json"
+    protocol = tmp_path / "protocol.json"
+    write_json(index, [{"id": "frame"}])
+    write_json(
+        protocol,
+        {
+            "version": 1,
+            "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+            "test": ["frame"],
+        },
+    )
+    with pytest.raises(ValueError, match="Unsupported protocol version"):
+        entries_for(index, protocol, "test")

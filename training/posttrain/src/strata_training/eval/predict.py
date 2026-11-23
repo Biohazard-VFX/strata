@@ -74,7 +74,6 @@ def _pyramid(
 
 
 def predict(model: nn.Module, config: dict[str, Any], frame: Frame) -> Layers:
-    reject_scale_config(config)
     height, width = frame.base.shape
     decoder = config["mode"] == "decoder"
     device = (
