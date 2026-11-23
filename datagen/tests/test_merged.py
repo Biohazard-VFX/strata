@@ -2,10 +2,12 @@ import unittest
 from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import numpy as np
 from numpy.typing import NDArray
 
+import validate
 from strata_datagen.qa import checks
 from strata_datagen.render import pack
 from strata_dataset import merged, roles, segmented
@@ -145,6 +147,53 @@ class MergedDeepTest(unittest.TestCase):
             self.assertFalse(checks.check_shot(shot)["passed"])
             self.assertEqual(pack.remove_samples(shot, range(1, 3)), [1, 2])
             self.assertFalse(plan.merged_dir(shot, 1).exists())
+
+    def test_contract_validator_rejects_malformed_merged_sidecars(self) -> None:
+        with (
+            TemporaryDirectory() as temporary,
+            mock.patch.object(validate, "_schema_errors", return_value=[]),
+            mock.patch.object(validate, "_beauty_errors", return_value=[]),
+        ):
+            shot = Path(temporary) / "shot"
+            pixels: list[Sample | list[Sample]] = [
+                [Sample(0.5, 1.0, 2), SKY],
+                [Sample(0.2, 0.5, 1), SKY],
+                SKY,
+            ]
+            write_shot(shot, [pixels, pixels], stride=24)
+            pack.pack(shot, range(1, 3))
+            self.assertEqual(validate.validate(shot), [])
+            path = pack.ShotFrames.load(shot).merged_dir(shot, 2) / "deep.npz"
+            arrays = merged.read(path).arrays()
+            count = arrays["z"].size
+            corruptions: list[tuple[str, NDArray[np.generic]]] = [
+                ("shape", np.array([2, 3], np.int64)),
+                ("shape", np.array([1, 3], np.float64)),
+                ("offsets", np.array([0, -1, 1, count], np.int64)),
+                ("z", arrays["z"].astype(np.float64)),
+                ("alpha", np.full(count, 1.001, np.float64)),
+                ("rgb", np.full((count, 3), np.nan, np.float64)),
+                ("roles", np.full((count, 3), 2, np.float64)),
+                ("ids", np.full(count, -2, np.int64)),
+                ("zback", np.zeros(count, np.float32)),
+                ("statistics", np.zeros((count, 3), np.float64)),
+                ("statistics", np.full((count, 4), np.inf, np.float64)),
+            ]
+            for name, value in corruptions:
+                with self.subTest(field=name, shape=value.shape, dtype=value.dtype):
+                    np.savez_compressed(path, allow_pickle=False, **(arrays | {name: value}))
+                    self.assertTrue(any("merged" in error for error in validate.validate(shot)))
+            np.savez_compressed(
+                path, allow_pickle=False, **{n: a for n, a in arrays.items() if n != "statistics"}
+            )
+            self.assertTrue(any("merged" in error for error in validate.validate(shot)))
+            path.write_bytes(b"")
+            self.assertTrue(any("merged" in error for error in validate.validate(shot)))
+            with path.open("wb") as stream:
+                np.save(stream, arrays["alpha"], allow_pickle=False)
+            self.assertTrue(any("merged" in error for error in validate.validate(shot)))
+            np.savez_compressed(path, allow_pickle=False, **arrays)
+            self.assertEqual(validate.validate(shot), [])
 
     def test_seeded_multi_id_boundary_fuzz_roundtrip_and_flatten(self) -> None:
         for seed in (7, 71, 715):

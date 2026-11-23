@@ -143,6 +143,11 @@ raw and merged sidecars for the requested frames; repacking refuses a different 
 | `alpha`, `rgb`, `roles` | float64 (N,), (N,3), (N,3) | exact front-to-back over-composite, accumulated in float64 |
 | `statistics` | float64 (N,4) | source front transmittance T, summed visible alpha W, summed visible inverse-depth moment M, summed visible sky coverage S |
 
+`validate.py` checks the archive's exact fields, dtypes, shapes, offsets, interval ordering, finite
+values, role nesting and statistics. The float64 physical over-composite permits at most eight
+float64 epsilons of alpha/role-bound roundoff (about 1.78e-15); raw float32 sidecar validation stays
+strict. This accounts for accumulation at opaque runs without rounding or clipping stored moments.
+
 Runs join only consecutive depth-sorted samples with the same decoded id and consecutive log gap
 at most ln(`layers.GAP_RATIO`) = ln(1.15). Equal-depth order stays stable. Samples discarded by the
 layer rule (visible alpha <= 1e-12) remain singletons: absorbing one could change the rule's visible

@@ -12,7 +12,7 @@ import numpy as np
 import OpenEXR
 from jsonschema import Draft202012Validator
 
-from strata_dataset import records, roles, samples
+from strata_dataset import merged, records, roles, samples
 
 SCHEMA = cast("dict[str, object]", json.loads((Path(__file__).parent / "schema.json").read_text()))
 BEAUTY = {
@@ -116,8 +116,7 @@ def validate(shot: Path) -> list[str]:
         merged_path = (
             shot / "merged" / samples.frame_id(str(manifest["shot_id"]), record["frame"]) / "deep.npz"
         )
-        if not merged_path.is_file():
-            errors.append(f"missing merged deep for frame {record['frame']}")
+        errors += merged.errors(merged_path, (record["height"], record["width"]))
         if (shot / "deep" / name).is_file():
             deep_frames += 1
             errors += _deep_errors(shot / "deep" / name, size)

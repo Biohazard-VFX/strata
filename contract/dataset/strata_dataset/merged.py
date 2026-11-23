@@ -3,11 +3,25 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from zipfile import BadZipFile
 
 import numpy as np
 from numpy.typing import NDArray
 
-from strata_dataset import layers, roles, segmented
+from strata_dataset import layers, roles, samples, segmented
+
+FIELDS = {
+    "shape": "<i8",
+    "offsets": "<i8",
+    "z": "<f4",
+    "zback": "<f4",
+    "alpha": "<f8",
+    "rgb": "<f8",
+    "roles": "<f8",
+    "ids": "<i8",
+    "statistics": "<f8",
+}
+ROUNDOFF = 8 * np.finfo(np.float64).eps
 
 RunArrays = tuple[
     NDArray[np.int64],
@@ -88,18 +102,51 @@ def merge(
     return Merged(shape, *values)
 
 
+def _arrays(path: Path) -> dict[str, NDArray[np.generic]]:
+    with np.load(path, allow_pickle=False) as data:
+        if set(data.files) != set(FIELDS):
+            raise ValueError(f"merged arrays must be {sorted(FIELDS)}")
+        return {name: data[name] for name in FIELDS}
+
+
 def read(path: Path) -> Merged:
     """Read an owned merged frame without pickles; callers may concurrently read immutable files."""
-    with np.load(path, allow_pickle=False) as data:
-        shape = cast("tuple[int, int]", tuple(int(v) for v in data["shape"]))
-        return Merged(
-            shape,
-            data["offsets"],
-            data["z"],
-            data["zback"],
-            data["alpha"],
-            data["rgb"],
-            data["roles"],
-            data["ids"],
-            data["statistics"],
-        )
+    data = _arrays(path)
+    shape = cast("tuple[int, int]", tuple(int(v) for v in data["shape"]))
+    values = cast("RunArrays", tuple(data[name] for name in FIELDS if name != "shape"))
+    return Merged(shape, *values)
+
+
+def errors(path: Path, shape: tuple[int, int]) -> list[str]:
+    """Read and validate immutable merged deep; return violations, never mutate borrowed files."""
+    try:
+        arrays = _arrays(path)
+    except (OSError, ValueError, KeyError, BadZipFile, EOFError, TypeError) as error:
+        return [f"merged {path.parent.name}: unreadable: {error}"]
+    found = [
+        f"{name}: expected {dtype} C-order"
+        for name, dtype in FIELDS.items()
+        if arrays[name].dtype.str != dtype or not arrays[name].flags.c_contiguous
+    ]
+    if arrays["shape"].shape != (2,) or arrays["shape"].tolist() != list(shape):
+        found.append("shape differs from the camera frame")
+    if not found:
+        found += samples.sample_errors(arrays, shape[0] * shape[1], roundoff=float(ROUNDOFF))
+    count = arrays["z"].size
+    if arrays["zback"].shape != (count,) or arrays["statistics"].shape != (count, 4):
+        found.append("zback or statistics shape differs from the sample count")
+    if not found:
+        back = cast("NDArray[np.float32]", arrays["zback"])
+        z = cast("NDArray[np.float32]", arrays["z"])
+        statistics = cast("NDArray[np.float64]", arrays["statistics"])
+        if not np.isfinite(back).all() or np.any(back < z):
+            found.append("zback must be finite and at least z")
+        overlap = back[:-1] > z[1:]
+        boundaries = arrays["offsets"].astype(np.int64)[1:-1]
+        boundaries = boundaries[(boundaries > 0) & (boundaries < count)]
+        overlap[boundaries - 1] = False
+        if np.any(overlap):
+            found.append("merged intervals overlap")
+        if not np.isfinite(statistics).all() or np.any(statistics < 0) or np.any(statistics[:, 0] > 1):
+            found.append("statistics must be finite and nonnegative, with transmittance at most one")
+    return [f"merged {path.parent.name}: {error}" for error in found]
