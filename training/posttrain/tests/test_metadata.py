@@ -67,7 +67,7 @@ def test_native_parts_and_role_masks_are_preserved_in_target_cache(
         assert "content_identity" in rebuilt
 
 
-@pytest.mark.parametrize("version", ["0.1.0", "0.2.0", "0.3.0", "0.5.0"])
+@pytest.mark.parametrize("version", ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.6.0"])
 @pytest.mark.parametrize("record", ["manifest", "camera"])
 def test_native_preparation_refuses_other_contracts(
     tmp_path: Path,
