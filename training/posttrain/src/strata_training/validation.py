@@ -37,7 +37,7 @@ def validation_frames(config: dict[str, Any], training: list[dict[str, Any]]) ->
                 "OOD validation must be disjoint from training shots, frames and targets"
             )
     require_supervision(entries, purpose="validation", root=Path(config["validation_features"]))
-    frames = [Frame(e, Path(config["validation_features"]), config["scale_mode"]) for e in entries]
+    frames = [Frame(e, Path(config["validation_features"])) for e in entries]
     if not any(frame.arrays["mixed"].any() for frame in frames):
         raise ValueError("OOD validation requires mixed pixels for checkpoint selection")
     return frames

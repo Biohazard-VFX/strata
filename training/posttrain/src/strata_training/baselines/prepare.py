@@ -7,6 +7,7 @@ from strata_training.baselines.curves import fit_curve
 from strata_training.baselines.deep import analytic
 from strata_training.baselines.probe import predict_probe
 from strata_training.data.cache import cache_reader
+from strata_training.data.feature_cache import base_arrays, read_base
 from strata_training.eval.protocol import entries_for
 from strata_training.io import save_arrays, write_json
 from strata_training.types import Array
@@ -35,13 +36,14 @@ def prepare_baselines(
         target = output / entry["id"]
         target.mkdir(exist_ok=True)
         data = np.load(entry["cache"])
-        base = np.load(features / entry["id"] / "base.npz")
-        save_arrays(
-            target / "base.npz",
-            inverse_depth=base["inverse_depth"],
-            raw_inverse_depth=base["raw_inverse_depth"],
-            ratio=base["raw_metric_scale"] / base["metric_scale"],
-        )
+        base = read_base(features / entry["id"] / "base.npz")
+        values = base_arrays(base["inverse_depth"], float(base["metric_scale"]))
+        if (target / "base.npz").exists():
+            existing = read_base(target / "base.npz")
+            if any(not np.array_equal(existing[key], value) for key, value in values.items()):
+                raise ValueError("Existing baseline cache input changed; use a new directory")
+        else:
+            save_arrays(target / "base.npz", **values)
         for radius in (6, 16):
             path = target / f"r{radius}.npz"
             if not path.exists():

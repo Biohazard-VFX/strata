@@ -40,7 +40,6 @@ def test_default_pipeline_builds_features_from_the_supplied_denoised_samples(
         "protocol": "protocol.json",
         "features": "features",
         "output": "run",
-        "scale_mode": "raw",
         "layers": 4,
         "crop": 512,
         "halo": 0,

@@ -10,6 +10,7 @@ from strata_dataset.samples import read
 from strata_training.augment.deep import FIELDS, DeepSamples
 from strata_training.data.cache import prepare
 from strata_training.data.dataset import Frame
+from strata_training.data.feature_cache import base_arrays
 from strata_training.data.online import OnlineLoader, image_digest, prepare_sample
 from strata_training.data.targets import composite
 from strata_training.data.torch_online import finalize, prepare_raw
@@ -27,8 +28,7 @@ def prepared_frames(shot: Path, root: Path) -> tuple[list[Frame], Path]:
         target = features / entry["id"]
         save_arrays(
             target / "base.npz",
-            raw_inverse_depth=np.ones(image.shape[1:], np.float32),
-            raw_metric_scale=np.array(1.0),
+            **base_arrays(np.ones(image.shape[1:], np.float32), 1.0),
         )
         save_array(target / "image.npy", image)
         save_array(target / "features.npy", np.zeros((1, *image.shape[1:]), np.float32))

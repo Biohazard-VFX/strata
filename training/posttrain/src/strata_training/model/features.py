@@ -9,9 +9,9 @@ import torch
 from torch import nn
 
 from strata_training.data.cache import cache_reader, display_rgb
+from strata_training.data.feature_cache import FEATURE_VERSION, base_arrays, read_base
 from strata_training.data.metadata import camera_frames
 from strata_training.data.online import image_digest
-from strata_training.data.scale import oracle_metric_scale
 from strata_training.data.sequences import clip_indices
 from strata_training.io import save_array, save_arrays, write_json
 from strata_training.model.dp2 import DeepDepthPro
@@ -53,8 +53,6 @@ def _save(
 ) -> None:
     target = root / entry["id"]
     target.mkdir(exist_ok=True)
-    data = np.load(entry["cache"])
-    metric_scale = oracle_metric_scale(data, focal_inv)
     for level, tensor in enumerate(pyramid):
         save_array(target / f"pyramid_{level}.npy", tensor.half().cpu().numpy())
     save_array(target / "features.npy", features.half().cpu().numpy())
@@ -63,10 +61,7 @@ def _save(
     write_json(target / "context.json", {"clip_ids": clip_ids})
     save_arrays(
         target / "base.npz",
-        inverse_depth=focal_inv * metric_scale,
-        metric_scale=metric_scale,
-        raw_inverse_depth=focal_inv * raw_scale,
-        raw_metric_scale=raw_scale,
+        **base_arrays(focal_inv * raw_scale, raw_scale),
     )
 
 
@@ -93,6 +88,8 @@ def extract(
         raise ValueError("Denoised clean caches require independent single frames")
     by_shot: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in entries:
+        if (output / entry["id"] / "base.npz").exists():
+            read_base(output / entry["id"] / "base.npz")
         by_shot[entry["shot"]].append(entry)
     model = _load(preset, device)
     output.mkdir(parents=True, exist_ok=True)
@@ -105,14 +102,12 @@ def extract(
             clip = [shot[i] for i in indices]
             ids = [e["id"] for e in clip]
             denoises = [_denoised(e, samples) for e in clip]
+            for entry, denoise in zip(clip, denoises, strict=True):
+                if (output / entry["id"] / "base.npz").exists() and denoise is not None:
+                    context = json.loads((output / entry["id"] / "context.json").read_text())
+                    if context.get("image_sha256") != image_digest(denoise):
+                        raise ValueError("Existing clean cache input changed; use a new directory")
             if all((output / e["id"] / "base.npz").exists() for e in clip):
-                for entry, denoise in zip(clip, denoises, strict=True):
-                    if denoise is not None:
-                        context = json.loads((output / entry["id"] / "context.json").read_text())
-                        if context.get("image_sha256") != image_digest(denoise):
-                            raise ValueError(
-                                "Existing clean cache input changed; use a new directory"
-                            )
                 completed += len(clip)
                 continue
             arrays = [
@@ -127,6 +122,9 @@ def extract(
             with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16, cache_enabled=False):
                 pyramid = model.pyramid(normalized)
                 for i, entry in enumerate(clip):
+                    if (output / entry["id"] / "base.npz").exists():
+                        completed += 1
+                        continue
                     frame_pyramid = [p[i : i + 1] for p in pyramid]
                     features = model.decode(frame_pyramid)
                     with torch.autocast(device, enabled=False):
@@ -162,6 +160,7 @@ def extract(
     write_json(
         output / "extraction.json",
         {
+            "version": FEATURE_VERSION,
             "preset": preset,
             "clip_length": clip_length,
             "seconds": time.monotonic() - start,

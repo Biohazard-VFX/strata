@@ -63,7 +63,6 @@ def test_removed_parameters_are_absent() -> None:
     from strata_training.augment.pipeline import augment_sample, recompose
     from strata_training.augment.torch_compose import recompose as tensor_recompose
     from strata_training.augment.torch_compose import recompose_samples
-    from strata_training.data.scale import oracle_metric_scale
 
     for function in (
         augment_sample,
@@ -72,7 +71,6 @@ def test_removed_parameters_are_absent() -> None:
         recompose_samples,
     ):
         assert "shot_roles" not in inspect.signature(function).parameters
-    assert "entry" not in inspect.signature(oracle_metric_scale).parameters
 
 
 def test_warm_prepare_memoizes_exr_digests(

@@ -9,6 +9,7 @@ from scipy import ndimage
 
 from strata_training.baselines.cached import cached_baselines
 from strata_training.baselines.deep import fake_deep
+from strata_training.config import reject_scale_config
 from strata_training.data.cache import cache_reader, load_layers
 from strata_training.data.dataset import Frame
 from strata_training.data.exr import write_deep
@@ -24,35 +25,10 @@ from strata_training.io import save_arrays, write_json
 from strata_training.types import Array, Layers
 
 
-def scale_align(inverse: Array, truth: Array, mask: Array) -> tuple[Array, float]:
-    valid = mask & (truth > 0)
-    if not valid.any():
-        valid = truth > 0
-    scale = float(np.exp(np.median(np.log(truth[valid] / np.maximum(inverse[valid], 1e-8)))))
-    return inverse * scale, scale
-
-
-def affine_align(inverse: Array, truth: Array) -> Array:
-    p, t = inverse[::8, ::8].ravel(), truth[::8, ::8].ravel()
-    valid = (p > 0) & (t > 0)
-    p, t = p[valid], t[valid]
-    if not p.size:
-        return np.maximum(inverse, 1e-8)
-    design = np.column_stack((p, np.ones_like(p)))
-    coefficients = np.linalg.lstsq(design, t, rcond=None)[0]
-    error = np.abs(design @ coefficients - t)
-    keep = error <= np.quantile(error, 0.8)
-    coefficients = np.linalg.lstsq(design[keep], t[keep], rcond=None)[0]
-    return np.maximum(inverse * max(float(coefficients[0]), 1e-8) + float(coefficients[1]), 1e-8)
-
-
 @dataclass
 class Collected:
     arrays: dict[str, list[Array]] = field(default_factory=dict[str, list[Array]])
     boundary: list[list[tuple[int, int, int]]] = field(
-        default_factory=list[list[tuple[int, int, int]]]
-    )
-    aligned_boundary: list[list[tuple[int, int, int]]] = field(
         default_factory=list[list[tuple[int, int, int]]]
     )
     silhouettes: list[float] = field(default_factory=list[float])
@@ -102,7 +78,6 @@ class Collected:
             values["native_predicted_alpha"], values["native_target_alpha"]
         )
         result["directed_boundary_f1_native"] = pooled(self.boundary)
-        result["directed_boundary_f1_affine_aligned"] = pooled(self.aligned_boundary)
         result["silhouette_recall_foreground"] = (
             float(np.mean(self.silhouettes)) if self.silhouettes else None
         )
@@ -119,11 +94,6 @@ def collect(
 ) -> None:
     gt_inverse = visible_inverse(target)
     pred_inverse = visible_inverse(prediction)
-    solid = ndimage.binary_erosion(
-        (target.alpha[0] > 0.999) & (target.alpha[1:].sum(axis=0) < 1e-7), iterations=4
-    )
-    aligned, _ = scale_align(pred_inverse, gt_inverse, solid)
-    affine = affine_align(pred_inverse, gt_inverse)
     foreground = data["foreground"] > 0.1
     reconstruction = np.abs(
         composite(prediction.alpha, prediction.rgb) - data["beauty"].astype(np.float32)
@@ -134,7 +104,6 @@ def collect(
     count_error = np.abs((prediction.alpha > 0.03).sum(axis=0) - (target.alpha > 0.03).sum(axis=0))
     reversed_order = (prediction.inverse_depth[:-1] < prediction.inverse_depth[1:]).any(axis=0)
     relative = np.abs(gt_inverse / np.maximum(pred_inverse, 1e-8) - 1)
-    relative_aligned = np.abs(gt_inverse / np.maximum(aligned, 1e-8) - 1)
     delta1 = (
         np.maximum(
             gt_inverse / np.maximum(pred_inverse, 1e-8), pred_inverse / np.maximum(gt_inverse, 1e-8)
@@ -204,7 +173,6 @@ def collect(
             "composite_mae": reconstruction,
             "insert_z3m_mae": merge,
             "depth_absrel": relative,
-            "depth_absrel_scale_aligned": relative_aligned,
             "depth_delta1": delta1,
         }.items():
             selected = geometry if key.startswith("depth_") else region
@@ -215,7 +183,6 @@ def collect(
         result.geometry_pixels += int(geometry.sum())
         result.frames += 1
         result.boundary.append(directed_boundary_counts(pred_inverse, gt_inverse, region))
-        result.aligned_boundary.append(directed_boundary_counts(affine, gt_inverse, region))
         recall = silhouette_recall(pred_inverse, foreground, region)
         if recall is not None:
             result.silhouettes.append(recall)
@@ -247,13 +214,13 @@ def evaluate(
     temporal: dict[str, Any] = {}
     for checkpoint in checkpoints:
         model, config = load_model(checkpoint, device)
-        method = f"{config['preset']} {config['mode']} {config['scale_mode']}"
-        fake_method = f"fake {config['preset']} {config['scale_mode']}"
+        method = f"{config['preset']} {config['mode']} raw metric"
+        fake_method = f"fake {config['preset']} raw metric"
         include_baseline = not any(key[1] == fake_method for key in collected)
         predictions_dir = output / checkpoint.parent.name
         predictions_dir.mkdir(exist_ok=True)
         for i, entry in enumerate(entries):
-            frame = Frame(entry, Path(config["features"]), config["scale_mode"])
+            frame = Frame(entry, Path(config["features"]))
             target, data = load_layers(Path(entry["cache"]))
             prediction = predict(model, config, frame)
             collect(prediction, target, data, method, entry, collected)
@@ -275,19 +242,19 @@ def evaluate(
     for directory in prediction_caches or []:
         metadata: dict[str, Any] = json.loads((directory / "prediction.json").read_text())
         config = metadata["config"]
+        reject_scale_config(config)
         if metadata["test_ids"] != [e["id"] for e in entries]:
             raise ValueError("Prediction cache holdout differs from frozen protocol")
-        method = f"{config['preset']} {config['mode']} {config['scale_mode']}"
-        fake_method = f"fake {config['preset']} {config['scale_mode']}"
+        method = f"{config['preset']} {config['mode']} raw metric"
+        fake_method = f"fake {config['preset']} raw metric"
         include_baseline = not any(key[1] == fake_method for key in collected)
         for entry in entries:
             target, data = load_layers(Path(entry["cache"]))
             prediction, _ = load_layers(directory / f"{entry['id']}.npz")
             collect(prediction, target, data, method, entry, collected)
             if include_baseline:
-                base_data = np.load(Path(config["features"]) / entry["id"] / "base.npz")
-                key = "raw_inverse_depth" if config["scale_mode"] == "raw" else "inverse_depth"
-                baseline = fake_deep(base_data[key], data["beauty"].astype(np.float32))
+                frame = Frame(entry, Path(config["features"]))
+                baseline = fake_deep(frame.base, data["beauty"].astype(np.float32))
                 collect(baseline, target, data, fake_method, entry, collected)
         temporal[method] = sequence_jitter(entries, directory)
     summary = [
@@ -306,7 +273,7 @@ def evaluate(
         "boundary_protocol": (
             "Directed adjacent-pixel ratios at 5,10,15,20,25%, threshold-proportional "
             "weighting. Exact native-pixel matching, four directed orientations. "
-            "Affine-aligned results separate. Native silhouettes use stored foreground "
+            "Native silhouettes use stored foreground "
             "coverage thresholded at .1; scanline connected-run NMS. Not a published-benchmark "
             "reproduction."
         ),
@@ -318,9 +285,8 @@ def evaluate(
         "historical_protocol": (
             "First predicted coverage/depth and last GT-valid ordered depth slot are "
             "compared with the two-layer projection of native GT/masks. No visibility compaction "
-            "or posthoc depth sorting. Native K metrics remain separate; the historical "
-            "probe is oracle-conditioned. protocol.scale documents that reference track, "
-            "not the raw checkpoint inputs."
+            "or posthoc depth sorting. Native K metrics remain separate. Every method uses "
+            "its own metric depth scale without GT alignment."
         ),
         "peak_vram_bytes": torch.cuda.max_memory_allocated()
         if checkpoints and device == "cuda"

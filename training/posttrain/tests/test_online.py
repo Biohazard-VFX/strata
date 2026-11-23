@@ -11,6 +11,7 @@ from torch import nn
 from strata_training.augment.deep import DeepSamples, save_samples
 from strata_training.config import training_defaults, validate_config
 from strata_training.data.dataset import Frame
+from strata_training.data.feature_cache import base_arrays
 from strata_training.data.online import OnlineLoader, image_digest
 from strata_training.io import save_array, save_arrays, write_json
 from strata_training.model.live import FrozenEncoder
@@ -89,9 +90,7 @@ def test_online_native_crops_use_denoised_inputs_and_reject_stale_clean_features
     save_array(root / "sample/features.npy", np.zeros((128, height, width), dtype=np.float32))
     for level in range(4):
         save_array(root / f"sample/pyramid_{level}.npy", np.zeros((1, 1, 1)))
-    save_arrays(
-        root / "sample/base.npz", raw_inverse_depth=np.ones((height, width)), raw_metric_scale=1.0
-    )
+    save_arrays(root / "sample/base.npz", **base_arrays(np.ones((height, width)), 1.0))
     write_json(root / "sample/context.json", {"image_sha256": image_digest(image)})
     save_array(root / "sample/image.npy", image)
     samples = tmp_path / "samples"
@@ -373,12 +372,11 @@ def test_device_normalization_matches_clean_cache_color_transform(math_device: s
     np.testing.assert_allclose(actual, expected, atol=2e-6, rtol=2e-6)
 
 
-def test_hybrid_policy_defaults_and_unsupported_temporal_or_oracle_inputs() -> None:
+def test_hybrid_policy_defaults_and_unsupported_temporal_inputs() -> None:
     config = training_defaults(
         {
             "mode": "head",
             "samples": "samples",
-            "scale_mode": "raw",
             "learning_rate": 4e-4,
             "steps": 100,
             "batch_size": 2,
@@ -412,6 +410,6 @@ def test_hybrid_policy_defaults_and_unsupported_temporal_or_oracle_inputs() -> N
     ):
         with pytest.raises(ValueError, match=key):
             validate_config({**config, key: value})
-    for changes in ({"scale_mode": "oracle-aligned"}, {"clip_length": 2}, {"clean_fraction": -0.1}):
+    for changes in ({"clip_length": 2}, {"clean_fraction": -0.1}):
         with pytest.raises(ValueError, match=r"Hybrid native crops|clean_fraction"):
             validate_config({**config, **changes})

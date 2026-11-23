@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import torch
 
+from strata_training.data.feature_cache import base_arrays
 from strata_training.io import atomic_path, save_array, save_arrays, write_json
 from strata_training.train import train
 
@@ -31,15 +32,17 @@ def _configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
     save_array(root / "train/features.npy", np.zeros((128, 32, 32), dtype=np.float32))
     for level in range(4):
         save_array(root / f"train/pyramid_{level}.npy", np.zeros((1, 1, 1)))
-    save_arrays(
-        root / "train/base.npz", raw_inverse_depth=np.full((32, 32), 0.5), raw_metric_scale=1.0
-    )
+    save_arrays(root / "train/base.npz", **base_arrays(np.full((32, 32), 0.5), 1.0))
     write_json(
         index, [{"id": "train", "shot": "a", "frame": 1, "split": "train", "cache": str(cache)}]
     )
     write_json(
         protocol,
-        {"train": ["train"], "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()},
+        {
+            "train": ["train"],
+            "version": 2,
+            "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+        },
     )
     config = {
         "index": str(index),
@@ -48,7 +51,6 @@ def _configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
         "preset": "depthpro2-h",
         "layers": 4,
         "mode": "head",
-        "scale_mode": "raw",
         "input_mode": "cached",
         "early_stopping": False,
         "seed": 4004,
@@ -127,7 +129,7 @@ def test_training_logs_groups_and_refuses_incompatible_resume(tmp_path: Path, wo
     for key, value in (("steps", 5), ("learning_rate", 1e-3), ("warmup_steps", 1)):
         changed = {**config, "resume": str(tmp_path / "run/final.pt"), key: value}
         write_json(path, changed)
-        with pytest.raises(ValueError, match="Resume model/data/scale"):
+        with pytest.raises(ValueError, match="Resume model/data"):
             train(path)
     for key in ("input_mode", "clean_fraction", "compile_encoder"):
         state["config"].pop(key, None)
@@ -163,7 +165,11 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     write_json(index, [entry])
     write_json(
         protocol,
-        {"test": [entry["id"]], "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()},
+        {
+            "test": [entry["id"]],
+            "version": 2,
+            "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+        },
     )
     config.update(
         early_stopping=True,
@@ -247,7 +253,11 @@ def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode
     write_json(index, [alias])
     write_json(
         protocol,
-        {"test": [alias["id"]], "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()},
+        {
+            "test": [alias["id"]],
+            "version": 2,
+            "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+        },
     )
     with pytest.raises(ValueError, match="disjoint from training"):
         validation_frames(

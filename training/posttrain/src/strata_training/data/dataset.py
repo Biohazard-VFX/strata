@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from strata_training.data import mapped
+from strata_training.data.feature_cache import read_base
 from strata_training.data.targets import composite
 from strata_training.types import Array
 
@@ -16,13 +17,10 @@ from strata_training.types import Array
 class Frame:
     entry: dict[str, Any]
     feature_root: Path
-    scale_mode: str = "raw"
 
     def __post_init__(self) -> None:
-        if self.scale_mode not in {"raw", "oracle-aligned"}:
-            raise ValueError("scale_mode must be raw or explicitly oracle-aligned")
         mapped.unpack(Path(self.entry["cache"]))
-        mapped.unpack(self.root / "base.npz")
+        read_base(self.root / "base.npz")
         context_path = self.root / "context.json"
         self.has_image = False
         if context_path.exists():
@@ -58,13 +56,11 @@ class Frame:
 
     @property
     def base(self) -> Array:
-        prefix = "raw_" if self.scale_mode == "raw" else ""
-        return mapped.arrays(self.root / "base.npz")[f"{prefix}inverse_depth"]
+        return read_base(self.root / "base.npz")["inverse_depth"]
 
     @property
     def scale(self) -> float:
-        prefix = "raw_" if self.scale_mode == "raw" else ""
-        return float(mapped.arrays(self.root / "base.npz")[f"{prefix}metric_scale"])
+        return float(read_base(self.root / "base.npz")["metric_scale"])
 
     @property
     def mixed_y(self) -> Array:

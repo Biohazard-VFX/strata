@@ -42,7 +42,6 @@ def main() -> None:
         prediction.add_argument(name, type=Path)
     prediction.add_argument("--export-frames", type=int, default=1)
     prediction.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
-    prediction.add_argument("--scale-mode", choices=("raw", "oracle-aligned"))
     prediction.add_argument("--features", type=Path)
     evaluation = sub.add_parser("evaluate")
     evaluation.add_argument("index", type=Path)
@@ -100,7 +99,6 @@ def main() -> None:
                     args.output,
                     args.export_frames,
                     args.device,
-                    args.scale_mode,
                     args.features,
                 )
             )

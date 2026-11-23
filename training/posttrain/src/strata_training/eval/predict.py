@@ -7,10 +7,10 @@ import numpy as np
 import torch
 from torch import nn
 
+from strata_training.config import reject_scale_config
 from strata_training.data.cache import cache_reader
 from strata_training.data.dataset import Frame
 from strata_training.data.exr import write_deep
-from strata_training.data.scale import oracle_metric_scale
 from strata_training.eval.protocol import entries_for
 from strata_training.io import save_arrays, write_json
 from strata_training.model.dp2 import DeepDepthPro
@@ -21,6 +21,7 @@ from strata_training.types import Layers
 def load_model(path: Path, device: str = "cuda") -> tuple[nn.Module, dict[str, Any]]:
     checkpoint: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
     config: dict[str, Any] = checkpoint["config"]
+    reject_scale_config(config)
     if config["mode"] == "decoder":
         model: nn.Module = DeepDepthPro(config["preset"], config["layers"], decoder_trainable=False)
     else:
@@ -72,23 +73,6 @@ def _pyramid(
     ]
 
 
-def _decoder_oracle_scale(model: DeepDepthPro, frame: Frame, device: torch.device) -> float:
-    height, width = frame.base.shape
-    inverse = np.empty((height, width), dtype=np.float32)
-    for window in _windows(height, width, True):
-        y, x, y0, x0, _, _ = window
-        with torch.no_grad():
-            features = model.decode(_pyramid(frame, window, device))
-            with torch.autocast(device.type, enabled=False):
-                prior: torch.Tensor = model.deep_head.inverse_head(features.float())
-                prior = prior.clamp_min(1e-5)
-        h, w = min(128, height - y), min(128, width - x)
-        inverse[y : y + h, x : x + w] = (
-            prior[0, 0, y - y0 : y - y0 + h, x - x0 : x - x0 + w].float().cpu().numpy()
-        )
-    return oracle_metric_scale(frame.arrays, inverse)
-
-
 def predict(model: nn.Module, config: dict[str, Any], frame: Frame) -> Layers:
     height, width = frame.base.shape
     decoder = config["mode"] == "decoder"
@@ -110,17 +94,12 @@ def predict(model: nn.Module, config: dict[str, Any], frame: Frame) -> Layers:
         np.empty((config["layers"], 3, height, width), dtype=np.float32),
     )
     arrays = result.arrays()
-    metric_scale = (
-        _decoder_oracle_scale(cast(DeepDepthPro, model), frame, device)
-        if decoder and config["scale_mode"] == "oracle-aligned"
-        else frame.scale
-    )
     for y, x, y0, x0, y1, x1 in _windows(height, width, decoder):
         image = torch.as_tensor(beauty[:, y0:y1, x0:x1], device=device)[None]
         with torch.no_grad(), torch.autocast(device.type, dtype=torch.bfloat16):
             if decoder:
                 pyramid = _pyramid(frame, (y, x, y0, x0, y1, x1), device)
-                scale = torch.tensor(metric_scale, device=device)
+                scale = torch.tensor(frame.scale, device=device)
                 output = cast(DeepDepthPro, model).from_pyramid(pyramid, image, scale)
             else:
                 features = torch.as_tensor(
@@ -148,21 +127,16 @@ def cache_predictions(
     output: Path,
     export_frames: int = 1,
     device: str = "cuda",
-    scale_mode: str | None = None,
     features: Path | None = None,
 ) -> dict[str, Any]:
     model, training_config = load_model(checkpoint, device)
     config = dict(training_config)
-    if scale_mode is not None:
-        if scale_mode not in {"raw", "oracle-aligned"}:
-            raise ValueError("Prediction scale must be raw or oracle-aligned")
-        config["scale_mode"] = scale_mode
     if features is not None:
         config["features"] = str(features)
     entries = entries_for(index, protocol, "test")
     output.mkdir(parents=True, exist_ok=True)
     for i, entry in enumerate(entries):
-        frame = Frame(entry, Path(config["features"]), config["scale_mode"])
+        frame = Frame(entry, Path(config["features"]))
         prediction = predict(model, config, frame)
         save_arrays(
             output / f"{entry['id']}.npz",
@@ -179,12 +153,7 @@ def cache_predictions(
         "checkpoint_sha256": hashlib.file_digest(checkpoint.open("rb"), "sha256").hexdigest(),
         "device": device,
         "autocast_dtype": "bfloat16",
-        "scale_conditioning": (
-            "Oracle aligns the checkpoint's current scalar prior on GT solid surfaces before "
-            "the nonlinear deep head; frozen heads use the identically calibrated stock cache."
-            if config["scale_mode"] == "oracle-aligned"
-            else "Raw camera width/focal metric scale; no GT input alignment."
-        ),
+        "depth_policy": "Model metric scale with camera width/focal conversion; no GT alignment.",
         "peak_vram_bytes": torch.cuda.max_memory_allocated() if device == "cuda" else 0,
         "peak_reserved_bytes": torch.cuda.max_memory_reserved() if device == "cuda" else 0,
     }

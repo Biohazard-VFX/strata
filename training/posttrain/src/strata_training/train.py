@@ -53,7 +53,7 @@ def _train(config_path: Path) -> dict[str, Any]:
             "must be published before training this representation"
         )
     require_supervision(entries, purpose="training", root=Path(config["features"]))
-    frames = [Frame(e, Path(config["features"]), config["scale_mode"]) for e in entries]
+    frames = [Frame(e, Path(config["features"])) for e in entries]
     validation = validation_frames(config, entries) if config["early_stopping"] else []
     if validation:
         for name in ("index", "protocol"):
@@ -120,7 +120,6 @@ def _train(config_path: Path) -> dict[str, Any]:
             "preset",
             "mode",
             "layers",
-            "scale_mode",
             "index",
             "protocol",
             "features",
@@ -148,9 +147,14 @@ def _train(config_path: Path) -> dict[str, Any]:
             )
         if config["input_mode"] == "hybrid":
             keys += ("clean_fraction", "samples", "augmentation", "compile_encoder")
-        saved_config = {"input_mode": "cached", "early_stopping": False, **state["config"]}
+        saved_config: dict[str, Any] = {
+            "input_mode": "cached",
+            "early_stopping": False,
+            **state["config"],
+        }
+        validate_config(saved_config)
         if any(saved_config.get(key) != config.get(key) for key in keys):
-            raise ValueError("Resume model/data/scale does not match config")
+            raise ValueError("Resume model/data does not match config")
         missing, unexpected = cast(
             tuple[list[str], list[str]], model.load_state_dict(state["model"], strict=False)
         )
