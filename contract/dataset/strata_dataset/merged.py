@@ -10,6 +10,9 @@ from numpy.typing import NDArray
 
 from strata_dataset import layers, roles, samples, segmented
 
+MERGE_VERSION = "merge-1"
+REBUILD_VERSION = "rebuild-1"
+
 FIELDS = {
     "shape": "<i8",
     "offsets": "<i8",

@@ -71,7 +71,7 @@ class RawEvidenceTest(unittest.TestCase):
                     self.assertEqual(passed, change == "roundoff")
                     self.assertEqual((shot / "deep" / "0002.exr").exists(), not passed)
                     frames = cast("list[dict[str, float]]", checks.check_shot(shot)["frames"])
-                    self.assertEqual(frames[1]["beauty_roles"], float(change not in ("drop", "nan")))
+                    self.assertEqual(frames[1]["merged_beauty_roles"], float(change not in ("drop", "nan")))
 
     def test_targets_are_checked_against_the_raw_deep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

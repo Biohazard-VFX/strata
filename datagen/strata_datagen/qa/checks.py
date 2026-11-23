@@ -57,25 +57,6 @@ COVERED = 0.999
 SKY_MIN_Z_M = 0.25 * BACKDROP_M
 STEP_LIMITS = {"position_m": 0.25, "rotation_deg": 2.0, "focal_ratio": 0.02, "fstop": 0.5, "focus_m": 0.5}
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
-DEEP_KEYS = (
-    "mean_samples",
-    "max_samples",
-    "bad_depth",
-    "partial_share",
-    "flatten_error",
-    "uncovered",
-    "flatten_excess",
-    "valid_id_fraction",
-    "id_check_failure_fraction",
-    "unlabelled_coverage",
-    "identity_channels",
-    "role_channels",
-    "role_excess",
-    "beauty_roles",
-    "role_beauty_error",
-    "coverage_alpha_error",
-    "sky_in_front",
-)
 LAYER_NAMES = tuple(f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B"))
 
 
@@ -113,7 +94,7 @@ def _identity_counts(ids: NDArray[np.int64], declared: NDArray[np.bool_]) -> tup
     return labelled, valid
 
 
-def _identity_metrics(frame: pack.Samples, ranges: list[tuple[int, int]]) -> dict[str, float]:
+def _identity_metrics(frame: pack.Samples | merged.Merged, ranges: list[tuple[int, int]]) -> dict[str, float]:
     """Identity check failures, undeclared ids among checked samples, and the coverage left without an id.
 
     `unlabelled_coverage` is the mean over pixels of the visible coverage of samples with id -1:
@@ -166,7 +147,9 @@ def _role_metrics(deep: Deep, frame: pack.Samples) -> dict[str, float]:
     }
 
 
-def role_beauty_metrics(frame: pack.Samples, beauty: dict[str, NDArray[np.float32]]) -> dict[str, float]:
+def role_beauty_metrics(
+    frame: pack.Samples | merged.Merged, beauty: dict[str, NDArray[np.float32]]
+) -> dict[str, float]:
     """The deep role coverage pack writes, against the beauty role AOVs rendered from the same primvars.
 
     `role_beauty_error` is the largest per-pixel difference over all roles; a missing or non-finite
@@ -314,22 +297,14 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _canonical(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-
-
 def inputs(shot: Path, frame: int) -> dict[str, str | None]:
-    """Identity of everything raw QA of `frame` reads; manifest `timings` is bookkeeping, not input."""
+    """Bind the raw-to-merged proof to its evidence, certified files and algorithm versions."""
     paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
-    manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
-    camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
-    records = cast("list[dict[str, object]]", camera.pop("frames"))
     merged_path = plan.merged_dir(shot, frame) / "deep.npz"
     return {
         "merged": digest(merged_path) if merged_path.is_file() else None,
-        "validation": _canonical({"version": VALIDATION, "limits": LIMITS, "deep_keys": DEEP_KEYS}),
-        "manifest": _canonical({k: v for k, v in manifest.items() if k != "timings"}),
-        "camera": _canonical({**camera, "frame": [r for r in records if r["frame"] == frame]}),
+        "merge_version": merged.MERGE_VERSION,
+        "rebuild_version": merged.REBUILD_VERSION,
         "beauty": digest(paths["beauty"]) if paths["beauty"].exists() else None,
         "deep": digest(paths["deep"]) if paths["deep"].exists() else None,
         "targets": digest(paths["layers"]) if paths["layers"].exists() else None,
@@ -366,9 +341,12 @@ def _raw_metrics(
     return metrics, failures
 
 
-def _rebuilt_metrics(shot: Path, frame: int, shape: tuple[int, ...]) -> tuple[dict[str, float], list[str]]:
+def _rebuilt_metrics(
+    shot: Path, frame: int, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
+) -> tuple[dict[str, float], list[str]]:
     plan = pack.ShotFrames.load(shot)
     path = plan.merged_dir(shot, frame) / "deep.npz"
+    shape = beauty["R"].shape
     errors = merged.errors(path, (shape[0], shape[1]))
     if errors:
         return {"rebuilt_mismatch": 1.0}, errors
@@ -389,24 +367,39 @@ def _rebuilt_metrics(shot: Path, frame: int, shape: tuple[int, ...]) -> tuple[di
         for name in rebuilt
         if name.endswith((".A", ".invdepth"))
     )
-    return {"rebuilt_mismatch": float(not masks)}, []
+    measured = _identity_metrics(runs, ranges) | role_beauty_metrics(runs, beauty)
+    metrics = {f"merged_{name}": value for name, value in measured.items()}
+    return metrics | {"rebuilt_mismatch": float(not masks)}, []
 
 
-def _accepted_metrics(shot: Path, frame: int) -> dict[str, float] | None:
+def _acceptance_errors(shot: Path, frame: int) -> list[str]:
+    missing = ["missing raw deep without matching acceptance"]
     try:
-        receipt = cast("dict[str, object]", json.loads(_paths(shot, frame)["acceptance"].read_text()))
+        receipt = json.loads(_paths(shot, frame)["acceptance"].read_text())
     except (OSError, ValueError):
-        return None
-    if receipt.get("frame") != frame or receipt.get("passed") is not True or receipt.get("failures") != []:
-        return None
-    checked = cast("dict[str, str | None]", receipt.get("inputs", {}))
+        return missing
+    if not isinstance(receipt, dict):
+        return missing
+    receipt = cast("dict[str, object]", receipt)
+    checked = receipt.get("inputs")
+    if (
+        receipt.get("frame") != frame
+        or receipt.get("passed") is not True
+        or receipt.get("failures") != []
+        or not isinstance(checked, dict)
+    ):
+        return missing
+    checked = cast("dict[str, object]", checked)
     current = inputs(shot, frame)
-    retained = ("validation", "manifest", "camera", "beauty", "targets", "merged")
-    if any(current[key] is None or checked.get(key) != current[key] for key in retained):
-        return None
-    if current["deep"] is not None and current["deep"] != checked["deep"]:
-        return None
-    return cast("dict[str, float]", receipt["metrics"])
+    if any(checked.get(key) != current[key] for key in ("merge_version", "rebuild_version")):
+        return ["merge/rebuild version changed; re-render required"]
+    changed = any(
+        current[key] is None or checked.get(key) != current[key] for key in ("beauty", "targets", "merged")
+    )
+    changed_raw = any(
+        current[key] is not None and current[key] != checked.get(key) for key in ("deep", "samples")
+    )
+    return missing if changed or changed_raw else []
 
 
 def _retire_raw(shot: Path, frame: int) -> None:
@@ -440,24 +433,22 @@ def check_frame(
         metrics.update(target_metrics(paths["layers"], beauty))
     else:
         failures.append("missing layers")
-    accepted = _accepted_metrics(shot, frame)
-    if accepted is not None:
-        raw, found = accepted, []
-    elif paths["deep"].exists():
+    if paths["deep"].exists():
         raw, found = _raw_metrics(shot, frame, beauty, ranges)
     else:
-        raw, found = {}, ["missing raw deep without matching acceptance"]
+        raw, found = {}, _acceptance_errors(shot, frame)
     metrics.update(raw)
-    rebuilt, found_merged = _rebuilt_metrics(shot, frame, beauty["R"].shape)
+    rebuilt, found_merged = _rebuilt_metrics(shot, frame, beauty, ranges)
     metrics.update(rebuilt)
     failures += found + found_merged
     metrics["camera_error"] = _camera_error(paths["beauty"], record)
     metrics["intrinsics_error"] = _intrinsics_error(paths["beauty"], record)
     failures += [f"{k}={metrics[k]:.4g}" for k in ("nonfinite", "bad_depth") if metrics.get(k, 0.0) > 0]
     failures += [
-        f"{k}={metrics[k]:.4g} outside {low}..{high}"
+        f"{name}={metrics[name]:.4g} outside {low}..{high}"
         for k, (low, high) in LIMITS.items()
-        if k in metrics and not low <= metrics[k] <= high
+        for name in (k, f"merged_{k}")
+        if name in metrics and not low <= metrics[name] <= high
     ]
     return FrameResult(frame, metrics, failures)
 
@@ -489,7 +480,7 @@ def _accept(shot: Path, frames: range) -> list[FrameResult]:
                     paths["acceptance"], json.dumps({"passed": False, "failures": result.failures})
                 )
             continue
-        if _accepted_metrics(shot, frame) is not None:
+        if not _acceptance_errors(shot, frame):
             _retire_raw(shot, frame)
             continue
         files.write_durable(
@@ -499,7 +490,6 @@ def _accept(shot: Path, frames: range) -> list[FrameResult]:
                     "frame": frame,
                     "passed": not result.failures,
                     "failures": result.failures,
-                    "metrics": result.metrics,
                     "inputs": checked,
                 },
                 indent=1,
@@ -566,6 +556,7 @@ def check_shot(shot: Path) -> dict[str, object]:
     }
     return {
         "shot_id": shot.name,
+        "validation": VALIDATION,
         "passed": not failures,
         "failures": failures,
         "mean_metrics": summary,

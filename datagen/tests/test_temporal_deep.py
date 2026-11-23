@@ -6,6 +6,7 @@ import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 from unittest import mock
 
 import OpenEXR
@@ -49,7 +50,6 @@ class TemporalDeepTest(unittest.TestCase):
                     accepted = json.loads(receipt.read_text())
                     self.assertTrue(accepted["passed"])
                     self.assertEqual(accepted["inputs"], checks.inputs(shot, frame))
-                    self.assertEqual(accepted["metrics"]["rebuilt_mismatch"], 0)
                     retained = [
                         receipt,
                         shot / "beauty" / path.name,
@@ -272,6 +272,101 @@ class TemporalDeepTest(unittest.TestCase):
             manifest_path.write_text(original)
             self.assertTrue(checks.check_shot(shot)["passed"])
 
+    def test_retired_proof_survives_qa_and_manifest_evolution(self) -> None:
+        with TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            write_shot(shot, [PIXELS])
+            self.assertTrue(cli.finish_task(shot, range(1, 2)))
+            receipt = shot / "qa" / "0001.json"
+            original = receipt.read_bytes()
+            manifest_path = shot / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["new_metadata"] = {"value": 42}
+            manifest_path.write_text(json.dumps(manifest))
+            with (
+                mock.patch.object(checks, "VALIDATION", "future-qa"),
+                mock.patch.dict(checks.LIMITS, {"median_luma": (0.0, 2.0)}),
+            ):
+                report = checks.check_shot(shot)
+                self.assertTrue(report["passed"])
+                self.assertEqual(report["validation"], "future-qa")
+                self.assertEqual(checks.accept(shot, range(1, 2))[0].failures, [])
+            self.assertEqual(receipt.read_bytes(), original)
+            with mock.patch.dict(checks.LIMITS, {"median_luma": (1.0, 2.0)}):
+                failures = cast("list[str]", checks.check_shot(shot)["failures"])
+                self.assertTrue(any("median_luma" in error for error in failures))
+            with mock.patch.dict(checks.LIMITS, {"valid_id_fraction": (0.0, 0.5)}):
+                failures = cast("list[str]", checks.check_shot(shot)["failures"])
+                self.assertTrue(any("valid_id_fraction" in error for error in failures))
+
+    def test_retired_proof_rejects_changed_retained_files_and_receipt(self) -> None:
+        with TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            write_shot(shot, [PIXELS, [[Sample(0.5, 0.8, 2), SKY], [Sample(0.2, 0.4, 1), SKY], SKY]])
+            self.assertTrue(cli.finish_task(shot, range(1, 3)))
+            plan = pack.ShotFrames.load(shot)
+            receipt = shot / "qa" / "0001.json"
+            receipt_bytes = receipt.read_bytes()
+            for folder in ("merged", "beauty", "layers"):
+                path = (
+                    plan.merged_dir(shot, 1) / "deep.npz"
+                    if folder == "merged"
+                    else shot / folder / "0001.exr"
+                )
+                other = (
+                    plan.merged_dir(shot, 2) / "deep.npz"
+                    if folder == "merged"
+                    else shot / folder / "0002.exr"
+                )
+                original = path.read_bytes()
+                for data in (original + b"changed", other.read_bytes()):
+                    with self.subTest(folder=folder, swapped=data == other.read_bytes()):
+                        path.write_bytes(data)
+                        failures = cast("list[str]", checks.check_shot(shot)["failures"])
+                        self.assertTrue(
+                            any("missing raw deep without matching acceptance" in e for e in failures)
+                        )
+                        self.assertTrue(checks.accept(shot, range(1, 2))[0].failures)
+                        self.assertEqual(receipt.read_bytes(), receipt_bytes)
+                        path.write_bytes(original)
+            data = json.loads(receipt_bytes)
+            data["inputs"]["merged"] = "0" * 64
+            receipt.write_text(json.dumps(data))
+            self.assertFalse(checks.check_shot(shot)["passed"])
+            receipt.unlink()
+            self.assertFalse(checks.check_shot(shot)["passed"])
+            receipt.write_bytes(receipt_bytes)
+            self.assertTrue(checks.check_shot(shot)["passed"])
+
+    def test_retired_algorithm_changes_require_rerender(self) -> None:
+        with TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            write_shot(shot, [PIXELS])
+            self.assertTrue(cli.finish_task(shot, range(1, 2)))
+            for version in ("MERGE_VERSION", "REBUILD_VERSION"):
+                with self.subTest(version=version), mock.patch.object(merged, version, "future"):
+                    result = checks.accept(shot, range(1, 2))[0]
+                    self.assertIn("merge/rebuild version changed; re-render required", result.failures)
+                    self.assertFalse(checks.check_shot(shot)["passed"])
+            self.assertTrue(checks.check_shot(shot)["passed"])
+
+    def test_merged_identity_fractions_cannot_override_failing_raw_qa(self) -> None:
+        with TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            pixel = [Sample(0.003, 0.01, 1 + i % 2) for i in range(10)] + [SKY]
+            unlabelled = [Sample(0.0, 1e-6, 2, checks=(0.0, 0.0)) for _ in range(10)]
+            write_shot(shot, [[unlabelled + pixel, *[pixel for _ in range(999)]]])
+            pack.pack(shot, range(1, 2))
+            result = checks.accept(shot, range(1, 2))[0]
+            limit = checks.LIMITS["id_check_failure_fraction"][1]
+            self.assertGreater(result.metrics["id_check_failure_fraction"], limit)
+            self.assertLessEqual(result.metrics["merged_id_check_failure_fraction"], limit)
+            self.assertEqual(len(result.failures), 1, result.failures)
+            self.assertTrue(result.failures[0].startswith("id_check_failure_fraction="))
+            self.assertTrue((shot / "deep" / "0001.exr").is_file())
+            self.assertTrue(pack.ShotFrames.load(shot).sample_dir(shot, 1).is_dir())
+            self.assertFalse(json.loads((shot / "qa" / "0001.json").read_text())["passed"])
+
     def test_contract_validator_rejects_strided_camera_frames(self) -> None:
         with (
             TemporaryDirectory() as temporary,
@@ -305,6 +400,9 @@ class TemporalDeepTest(unittest.TestCase):
             self.assertTrue(checks.check_shot(shot)["passed"])
             (shot / "deep" / "0001.exr").write_bytes((replacement / "deep" / "0001.exr").read_bytes())
             self.assertFalse(checks.check_shot(shot)["passed"])
+            self.assertTrue(checks.accept(shot, range(1, 2))[0].failures)
+            self.assertTrue((shot / "deep" / "0001.exr").is_file())
+            self.assertTrue(pack.ShotFrames.load(shot).sample_dir(shot, 1).is_dir())
 
     def test_frame_skipping_manifest_fields_and_public_controls_are_rejected(self) -> None:
         render = {
