@@ -272,6 +272,40 @@ class TemporalDeepTest(unittest.TestCase):
             manifest_path.write_text(original)
             self.assertTrue(checks.check_shot(shot)["passed"])
 
+    def test_contract_validator_rejects_strided_camera_frames(self) -> None:
+        with (
+            TemporaryDirectory() as temporary,
+            mock.patch.object(validate, "_schema_errors", return_value=[]),
+            mock.patch.object(validate, "_beauty_errors", return_value=[]),
+        ):
+            shot = Path(temporary) / "shot"
+            write_shot(shot, [PIXELS] * 3)
+            pack.pack(shot, range(1, 4))
+            self.assertEqual(validate.validate(shot), [])
+            path = shot / "camera.json"
+            camera = json.loads(path.read_text())
+            camera["frames"] = camera["frames"][::2]
+            path.write_text(json.dumps(camera))
+            self.assertIn("camera.json frames do not cover the rendered range 1..3", validate.validate(shot))
+
+    def test_replaced_raw_invalidates_written_acceptance(self) -> None:
+        with TemporaryDirectory() as temporary:
+            shot = Path(temporary) / "shot"
+            replacement = Path(temporary) / "replacement"
+            write_shot(shot, [PIXELS])
+            write_shot(replacement, [[[Sample(0.8, 1.0, 2), SKY], SKY, SKY]])
+            pack.pack(shot, range(1, 2))
+            with (
+                mock.patch.object(checks, "_retire_raw", side_effect=Interrupted),
+                self.assertRaises(Interrupted),
+            ):
+                checks.accept(shot, range(1, 2))
+            receipt = shot / "qa" / "0001.json"
+            self.assertTrue(json.loads(receipt.read_text())["passed"])
+            self.assertTrue(checks.check_shot(shot)["passed"])
+            (shot / "deep" / "0001.exr").write_bytes((replacement / "deep" / "0001.exr").read_bytes())
+            self.assertFalse(checks.check_shot(shot)["passed"])
+
     def test_frame_skipping_manifest_fields_and_public_controls_are_rejected(self) -> None:
         render = {
             "renderer": "fixture",

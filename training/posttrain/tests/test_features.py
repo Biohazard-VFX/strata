@@ -51,7 +51,7 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
             ],
         },
     )
-    write_json(tmp_path / "manifest.json", {"contract": CONTRACT})
+    write_json(tmp_path / "manifest.json", {"contract": CONTRACT, "render": {"frames": [1, 2]}})
     entry = {
         "id": "frame",
         "shot": "shot",

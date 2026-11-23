@@ -21,6 +21,10 @@ def errors(manifest: Mapping[str, object], camera: Mapping[str, object]) -> list
     render = cast("Mapping[str, object]", manifest.get("render", {}))
     if "deep_stride" in render:
         found.append("render.deep_stride is forbidden: every frame requires deep")
+    first, last = cast("Sequence[int]", render["frames"])
+    frames = cast("Sequence[Mapping[str, object]]", camera["frames"])
+    if [frame["frame"] for frame in frames] != list(range(first, last + 1)):
+        found.append(f"camera.json frames do not cover the rendered range {first}..{last}")
     for record in cast("Sequence[Mapping[str, int]]", manifest.get("instance_ids", [])):
         found += identity.range_errors(record["first_id"], record["count"])
     return found

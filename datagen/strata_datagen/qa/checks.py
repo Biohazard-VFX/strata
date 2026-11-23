@@ -404,8 +404,6 @@ def _accepted_metrics(shot: Path, frame: int) -> dict[str, float] | None:
     retained = ("validation", "manifest", "camera", "beauty", "targets", "merged")
     if any(current[key] is None or checked.get(key) != current[key] for key in retained):
         return None
-    if not checked.get("deep") or not checked.get("samples"):
-        return None
     if current["deep"] is not None and current["deep"] != checked["deep"]:
         return None
     return cast("dict[str, float]", receipt["metrics"])
@@ -559,9 +557,6 @@ def check_shot(shot: Path) -> dict[str, object]:
         return {"shot_id": shot.name, "passed": False, "failures": refused, "mean_metrics": {}, "frames": []}
     frames = cast("list[dict[str, object]]", camera["frames"])
     failures = camera_consistency(camera)
-    first, last = cast("list[int]", cast("dict[str, object]", manifest["render"])["frames"])
-    if [f["frame"] for f in frames] != list(range(first, last + 1)):
-        failures.append(f"camera.json frames do not cover the rendered range {first}..{last}")
     ranges = _id_ranges(manifest)
     results = [check_frame(shot, cast("int", f["frame"]), f, ranges) for f in frames]
     failures += [f"frame {r.frame}: {f}" for r in results for f in r.failures]

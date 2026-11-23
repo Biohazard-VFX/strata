@@ -271,8 +271,11 @@ Raw deep crop reads gather contiguous sample spans for the requested pixel rows.
 Only `strata-dataset-0.5.0` records are accepted, checked by
 `strata_dataset.records.errors`. Target preparation reads sky-inclusive
 `layers/NNNN.exr` and linear `roles.foreground`, `roles.hero`, `roles.fur` for every
-frame; conformant shots retain raw and merged deep on every frame. Caches use `linear-roles-v3`; older role
-caches must be regenerated. Roles retain fractional coverage without renormalising.
+frame. Keep merged deep, beauty and layers on every frame; delete raw deep and sample
+sidecars after acceptance. The training loader does not yet read `merged/`: accepted
+frames are photometric-only for training until loader adoption lands. Caches use
+`linear-roles-v3`; older role caches must be regenerated. Roles retain fractional
+coverage without renormalising.
 
 Recomposition reads `deep/roles.npy` alongside the other immutable sample sidecars.
 Raw deep decoding calls `strata_dataset.identity.decode` with both checks and float

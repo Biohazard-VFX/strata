@@ -175,6 +175,8 @@ class MergedDeepTest(unittest.TestCase):
             path = pack.ShotFrames.load(shot).merged_dir(shot, 2) / "deep.npz"
             arrays = merged.read(path).arrays()
             count = arrays["z"].size
+            overlapping = arrays["zback"].copy()
+            overlapping[0] = arrays["z"][1] + 1
             corruptions: list[tuple[str, NDArray[np.generic]]] = [
                 ("shape", np.array([2, 3], np.int64)),
                 ("shape", np.array([1, 3], np.float64)),
@@ -185,6 +187,7 @@ class MergedDeepTest(unittest.TestCase):
                 ("roles", np.full((count, 3), 2, np.float64)),
                 ("ids", np.full(count, -2, np.int64)),
                 ("zback", np.zeros(count, np.float32)),
+                ("zback", overlapping),
                 ("statistics", np.zeros((count, 3), np.float64)),
                 ("statistics", np.full((count, 4), np.inf, np.float64)),
             ]

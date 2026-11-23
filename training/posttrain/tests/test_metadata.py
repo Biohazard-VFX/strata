@@ -23,14 +23,16 @@ def test_published_camera_records_use_frame_list_and_native_intrinsics(tmp_path:
         "shutter_close": 0.0,
     }
     path = tmp_path / "camera.json"
-    (tmp_path / "manifest.json").write_text(json.dumps({"contract": CONTRACT}))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"contract": CONTRACT, "render": {"frames": [1, 1]}})
+    )
     path.write_text(json.dumps({"contract": CONTRACT, "frames": [record]}))
     frame = camera_frames(tmp_path)[1]
     assert_allclose(intrinsics(frame), [[100, 0, 8], [0, 110, 4], [0, 0, 1]])
     assert category(frame) == "sharp"
     record["frame"] = 1.5
     path.write_text(json.dumps({"contract": CONTRACT, "frames": [record]}))
-    with pytest.raises(ValueError, match="identifiers"):
+    with pytest.raises(ValueError, match="frames do not cover"):
         camera_frames(tmp_path)
 
 
