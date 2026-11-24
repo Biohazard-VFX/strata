@@ -76,11 +76,12 @@ class SamplingSeedTest(unittest.TestCase):
                 self.assertEqual(prim.GetAttribute("karma:global:pathtracedsamples").Get(), spp)
                 self.assertEqual(pack.ShotFrames.load(shot.directory).shot_id, manifest["shot_id"])
                 del metadata["sampling_seed"]
+                self.assertTrue(list(Draft202012Validator(schema).iter_errors(manifest)))
                 (shot.directory / "manifest.json").write_text(json.dumps(manifest))
                 refused = records.errors(manifest, camera)
                 self.assertTrue(refused)
                 with self.assertRaisesRegex(ValueError, "sampling_seed"):
-                    pack.ShotFrames.load(shot.directory)
+                    pack.pack(shot.directory, range(1, 4))
                 self.assertEqual(checks.check_shot(shot.directory)["failures"], refused)
                 errors = validate.validate(shot.directory)
                 self.assertTrue(errors)
