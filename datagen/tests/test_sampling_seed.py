@@ -212,6 +212,9 @@ class SamplingSeedTest(unittest.TestCase):
             damaged = copy.deepcopy(manifest)
             cast("dict[str, object]", damaged["render"])["frames"] = frames
             self.assertTrue(records.errors(damaged, camera), frames)
+        empty_range = copy.deepcopy(manifest)
+        empty_range["render"] = {"frames": [2, 1], "sampling_seed": sampling.schedule(2, ())}
+        self.assertTrue(records.errors(empty_range, {"contract": records.VERSION, "frames": []}))
         for seed in (True, False, 2.0):
             damaged = copy.deepcopy(manifest)
             damaged["seed"] = seed
