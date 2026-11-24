@@ -13,11 +13,11 @@ from strata_datagen.generators import groom
 from strata_datagen.library import hdri
 from strata_datagen.qa import checks
 from strata_datagen.qa.deep import instance_ids, partial_coverage
-from strata_datagen.render import settings
+from strata_datagen.render import pack, settings
 from strata_datagen.rng import stream
 from strata_datagen.usdutil import relative_asset, tag_instances
 from strata_dataset import identity, roles
-from tests.fixtures import membership
+from tests.fixtures import Sample, membership, write_shot
 from tests.flatten import flatten
 
 if TYPE_CHECKING:
@@ -195,22 +195,45 @@ class RoleChannelTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             roles.nested(raw, alpha, order=np.array([0, 1, 3], np.int64))
 
-    def test_role_channels_out_of_order_or_missing_fail_raw_qa(self) -> None:
+    def test_role_channels_out_of_order_fail_raw_qa(self) -> None:
         deep = _deep([[(0, 0, 1, 1.0, 5.0, 3)], [(0, 1, 0, 0.5, 2.0, 2), (0, 1, 0, 1.0, 3000.0, 0)]])
         beauty = {c: flatten(deep).rgba[..., i].astype(np.float32) for i, c in enumerate("RGB")}
         ranges = [(0, 4)]
         metrics = checks.deep_metrics(deep, beauty, ranges)
-        self.assertEqual((metrics["role_channels"], metrics["role_excess"]), (1.0, 0.0))
+        self.assertEqual(metrics["role_excess"], 0.0)
         for name, low, high, excess in (("fur", 2, 3, 0.25), ("foreground", 0, 1, 0.5), ("hero", 0, 1, 1.0)):
             broken = {**deep.channels, name: deep.channels[name].copy()}
             broken[name][low:high] += excess
             found = checks.deep_metrics(Deep(deep.width, deep.height, deep.counts, broken), beauty, ranges)
             self.assertAlmostEqual(found["role_excess"], excess, places=6)
             self.assertGreater(found["role_excess"], checks.LIMITS["role_excess"][1])
-        missing = {k: v for k, v in deep.channels.items() if k != "hero"}
-        found = checks.deep_metrics(Deep(deep.width, deep.height, deep.counts, missing), beauty, ranges)
-        self.assertEqual(found["role_channels"], 0.0)
-        self.assertNotIn("role_excess", found)
+
+    def test_pack_refuses_missing_identity_or_role_channels_without_publishing(self) -> None:
+        for missing in (
+            "coverage",
+            "instance_id",
+            "instance_check",
+            "instance_check2",
+            "foreground",
+            "hero",
+            "fur",
+        ):
+            with self.subTest(channel=missing), tempfile.TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "shot"
+                write_shot(shot, [[Sample(0.2, 1.0, 2)]])
+                raw = shot / "deep" / "0001.exr"
+                source = OpenEXR.File(str(raw), separate_channels=True).parts[0]
+                channels = {name: value for name, value in source.channels.items() if name != missing}
+                OpenEXR.File(source.header, channels).write(str(raw))
+                before = raw.read_bytes()
+                plan = pack.ShotFrames.load(shot)
+                with self.assertRaises(KeyError) as raised:
+                    pack.pack(shot, range(1, 2))
+                self.assertEqual(raised.exception.args, (missing,))
+                self.assertEqual(raw.read_bytes(), before)
+                self.assertFalse(plan.merged_dir(shot, 1).exists())
+                self.assertFalse(plan.sample_dir(shot, 1).exists())
+                self.assertFalse((shot / "layers" / "0001.exr").exists())
 
 
 class IdentityTest(unittest.TestCase):

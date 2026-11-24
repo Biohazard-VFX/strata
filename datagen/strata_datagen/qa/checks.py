@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M
-from strata_datagen.qa.deep import IDENTITY_CHANNELS, partial_coverage
+from strata_datagen.qa.deep import partial_coverage
 from strata_datagen.render import pack
 from strata_dataset import identity, merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
@@ -24,8 +24,6 @@ LUMA = (0.2126, 0.7152, 0.0722)
 ROLE_EXCESS = 2.0**-15
 ROLE_BEAUTY = 2.0**-15
 RAW_ONLY_LIMITS = {
-    "identity_channels": (1.0, 1.0),
-    "role_channels": (1.0, 1.0),
     "mean_samples": (1.0, 48.0),
     "max_samples": (1.0, 1024.0),
     "coverage_alpha_error": (0.0, 2.0**-11),
@@ -181,9 +179,8 @@ def _base_metrics(deep: Deep) -> dict[str, float]:
         "max_samples": float(deep.counts.max()),
         "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z * (1.0 - 1e-6) - 1e-4)).sum()),
     }
-    if all(name in deep.channels for name in (*IDENTITY_CHANNELS, *roles.ROLES)):
-        difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
-        metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
+    difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
+    metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
     return metrics
 
 
@@ -194,17 +191,13 @@ def _measure_samples(
     frame: pack.Samples | None,
     base: dict[str, float],
 ) -> dict[str, float]:
-    present = all(name in deep.channels for name in IDENTITY_CHANNELS)
-    labelled = all(name in deep.channels for name in roles.ROLES)
-    metrics: dict[str, float] = {"identity_channels": float(present), "role_channels": float(labelled)}
-    if present and labelled:
-        frame = pack.samples(deep) if frame is None else frame
-        runs = merged.merge(
-            frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
-        )
-        metrics |= _identity_metrics(frame, ranges) | {"role_excess": role_excess(deep)}
-        metrics |= _merged_deep_metrics(runs, beauty) | role_beauty_metrics(runs, beauty)
-        metrics["coverage_alpha_error"] = base.pop("coverage_alpha_error")
+    frame = pack.samples(deep) if frame is None else frame
+    runs = merged.merge(
+        frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+    )
+    metrics = _identity_metrics(frame, ranges) | {"role_excess": role_excess(deep)}
+    metrics |= _merged_deep_metrics(runs, beauty) | role_beauty_metrics(runs, beauty)
+    metrics["coverage_alpha_error"] = base.pop("coverage_alpha_error")
     return metrics | base
 
 
