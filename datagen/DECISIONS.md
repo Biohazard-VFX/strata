@@ -20,7 +20,7 @@
 - Beauty EXRs are multi-part, one part per AOV, ZIPS-compressed; no LPE lighting splits (unused by training, 43% of beauty size).
 - Every product name is time-sampled per frame; outputs never rely on `$F` expansion.
 - Sampling seed modes default to 50/50 per-frame/fixed, assigned deterministically from each shot seed; integer-hashed frame seeds vary noise without new randomness.
-- Every shot requires render.sampling_seed mode and ordered seeds matching the shot seed schedule; readers reject missing sampling metadata.
+- Sampling metadata is required: authored shots use 50/50 fixed/per-frame schedules; proven unauthored 0.4.0 renders use karma_default without seed values and train as per-frame noise.
 - Camera focal length and apertures are authored in tenths of a scene unit (mm / 100 at metres), per UsdGeomCamera.
 - Dome lights set `inputs:karma:light:renderlightgeo` so the HDRI is visible to camera rays.
 - HDRI directions use Karma's latlong frame: image centre at +Z, top row at +Y.

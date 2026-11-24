@@ -15,7 +15,7 @@ from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M
 from strata_datagen.qa.deep import partial_coverage
-from strata_datagen.render import pack
+from strata_datagen.render import pack, settings
 from strata_dataset import identity, merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
 
@@ -564,6 +564,7 @@ def check_shot(shot: Path) -> dict[str, object]:
     manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
     camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
     refused = records.errors(manifest, camera)
+    refused = refused or settings.sampling_errors(shot, manifest)
     if refused:
         return {"shot_id": shot.name, "passed": False, "failures": refused, "mean_metrics": {}, "frames": []}
     frames = cast("list[dict[str, object]]", camera["frames"])

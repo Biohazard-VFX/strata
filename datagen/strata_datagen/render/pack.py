@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.qa.deep import instance_ids
+from strata_datagen.render import settings
 from strata_dataset import merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
 from strata_dataset.layers import Layers, reduce_samples
@@ -59,6 +60,7 @@ class ShotFrames:
         manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
         camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
         errors = records.errors(manifest, camera)
+        errors = errors or settings.sampling_errors(shot, manifest)
         if errors:
             raise ValueError(f"{shot}: {'; '.join(errors)}")
         return ShotFrames(str(manifest["shot_id"]))

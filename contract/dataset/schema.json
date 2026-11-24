@@ -66,6 +66,16 @@
     },
     "manifest": {
       "type": "object",
+      "allOf": [{
+        "if": {"properties": {"render": {"required": ["sampling_seed"], "properties": {"sampling_seed": {"required": ["mode"], "properties": {"mode": {"const": "karma_default"}}}}}}},
+        "then": {
+          "required": ["generator_versions"],
+          "properties": {"generator_versions": {
+            "required": ["settings"],
+            "properties": {"settings": {"const": "render-settings-0.4.0"}}
+          }}
+        }
+      }],
       "required": ["contract", "shot_id", "seed", "recipe_version", "generator_versions", "spec", "scene",
                    "instance_ids", "assets", "render", "timings"],
       "properties": {
@@ -89,6 +99,7 @@
             "aovs": {"type": "array", "items": {"type": "string"}},
             "deep_aovs": {"type": "array", "items": {"type": "string"}},
             "sampling_seed": {
+              "oneOf": [{
               "type": "object", "required": ["mode", "seeds"], "additionalProperties": false,
               "properties": {
                 "mode": {"enum": ["per-frame", "fixed"]},
@@ -97,6 +108,10 @@
                   "items": {"type": "integer", "minimum": 0, "maximum": 2147483647}
                 }
               }
+              }, {
+                "type": "object", "required": ["mode"], "additionalProperties": false,
+                "properties": {"mode": {"const": "karma_default"}}
+              }]
             }
           }
         },

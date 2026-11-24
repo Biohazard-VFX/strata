@@ -55,6 +55,15 @@ def errors(manifest: Mapping[str, object]) -> list[str]:
     ):
         return ["invalid render.sampling_seed inputs"]
     sampling = cast("dict[str, object]", sampling)
+    if sampling.get("mode") == "karma_default":
+        versions = manifest.get("generator_versions")
+        if (
+            sampling != {"mode": "karma_default"}
+            or not isinstance(versions, dict)
+            or cast("dict[str, object]", versions).get("settings") != "render-settings-0.4.0"
+        ):
+            return ["render.sampling_seed karma_default requires unauthored render-settings-0.4.0 evidence"]
+        return []
     seeds = sampling.get("seeds")
     if (
         not _integers(seeds)

@@ -1,9 +1,12 @@
 """UsdRender settings for Karma: beauty with AOVs and a deep (DCM) product, one file per frame."""
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
+from typing import cast
 
-from pxr import Gf, Sdf, Usd, UsdRender
+from pxr import Gf, Sdf, Tf, Usd, UsdRender
 
 from strata_dataset import roles, sampling
 
@@ -119,6 +122,26 @@ def _karma(settings: UsdRender.Settings, config: RenderConfig) -> None:
     else:
         for frame, value in zip(config.frames, schedule["seeds"], strict=True):
             seed.Set(value, Usd.TimeCode(frame))
+
+
+def sampling_errors(shot: Path, manifest: Mapping[str, object]) -> list[str]:
+    render = cast("Mapping[str, object]", manifest["render"])
+    if render.get("sampling_seed") != {"mode": "karma_default"}:
+        return []
+    scene = shot / "scene" / "shot.usda"
+    if not scene.exists():
+        return []
+    try:
+        stage = Usd.Stage.Open(str(scene))
+        prim = stage.GetPrimAtPath(SETTINGS_PATH)
+        if not prim:
+            return ["render.sampling_seed karma_default has no USD render settings evidence"]
+        attr = prim.GetAttribute("karma:global:randomseed")
+        if attr and attr.HasAuthoredValueOpinion():
+            return ["render.sampling_seed karma_default contradicts authored USD randomseed"]
+    except (OSError, RuntimeError, Tf.ErrorException) as error:
+        return [f"render.sampling_seed karma_default has unreadable USD evidence: {error}"]
+    return []
 
 
 def author(stage: Usd.Stage, camera: str, config: RenderConfig) -> UsdRender.Settings:

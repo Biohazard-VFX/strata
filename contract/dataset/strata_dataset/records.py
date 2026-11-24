@@ -12,7 +12,7 @@ VERSION = "strata-dataset-0.5.0"
 
 
 def errors(manifest: Mapping[str, object], camera: Mapping[str, object]) -> list[str]:
-    """Why these records are not this contract version or declare undecodable ids; empty when they are."""
+    """Contract, sampling and id violations; empty for supported records."""
     found = [
         f"{name}.json is {record.get('contract')!r}, not {VERSION!r}"
         for name, record in (("manifest", manifest), ("camera", camera))

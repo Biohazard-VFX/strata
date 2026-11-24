@@ -16,6 +16,7 @@ from strata_datagen.render import pack, settings
 from strata_datagen.scene import compose, export
 from strata_datagen.scene.spec import ShotSpec
 from strata_dataset import records, sampling
+from tests.fixtures import SKY, Sample, write_shot
 from tests.test_determinism import hero_files, library
 
 
@@ -32,6 +33,7 @@ class SamplingSeedTest(unittest.TestCase):
             self.assertEqual(sampling.schedule(seed, range(301, 361))["seeds"], full["seeds"][300:360])
             self.assertTrue(all(0 <= value <= 2147483647 for value in full["seeds"]))
         modes = [sampling.schedule(seed, (1,))["mode"] for seed in range(4096)]
+        self.assertEqual(set(modes), {"per-frame", "fixed"})
         self.assertGreater(modes.count("per-frame"), 1900)
         self.assertLess(modes.count("per-frame"), 2200)
         self.assertNotEqual(sampling.schedule(0, (1,)), sampling.schedule(1, (1,)))
@@ -75,6 +77,13 @@ class SamplingSeedTest(unittest.TestCase):
                 self.assertEqual(attr.GetTimeSamples(), [1.0, 2.0, 3.0] if seed == 2 else [])
                 self.assertEqual(prim.GetAttribute("karma:global:pathtracedsamples").Get(), spp)
                 self.assertEqual(pack.ShotFrames.load(shot.directory).shot_id, manifest["shot_id"])
+                corrupted = copy.deepcopy(expected)
+                corrupted["seeds"][-1] ^= 1
+                metadata["sampling_seed"] = corrupted
+                (shot.directory / "manifest.json").write_text(json.dumps(manifest))
+                errors = validate.validate(shot.directory)
+                self.assertTrue(errors)
+                self.assertTrue(all("sampling_seed" in error for error in errors))
                 del metadata["sampling_seed"]
                 self.assertTrue(list(Draft202012Validator(schema).iter_errors(manifest)))
                 (shot.directory / "manifest.json").write_text(json.dumps(manifest))
@@ -86,6 +95,70 @@ class SamplingSeedTest(unittest.TestCase):
                 errors = validate.validate(shot.directory)
                 self.assertTrue(errors)
                 self.assertTrue(all("sampling_seed" in error for error in errors))
+
+    def test_karma_default_requires_unauthored_settings_evidence(self) -> None:
+        root = Path(self.enterContext(TemporaryDirectory()))
+        lib = library()
+        hero_files(root, lib)
+        shot = compose.plan(ShotSpec(0, frame_count=3, foliage_density=0, thin=()), lib, root)
+        render = compose.RenderParams(4, 4, 64)
+        compose.write(shot, lib, root, render)
+        export.write(shot, lib, render)
+        path = shot.directory / "manifest.json"
+        manifest = json.loads(path.read_text())
+        camera = json.loads((shot.directory / "camera.json").read_text())
+        manifest["render"]["sampling_seed"] = {"mode": "karma_default"}
+        schema = {**validate.SCHEMA, "$ref": "#/$defs/manifest"}
+        for version in (None, "render-settings-0.4.1", "render-settings-0.5.0"):
+            manifest["generator_versions"]["settings"] = version
+            path.write_text(json.dumps(manifest))
+            self.assertTrue(records.errors(manifest, camera))
+            self.assertTrue(list(Draft202012Validator(schema).iter_errors(manifest)))
+            with self.assertRaisesRegex(ValueError, "sampling_seed"):
+                pack.pack(shot.directory, range(1, 4))
+            self.assertTrue(checks.check_shot(shot.directory)["failures"])
+        manifest["generator_versions"]["settings"] = "render-settings-0.4.0"
+        path.write_text(json.dumps(manifest))
+        self.assertEqual(records.errors(manifest, camera), [])
+        self.assertEqual(list(Draft202012Validator(schema).iter_errors(manifest)), [])
+        for value in (0, 17):
+            stage = Usd.Stage.Open(str(shot.scene_dir / "shot.usda"))
+            prim = stage.GetPrimAtPath(settings.SETTINGS_PATH)
+            prim.GetAttribute("karma:global:randomseed").Set(value)
+            stage.GetRootLayer().Save()
+            with self.assertRaisesRegex(ValueError, "authored USD randomseed"):
+                pack.pack(shot.directory, range(1, 4))
+            self.assertIn("authored USD randomseed", str(checks.check_shot(shot.directory)["failures"]))
+        prim.GetAttribute("karma:global:randomseed").Clear()
+        prim.GetAttribute("karma:global:randomseed").Set(0, Usd.TimeCode(2))
+        stage.GetRootLayer().Save()
+        with self.assertRaisesRegex(ValueError, "authored USD randomseed"):
+            pack.ShotFrames.load(shot.directory)
+        prim.RemoveProperty("karma:global:randomseed")
+        stage.GetRootLayer().Save()
+        self.assertEqual(pack.ShotFrames.load(shot.directory).shot_id, manifest["shot_id"])
+        self.assertEqual(settings.sampling_errors(shot.directory, manifest), [])
+        invalid: tuple[dict[str, object], ...] = (
+            {"mode": "karma_default", "seeds": []},
+            {"mode": "karma_default", "seeds": [1]},
+        )
+        for value in invalid:
+            manifest["render"]["sampling_seed"] = value
+            self.assertTrue(records.errors(manifest, camera))
+            self.assertTrue(list(Draft202012Validator(schema).iter_errors(manifest)))
+
+    def test_karma_default_packs_and_passes_qa_without_optional_scene(self) -> None:
+        root = Path(self.enterContext(TemporaryDirectory()))
+        write_shot(root, [[[Sample(0.2, 0.5, 1), SKY], SKY]])
+        path = root / "manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["generator_versions"] = {"settings": "render-settings-0.4.0"}
+        manifest["render"]["sampling_seed"] = {"mode": "karma_default"}
+        path.write_text(json.dumps(manifest))
+        pack.pack(root, range(1, 2))
+        self.assertEqual(checks.check_shot(root)["failures"], [])
+        self.assertEqual(checks.accept(root, range(1, 2))[0].failures, [])
+        self.assertEqual(checks.check_shot(root)["failures"], [])
 
     def test_schema_rejects_malformed_sampling_fields(self) -> None:
         schema = {
@@ -139,6 +212,13 @@ class SamplingSeedTest(unittest.TestCase):
             damaged = copy.deepcopy(manifest)
             cast("dict[str, object]", damaged["render"])["frames"] = frames
             self.assertTrue(records.errors(damaged, camera), frames)
+        for seed in (True, False, 2.0):
+            damaged = copy.deepcopy(manifest)
+            damaged["seed"] = seed
+            cast("dict[str, object]", damaged["render"])["sampling_seed"] = sampling.schedule(
+                cast("int", seed), (1, 2, 3)
+            )
+            self.assertTrue(records.errors(damaged, camera), seed)
         damaged = copy.deepcopy(manifest)
         damaged["seed"] = 0
         cast("dict[str, object]", damaged["render"])["sampling_seed"] = {

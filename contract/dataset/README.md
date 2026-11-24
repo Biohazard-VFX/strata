@@ -13,8 +13,11 @@ rebuilt from merged deep agree with its packed targets. A durable acceptance rec
 retained files, records and validation rules before deletion; interrupted deletion resumes safely. Frame-skipping deep
 policies are forbidden; records carrying `render.deep_stride` are rejected. Merged deep preserves
 both over-compositing and the sufficient statistics of the layer rule. Existing K=4 targets still come from raw samples,
-without changing their arithmetic or bytes. Older shots must be repacked from their original raw
-deep; changing a record's version does not create the new sidecars. The training loader continues
+without changing their arithmetic or bytes. 0.4.0 renders with proven unauthored seeds
+(including the held shot_009001) are repacked from their original raw
+deep with explicit `render.sampling_seed = {"mode": "karma_default"}`; they are not re-rendered
+or dropped, and no seed values are invented. Changing a record's version alone does not create
+the new sidecars. The training loader continues
 to use raw sample sidecars; training accepted merged-only shots requires separate loader adoption.
 `validate.py` permits absent raw files but requires valid merged deep on every declared frame;
 `check_shot` additionally requires matching raw acceptance and rechecks the merged reconstruction.
@@ -85,7 +88,16 @@ choices the shot was built from), `scene` (sampled terrain, lighting, hero, came
 samples, frame range, AOV lists) and `timings` (filled after rendering: device, per-frame seconds,
 VRAM).
 
-Every shot requires `render.sampling_seed = {"mode": "per-frame" | "fixed", "seeds": [int, ...]}`.
+Every shot requires `render.sampling_seed`: either an authored schedule
+`{"mode": "per-frame" | "fixed", "seeds": [int, ...]}` or `{"mode": "karma_default"}`.
+`karma_default` records that no seed was authored: husk derives a seed from each frame number,
+so training treats it as per-frame noise, not fixed noise. No `seeds` key or inferred values
+are permitted. Records require `generator_versions.settings = "render-settings-0.4.0"` as
+provenance for this mode; pack and QA additionally inspect `scene/shot.usda` when retained,
+rejecting unreadable/missing render settings or any authored `karma:global:randomseed` value
+(including zero and time samples). The version is the proof when the optional scene is absent.
+Do not relabel newer settings or a seed-authored USD/HIP as `karma_default`.
+New authoring never emits `karma_default`: it retains the deterministic 50/50 split below.
 The seeds align with every frame in the inclusive `render.frames` range, not with farm task chunks.
 `strata_dataset.sampling.schedule` is the shared deterministic rule: SHA-256 named keys
 `<shot seed>:render:mode` and `<shot seed>:render:seed` supply the low 31 bits of the first

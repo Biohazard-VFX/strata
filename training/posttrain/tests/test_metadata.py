@@ -12,7 +12,10 @@ from strata_training.data.metadata import CONTRACT, camera_frames, category, int
 from strata_training.io import save_arrays
 
 
-def test_published_camera_records_use_frame_list_and_native_intrinsics(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", ["authored", "karma_default", "missing"])
+def test_published_camera_records_use_frame_list_and_native_intrinsics(
+    tmp_path: Path, mode: str
+) -> None:
     record = {
         "frame": 1,
         "fx": 100.0,
@@ -34,6 +37,18 @@ def test_published_camera_records_use_frame_list_and_native_intrinsics(tmp_path:
         )
     )
     path.write_text(json.dumps({"contract": CONTRACT, "frames": [record]}))
+    manifest_path = tmp_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    if mode == "missing":
+        del manifest["render"]["sampling_seed"]
+    elif mode == "karma_default":
+        manifest["render"]["sampling_seed"] = {"mode": "karma_default"}
+        manifest["generator_versions"] = {"settings": "render-settings-0.4.0"}
+    manifest_path.write_text(json.dumps(manifest))
+    if mode == "missing":
+        with pytest.raises(ValueError, match="sampling_seed"):
+            camera_frames(tmp_path)
+        return
     frame = camera_frames(tmp_path)[1]
     assert_allclose(intrinsics(frame), [[100, 0, 8], [0, 110, 4], [0, 0, 1]])
     assert category(frame) == "sharp"
