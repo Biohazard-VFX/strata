@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 import torch
 from numpy.testing import assert_allclose
-
 from strata_dataset import sampling
 
 from strata_training.data import mapped

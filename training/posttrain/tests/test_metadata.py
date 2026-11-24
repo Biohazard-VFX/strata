@@ -5,7 +5,6 @@ from typing import Any
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
-
 from strata_dataset import sampling
 
 from strata_training.data.cache import prepare
