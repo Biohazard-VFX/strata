@@ -209,7 +209,8 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     )
 
     def evaluate(model: object, config: object, frames: object) -> dict[str, Any]:
-        del model, config, frames
+        del model, config
+        assert frames == baseline_calls[0]
         value, leak, sweep = next(metrics)
         return {
             "coverage_sweep": {"selection": sweep},
@@ -255,7 +256,7 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     assert state["baseline"]["selection"] == baseline
     assert report["dp2_baseline"]["selection"] == baseline
     assert final["validation"]["best_sweep"] == (0.39998 if passing else 0.2)
-    final["config"].pop("selection")
+    final["config"].pop("selection", None)
     old_selection = output / "old-selection.pt"
     with atomic_path(old_selection) as temporary:
         torch.save(final, temporary)
@@ -375,7 +376,10 @@ def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode
         evaluate_validation(model, config, [frame])
 
 
-def test_dp2_baseline_is_single_opaque_layer_from_frozen_metric_depth(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("inverse", "near", "far"), [(0.5, 0.8, 0.0), (0.125, 0.0, 1.2)])
+def test_dp2_baseline_is_single_opaque_layer_from_frozen_metric_depth(
+    tmp_path: Path, inverse: float, near: float, far: float
+) -> None:
     from strata_training.data.dataset import Frame
     from strata_training.validation import evaluate_dp2_baseline
 
@@ -386,10 +390,10 @@ def test_dp2_baseline_is_single_opaque_layer_from_frozen_metric_depth(tmp_path: 
     arrays["mixed"][:, :16] = False
     save_arrays(Path(entry["cache"]), **arrays)
     root = Path(config["features"]) / "train"
-    save_arrays(root / "base.npz", **base_arrays(np.full((32, 32), 0.5), 2.0))
+    save_arrays(root / "base.npz", **base_arrays(np.full((32, 32), inverse), 2.0))
     frame = Frame(entry, Path(config["features"]))
     report = evaluate_dp2_baseline([frame])
-    assert report["selection"] == pytest.approx(0.8 * np.log(2))
-    assert report["edge"]["too_near"] == pytest.approx(0.8 * np.log(2))
-    assert report["interior"]["too_near"] == pytest.approx(0.8 * np.log(2))
-    assert report["edge"]["too_far"] == 0
+    assert report["selection"] == pytest.approx((near + far) * np.log(2))
+    for region in ("edge", "interior"):
+        assert report[region]["too_near"] == pytest.approx(near * np.log(2))
+        assert report[region]["too_far"] == pytest.approx(far * np.log(2))
