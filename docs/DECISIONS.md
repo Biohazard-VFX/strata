@@ -29,6 +29,10 @@
 - CUDA and the PyTorch oracles disable TF32 so float32 operations keep IEEE precision; allocator, arena and threads stay at ONNX Runtime defaults.
 - TensorRT, CoreML and DirectML are out of scope until each lands with a test and a measurement.
 - The CLI refuses outputs inside the model's directory instead of parsing ONNX for external data, which ONNX Runtime confines to that directory.
+- Keep merged deep, beauty and layers on every frame; delete raw EXRs and NPY sidecars only after durable acceptance verifies merged rebuilds the packed targets, making raw redundant.
+- Acceptance binds raw proof, retained digests, algorithm versions and raw-only limits; retired QA runs fresh, refusing changed raw-only policy; `test_retired_qa` checks this.
+- Identity gates: unlabelled visible coverage/pixel <=2e-4; declared/labelled visible coverage >=0.99995 (empty=1); raw ID counts only report; test_retired_qa checks merge invariance.
+- Compositing, partial coverage and sky QA merge raw first, sharing retired definitions; raw depth, role excess and raw equivalence checks bind policy in acceptance receipts.
 - Training, evaluation and baselines never align predicted depth to GT; learn and score metric scale directly against synthetic deep truth so scale errors remain visible.
 - K-slot visible coverage is a simplex with opaque terminal alpha, closing holes by construction; check: test_head_coverage_is_exactly_one.
 - Gate GT-opaque interior leakage at 0.001; brightness bins use 1.4 and 0.04; checks: test_behind_surface_leakage, test_count_aware_brightness_gate.

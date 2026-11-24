@@ -15,7 +15,7 @@ from pathlib import Path
 from strata_datagen import shotlock
 from strata_datagen.render import husk, pack
 
-SAMPLES = "samples"
+SIDECARS = ("samples", "merged")
 
 
 def _files(source: Path) -> list[Path]:
@@ -33,7 +33,7 @@ def _files(source: Path) -> list[Path]:
 
 def _unit(relative: Path) -> Path:
     """What moves as one: a whole published sidecar frame, or a single file."""
-    return Path(*relative.parts[:2]) if relative.parts[0] == SAMPLES else relative
+    return Path(*relative.parts[:2]) if relative.parts[0] in SIDECARS else relative
 
 
 def _contents(path: Path) -> dict[str, bytes]:
@@ -47,7 +47,7 @@ def _moves(staging: Path, shot: Path, unit: Path) -> bool:
     local = shot / unit
     if not local.exists(follow_symlinks=False):
         return True
-    if unit.parts[0] == SAMPLES:
+    if unit.parts[0] in SIDECARS:
         if _contents(staging / unit) != _contents(local):
             raise ValueError(f"{local}: a different published frame is already there; {pack.REMOVE}")
         return False

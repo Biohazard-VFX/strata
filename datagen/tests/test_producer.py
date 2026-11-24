@@ -31,18 +31,16 @@ def shot_failures(shot: Path) -> list[str]:
 
 
 class RawEvidenceTest(unittest.TestCase):
-    def test_a_corrupt_frame_off_the_stride_is_rejected_and_keeps_its_raw_deep(self) -> None:
+    def test_a_corrupt_second_frame_is_rejected_and_keeps_its_raw_deep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             shot = root / "shots" / "s"
-            write_shot(shot, [CLEAN, SKY_IN_FRONT], stride=24)
+            write_shot(shot, [CLEAN, SKY_IN_FRONT])
             self.assertFalse(cli.finish_task(shot, range(1, 3)))
             self.assertTrue((shot / "deep" / "0002.exr").exists())
+            self.assertTrue(pack.ShotFrames.load(shot).sample_dir(shot, 2).is_dir())
             self.assertFalse(checks.check_shot(shot)["passed"])
             self.assertTrue(any("frame 2: sky_in_front" in f for f in shot_failures(shot)))
-            with self.assertRaises(ValueError):
-                checks.prune(shot, range(1, 3))
-            self.assertTrue((shot / "deep" / "0002.exr").exists())
 
     def test_deep_roles_contradicting_the_beauty_role_aovs_are_rejected_and_keep_raw_deep(self) -> None:
         unhero = [[Sample(0.5, 1.0, 2, roles=(1.0, 0.0, 0.0)), SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
@@ -51,17 +49,12 @@ class RawEvidenceTest(unittest.TestCase):
             for frame in (1, 2):
                 with self.subTest(corrupt=corrupt, frame=frame), tempfile.TemporaryDirectory() as tmp:
                     shot = Path(tmp) / "s"
-                    write_shot(shot, [CLEAN, CLEAN], stride=24)
+                    write_shot(shot, [CLEAN, CLEAN])
                     write_deep(shot / "deep" / f"{frame:04d}.exr", corrupt)
                     raw = shot / "deep" / f"{frame:04d}.exr"
                     self.assertFalse(cli.finish_task(shot, range(1, 3)))
                     self.assertTrue(raw.exists())
                     self.assertFalse(json.loads((shot / "qa" / f"{frame:04d}.json").read_text())["passed"])
-                    if frame == 2:
-                        with self.assertRaises(ValueError):
-                            checks.prune(shot, range(frame, frame + 1))
-                    else:
-                        self.assertEqual(checks.prune(shot, range(frame, frame + 1)), [])
                     self.assertTrue(raw.exists())
                     failures = shot_failures(shot)
                     self.assertTrue(any(f.startswith(f"frame {frame}: role_beauty_error") for f in failures))
@@ -72,39 +65,18 @@ class RawEvidenceTest(unittest.TestCase):
             for change in ("drop", "nan", "roundoff", "off"):
                 with self.subTest(name=name, change=change), tempfile.TemporaryDirectory() as tmp:
                     shot = Path(tmp) / "s"
-                    write_shot(shot, [CLEAN, CLEAN], stride=24)
+                    write_shot(shot, [CLEAN, CLEAN])
                     _change_beauty_role(shot / "beauty" / "0002.exr", name, change)
                     passed = cli.finish_task(shot, range(1, 3))
                     self.assertEqual(passed, change == "roundoff")
-                    self.assertEqual((shot / "deep" / "0002.exr").exists(), change != "roundoff")
+                    self.assertEqual((shot / "deep" / "0002.exr").exists(), not passed)
                     frames = cast("list[dict[str, float]]", checks.check_shot(shot)["frames"])
-                    self.assertEqual(frames[1]["beauty_roles"], float(change not in ("drop", "nan")))
-
-    def test_pruned_frames_need_their_acceptance_and_unchanged_targets(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            shot = root / "shots" / "s"
-            write_shot(shot, [CLEAN, CLEAN, CLEAN], stride=2)
-            self.assertTrue(cli.finish_task(shot, range(1, 4)))
-            self.assertEqual(sorted(p.name for p in (shot / "deep").iterdir()), ["0001.exr", "0003.exr"])
-            self.assertEqual(shot_failures(shot), [])
-            self.assertEqual([r.failures for r in checks.accept(shot, range(1, 4))], [[], [], []])
-            self.assertEqual(shot_failures(shot), [])
-            target = shot / "layers" / "0002.exr"
-            kept = target.read_bytes()
-            target.unlink()
-            self.assertIn("frame 2: missing layers", shot_failures(shot))
-            sky = pack.targets(pack.samples(_sky_everywhere(shot)))
-            pack.write_layers(sky, target)
-            self.assertIn("frame 2: targets changed since raw acceptance", shot_failures(shot))
-            target.write_bytes(kept)
-            (shot / "qa" / "0002.json").unlink()
-            self.assertIn("frame 2: no raw deep and no raw acceptance", shot_failures(shot))
+                    self.assertEqual(frames[1]["merged_beauty_roles"], float(change not in ("drop", "nan")))
 
     def test_targets_are_checked_against_the_raw_deep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN, CLEAN], stride=24)
+            write_shot(shot, [CLEAN, CLEAN])
             pack.pack(shot, range(1, 3))
             self.assertEqual(shot_failures(shot), [])
             sky = pack.targets(pack.samples(_sky_everywhere(shot)))
@@ -112,42 +84,18 @@ class RawEvidenceTest(unittest.TestCase):
             failures = shot_failures(shot)
             self.assertTrue(any(f.startswith("frame 2: target_mismatch") for f in failures), failures)
 
-    def test_changed_id_ranges_void_the_acceptance_and_keep_the_raw_deep(self) -> None:
+    def test_changed_id_ranges_fail_raw_qa_and_keep_the_raw_deep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN, CLEAN], stride=24)
+            write_shot(shot, [CLEAN, CLEAN])
             pack.pack(shot, range(1, 3))
-            self.assertEqual([r.failures for r in checks.accept(shot, range(1, 3))], [[], []])
+            self.assertEqual(shot_failures(shot), [])
             _drop_hero_ids(shot)
-            with self.assertRaisesRegex(ValueError, r"2 \(manifest\)"):
-                checks.prune(shot, range(1, 3))
             self.assertTrue((shot / "deep" / "0002.exr").exists())
             failures = shot_failures(shot)
-            self.assertTrue(any(f.startswith("frame 2: valid_id_fraction=0.8") for f in failures), failures)
-
-    def test_a_pruned_frame_fails_once_any_validation_input_changes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN, CLEAN], stride=24)
-            pack.pack(shot, range(1, 3))
-            checks.accept(shot, range(1, 3))
-            self.assertEqual(checks.prune(shot, range(1, 3)), [2])
-            manifest = (shot / "manifest.json").read_text()
-            camera = (shot / "camera.json").read_text()
-            self.assertEqual(shot_failures(shot), [])
-            _drop_hero_ids(shot)
-            self.assertIn("frame 2: manifest changed since raw acceptance", shot_failures(shot))
-            timed = {**json.loads(manifest), "timings": {"device": "cpu"}}
-            (shot / "manifest.json").write_text(json.dumps(timed))
-            self.assertEqual(shot_failures(shot), [])
-            records = json.loads(camera)
-            records["frames"][1]["focus_distance_m"] = 2.1
-            (shot / "camera.json").write_text(json.dumps(records))
-            self.assertIn("frame 2: camera changed since raw acceptance", shot_failures(shot))
-            (shot / "camera.json").write_text(camera)
-            with mock.patch.dict(checks.LIMITS, {"valid_id_fraction": (0.5, 1.0)}):
-                self.assertIn("frame 2: validation changed since raw acceptance", shot_failures(shot))
-            self.assertEqual(shot_failures(shot), [])
+            self.assertTrue(
+                any(f.startswith("frame 2: valid_id_fraction=0.6667") for f in failures), failures
+            )
 
     def test_records_of_another_contract_version_or_id_domain_are_refused(self) -> None:
         wide = [
@@ -162,12 +110,12 @@ class RawEvidenceTest(unittest.TestCase):
         for name, change in changes:
             with self.subTest(name=name, change=change), tempfile.TemporaryDirectory() as tmp:
                 shot = Path(tmp) / "s"
-                write_shot(shot, [CLEAN, CLEAN], stride=24)
+                write_shot(shot, [CLEAN, CLEAN])
                 record = json.loads((shot / name).read_text())
                 (shot / name).write_text(json.dumps(record | change))
-                for step in (pack.pack, checks.accept, checks.prune):
+                for step in (pack.pack, checks.accept):
                     with self.assertRaisesRegex(
-                        ValueError, r"not 'strata-dataset-0.4.0'|leaves \[0, 32768\)"
+                        ValueError, r"not 'strata-dataset-0.5.0'|leaves \[0, 32768\)"
                     ):
                         step(shot, range(1, 3))
                 self.assertFalse((shot / "layers").exists())
@@ -196,7 +144,7 @@ class MergedSampleTest(unittest.TestCase):
                 shot = Path(tmp) / "s"
                 sample = merged(0.5, 1.0, sources, names=names)
                 pixels: list[Sample | list[Sample]] = [[sample, SKY], [Sample(0.2, 0.5, 1), SKY], SKY]
-                write_shot(shot, [pixels, pixels], stride=24)
+                write_shot(shot, [pixels, pixels])
                 manifest = json.loads((shot / "manifest.json").read_text())
                 declared = {r["first_id"] for r in manifest["instance_ids"]}
                 manifest["instance_ids"] += [
@@ -204,6 +152,8 @@ class MergedSampleTest(unittest.TestCase):
                     for i in sorted(set(sources) - declared)
                 ]
                 (shot / "manifest.json").write_text(json.dumps(manifest))
+                pack.pack(shot, range(1, 3))
+                arrays = contract_samples.load(pack.ShotFrames.load(shot).sample_dir(shot, 1))
                 finished = cli.finish_task(shot, range(1, 3))
                 passed = bool(checks.check_shot(shot)["passed"])
                 self.assertEqual(finished, passed)
@@ -213,7 +163,6 @@ class MergedSampleTest(unittest.TestCase):
                     for role, value in zip(roles.ROLES, sample.role_values(), strict=True):
                         self.assertEqual(float(layers[f"roles.{role}"][0, 0]), float(np.float32(value)))
                     self.assertEqual(float(layers["roles.foreground"][0, 1]), 0.5)
-                arrays = contract_samples.load(pack.ShotFrames.load(shot).sample_dir(shot, 1))
                 found = int(arrays["ids"][0])
                 np.testing.assert_array_equal(arrays["roles"][0], np.array(sample.role_values(), np.float32))
                 if found == identity.UNLABELLED:
@@ -253,7 +202,7 @@ class SkyTargetTest(unittest.TestCase):
     def test_sky_only_pixel_is_one_opaque_layer_with_sky_colour_and_no_depth(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN], stride=1)
+            write_shot(shot, [CLEAN])
             pack.pack(shot, range(1, 2))
             layers = read_flat(shot / "layers" / "0001.exr")
             np.testing.assert_allclose(layers["L0.A"][0], [1.0, 0.5, 1.0])
@@ -289,10 +238,10 @@ HAIRSTYLE: list[Sample | list[Sample]] = [
 
 
 class RoleTest(unittest.TestCase):
-    def test_every_frame_keeps_role_coverage_from_its_own_deep_after_pruning(self) -> None:
+    def test_every_frame_keeps_role_coverage_from_its_own_deep_after_finishing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN, HAIRSTYLE, CLEAN], stride=2)
+            write_shot(shot, [CLEAN, HAIRSTYLE, CLEAN])
             manifest = json.loads((shot / "manifest.json").read_text())
             manifest["instance_ids"].append({"name": "hero_hair", "first_id": 4, "count": 1})
             (shot / "manifest.json").write_text(json.dumps(manifest))
@@ -308,27 +257,27 @@ class RoleTest(unittest.TestCase):
                     np.testing.assert_allclose(targets[f"roles.{role}"][0], values, atol=1e-6)
             self.assertEqual(shot_failures(shot), [])
 
-    def test_targets_without_role_coverage_fail_qa_on_frames_without_raw_deep(self) -> None:
+    def test_targets_without_role_coverage_fail_raw_qa_on_every_frame(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN, CLEAN], stride=24)
+            write_shot(shot, [CLEAN, CLEAN])
             self.assertTrue(cli.finish_task(shot, range(1, 3)))
             target = shot / "layers" / "0002.exr"
             frame = read_flat(target)
             pack.write_layers({k: v for k, v in frame.items() if not k.startswith("roles.")}, target)
             failures = shot_failures(shot)
             self.assertIn("frame 2: role_coverage=0 outside 1.0..1.0", failures)
-            self.assertIn("frame 2: targets changed since raw acceptance", failures)
+            self.assertTrue(any(f.startswith("frame 2: rebuilt_mismatch") for f in failures))
 
 
 class SidecarTest(unittest.TestCase):
-    def test_recomposition_frames_publish_contract_sidecars(self) -> None:
+    def test_every_frame_publishes_contract_sidecars(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN, CLEAN, CLEAN], stride=2)
+            write_shot(shot, [CLEAN, CLEAN, CLEAN])
             pack.pack(shot, range(1, 4))
             names = sorted(p.name for p in (shot / "samples").iterdir())
-            self.assertEqual(names, ["s_0001", "s_0003"])
+            self.assertEqual(names, ["s_0001", "s_0002", "s_0003"])
             directory = shot / "samples" / "s_0001"
             self.assertEqual(contract_samples.errors(directory, (1, 3)), [])
             arrays = contract_samples.load(directory)
@@ -350,7 +299,7 @@ class SidecarTest(unittest.TestCase):
     def test_a_sidecar_that_differs_from_its_raw_deep_fails_qa(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN, CLEAN], stride=24)
+            write_shot(shot, [CLEAN, CLEAN])
             pack.pack(shot, range(1, 3))
             pack.remove_samples(shot, range(1, 2))
             frame = pack.samples(read_deep(shot / "deep" / "0001.exr"))
@@ -376,7 +325,7 @@ class SidecarTest(unittest.TestCase):
     def test_a_sidecar_file_that_differs_from_its_recorded_identity_is_unreadable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN], stride=1)
+            write_shot(shot, [CLEAN])
             pack.pack(shot, range(1, 2))
             ids = shot / "samples" / "s_0001" / "deep" / "ids.npy"
             np.save(ids, np.zeros_like(np.load(ids)), allow_pickle=False)
@@ -389,7 +338,7 @@ class SidecarTest(unittest.TestCase):
         for name in ("write_bytes", "rename"):
             with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
                 shot = Path(tmp) / "s"
-                write_shot(shot, [CLEAN], stride=1)
+                write_shot(shot, [CLEAN])
                 with (
                     mock.patch.object(Path, name, side_effect=OSError("injected")),
                     self.assertRaises(OSError),
@@ -405,7 +354,7 @@ class SidecarTest(unittest.TestCase):
         for kind in ("empty", "symlink", "file"):
             with self.subTest(kind), tempfile.TemporaryDirectory() as tmp:
                 shot = Path(tmp) / "s"
-                write_shot(shot, [CLEAN], stride=1)
+                write_shot(shot, [CLEAN])
                 pack.pack(shot, range(1, 2))
                 published = shot / "samples" / "s_0001"
                 elsewhere = published.rename(shot / "elsewhere")
@@ -434,7 +383,7 @@ class IntrinsicsTest(unittest.TestCase):
     def test_recorded_intrinsics_must_match_the_rendered_projection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shot = Path(tmp) / "s"
-            write_shot(shot, [CLEAN], stride=1)
+            write_shot(shot, [CLEAN])
             pack.pack(shot, range(1, 2))
             beauty = shot / "beauty" / "0001.exr"
             write_beauty(beauty, read_deep(shot / "deep" / "0001.exr"), fy_scale=1.5)

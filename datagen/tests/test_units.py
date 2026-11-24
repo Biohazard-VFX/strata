@@ -12,12 +12,13 @@ from strata_datagen.exr import Deep, read_deep
 from strata_datagen.generators import groom
 from strata_datagen.library import hdri
 from strata_datagen.qa import checks
-from strata_datagen.qa.deep import flatten, instance_ids
-from strata_datagen.render import settings
+from strata_datagen.qa.deep import instance_ids, partial_coverage
+from strata_datagen.render import pack, settings
 from strata_datagen.rng import stream
 from strata_datagen.usdutil import relative_asset, tag_instances
 from strata_dataset import identity, roles
-from tests.fixtures import membership
+from tests.fixtures import Sample, membership, write_shot
+from tests.flatten import flatten
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -62,6 +63,13 @@ def _deep(samples: list[list[tuple[float, float, float, float, float, float]]]) 
 
 
 class DeepTest(unittest.TestCase):
+    def test_partial_front_slab_includes_absolute_gap_and_opaque_alpha(self) -> None:
+        depth = np.array([0.1, 0.14, 0.1, 0.16, 0.1, 0.1], np.float32)
+        alpha = np.array([0.5, 1.0, 0.5, 1.0, 1.0, np.nextafter(1.0, 2.0)], np.float64)
+        with np.errstate(all="raise"):
+            found = partial_coverage(depth, alpha, np.array([2, 2, 1, 1]), np.ones(4))
+        self.assertEqual(found.tolist(), [False, True, False, False])
+
     def test_flatten_composites_front_to_back_and_flags_see_through_pixels(self) -> None:
         deep = _deep(
             [
@@ -106,6 +114,14 @@ def write_deep(path: Path, samples: list[list[tuple[float, ...]]]) -> None:
 
 
 class QaTest(unittest.TestCase):
+    def test_no_labelled_coverage_reports_fully_declared_and_fully_unlabelled(self) -> None:
+        deep = _deep([[(0.2, 0.2, 0.2, 1.0, 2.0, 1)]])
+        deep.channels["instance_check"][:] = 0.0
+        beauty = {c: np.array([[0.2]], np.float32) for c in "RGB"}
+        measured = checks.deep_metrics(deep, beauty, [(0, 4)])
+        self.assertEqual(measured["valid_id_fraction"], 1.0)
+        self.assertEqual(measured["unlabelled_coverage"], 1.0)
+
     def test_deep_with_a_sky_sample_flattens_to_the_beauty_everywhere(self) -> None:
         ranges = [(0, 4), (1000, 1001)]
         with tempfile.TemporaryDirectory() as tmp:
@@ -141,9 +157,7 @@ class QaTest(unittest.TestCase):
         self.assertEqual(metrics["valid_id_fraction"], 1.0)
         self.assertEqual(metrics["id_check_failure_fraction"], 0.4)
         self.assertAlmostEqual(metrics["unlabelled_coverage"], (0.5 + 0.25) / 3, places=6)
-        self.assertGreater(
-            metrics["id_check_failure_fraction"], checks.LIMITS["id_check_failure_fraction"][1]
-        )
+        self.assertGreater(metrics["unlabelled_coverage"], checks.LIMITS["unlabelled_coverage"][1])
 
 
 def _merged_deep(pixels: list[list[tuple[float, ...]]]) -> Deep:
@@ -161,22 +175,65 @@ def _merged_deep(pixels: list[list[tuple[float, ...]]]) -> Deep:
 
 
 class RoleChannelTest(unittest.TestCase):
-    def test_role_channels_out_of_order_or_missing_fail_raw_qa(self) -> None:
+    def test_planar_role_gather_matches_prefix_minimum(self) -> None:
+        alpha = np.array([0.3, 0.5, 1.0], np.float32)
+        order = np.array([2, 0, 1], np.int64)
+        for dtype in (np.float16, np.float32, np.float64):
+            raw = np.array([[0.8, 0.9, 0.2], [0.2, 0.1, -0.1], [0.7, 0.6, 0.4]], dtype)
+            expected = np.minimum.accumulate(np.maximum(np.column_stack([alpha, raw[order]]), 0), axis=1)
+            np.testing.assert_array_equal(
+                roles.nested(tuple(raw[:, i] for i in range(3)), alpha, order=order),
+                expected[:, 1:].astype(np.float32),
+            )
+            np.testing.assert_array_equal(roles.nested(raw[order], alpha), expected[:, 1:].astype(np.float32))
+        invalid = (np.zeros((3, 2)), (raw[:, 0], raw[:, 1]), (raw[:, 0], raw[:2, 1], raw[:, 2]))
+        for channels in invalid:
+            with self.assertRaises(ValueError):
+                roles.nested(channels, alpha)
+        with self.assertRaises(ValueError):
+            roles.nested(raw, alpha[:2])
+        with self.assertRaises(ValueError):
+            roles.nested(raw, alpha, order=np.array([0, 1, 3], np.int64))
+
+    def test_role_channels_out_of_order_fail_raw_qa(self) -> None:
         deep = _deep([[(0, 0, 1, 1.0, 5.0, 3)], [(0, 1, 0, 0.5, 2.0, 2), (0, 1, 0, 1.0, 3000.0, 0)]])
         beauty = {c: flatten(deep).rgba[..., i].astype(np.float32) for i, c in enumerate("RGB")}
         ranges = [(0, 4)]
         metrics = checks.deep_metrics(deep, beauty, ranges)
-        self.assertEqual((metrics["role_channels"], metrics["role_excess"]), (1.0, 0.0))
+        self.assertEqual(metrics["role_excess"], 0.0)
         for name, low, high, excess in (("fur", 2, 3, 0.25), ("foreground", 0, 1, 0.5), ("hero", 0, 1, 1.0)):
             broken = {**deep.channels, name: deep.channels[name].copy()}
             broken[name][low:high] += excess
             found = checks.deep_metrics(Deep(deep.width, deep.height, deep.counts, broken), beauty, ranges)
             self.assertAlmostEqual(found["role_excess"], excess, places=6)
             self.assertGreater(found["role_excess"], checks.LIMITS["role_excess"][1])
-        missing = {k: v for k, v in deep.channels.items() if k != "hero"}
-        found = checks.deep_metrics(Deep(deep.width, deep.height, deep.counts, missing), beauty, ranges)
-        self.assertEqual(found["role_channels"], 0.0)
-        self.assertNotIn("role_excess", found)
+
+    def test_pack_refuses_missing_identity_or_role_channels_without_publishing(self) -> None:
+        for missing in (
+            "coverage",
+            "instance_id",
+            "instance_check",
+            "instance_check2",
+            "foreground",
+            "hero",
+            "fur",
+        ):
+            with self.subTest(channel=missing), tempfile.TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "shot"
+                write_shot(shot, [[Sample(0.2, 1.0, 2)]])
+                raw = shot / "deep" / "0001.exr"
+                source = OpenEXR.File(str(raw), separate_channels=True).parts[0]
+                channels = {name: value for name, value in source.channels.items() if name != missing}
+                OpenEXR.File(source.header, channels).write(str(raw))
+                before = raw.read_bytes()
+                plan = pack.ShotFrames.load(shot)
+                with self.assertRaises(KeyError) as raised:
+                    pack.pack(shot, range(1, 2))
+                self.assertEqual(raised.exception.args, (missing,))
+                self.assertEqual(raw.read_bytes(), before)
+                self.assertFalse(plan.merged_dir(shot, 1).exists())
+                self.assertFalse(plan.sample_dir(shot, 1).exists())
+                self.assertFalse((shot / "layers" / "0001.exr").exists())
 
 
 class IdentityTest(unittest.TestCase):
@@ -309,8 +366,20 @@ class IdentityTest(unittest.TestCase):
             coverage,
         )
         np.testing.assert_array_equal(decoded, ids)
-        zero = np.zeros(1, np.float32)
-        self.assertEqual(identity.decode(zero, zero, zero, zero).tolist(), [identity.UNLABELLED])
+        order = np.array([identity.MAX_ID - 1, 0, 100, 0], np.int64)
+        channels = (
+            ids.astype(np.float32) * coverage,
+            identity.check(ids) * coverage,
+            identity.check2(ids) * coverage,
+            coverage,
+        )
+        np.testing.assert_array_equal(identity.decode(*channels, order=order), ids[order])
+        for outside in (-1, identity.MAX_ID):
+            with self.assertRaises(ValueError):
+                identity.decode(*channels, order=np.array([outside], np.int64))
+        for dtype in (np.float16, np.float32, np.float64):
+            zero = np.zeros(1, dtype)
+            self.assertEqual(identity.decode(zero, zero, zero, zero).tolist(), [identity.UNLABELLED])
         self.assertEqual(identity.range_errors(0, identity.MAX_ID), [])
         self.assertTrue(identity.range_errors(identity.MAX_ID - 1, 2))
 

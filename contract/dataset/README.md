@@ -1,10 +1,23 @@
-# Strata dataset contract (v0.4.0)
+# Strata dataset contract (v0.5.0)
 
-The training side reads exactly this. Version string: `strata-dataset-0.4.0` (in every
+The training side reads exactly this. Version string: `strata-dataset-0.5.0` (in every
 `manifest.json` and `camera.json`, `strata_dataset.records.VERSION`). `schema.json` is the JSON
 Schema for both files; `validate.py` checks a shot directory against it, against
 `strata_dataset.records.errors` and against the image files. Datagen packing and raw QA refuse
 records of any other version.
+
+0.5.0 keeps immutable merged deep, beauty and layers on **every** frame: Strata is a video model
+and needs consecutive deep targets to learn and measure temporal stability. Raw deep EXRs and NPY
+sample sidecars are deleted only after that frame passes raw QA and merged validation, and targets
+rebuilt from merged deep agree with its packed targets. A durable acceptance receipt binds the
+retained files, records and validation rules before deletion; interrupted deletion resumes safely. Frame-skipping deep
+policies are forbidden; records carrying `render.deep_stride` are rejected. Merged deep preserves
+both over-compositing and the sufficient statistics of the layer rule. Existing K=4 targets still come from raw samples,
+without changing their arithmetic or bytes. Older shots must be repacked from their original raw
+deep; changing a record's version does not create the new sidecars. The training loader continues
+to use raw sample sidecars; training accepted merged-only shots requires separate loader adoption.
+`validate.py` permits absent raw files but requires valid merged deep on every declared frame;
+`check_shot` additionally requires matching raw acceptance and rechecks the merged reconstruction.
 
 0.4.0 carries roles in linear deep and beauty channels (`foreground`, `hero`, `fur`): Karma sums
 the channels of samples it merges, so role coverage stays exact through any merge, and role targets
@@ -28,9 +41,10 @@ A dataset root holds one directory per shot; any directory with a `manifest.json
   manifest.json
   camera.json
   beauty/0001.exr ... 0024.exr
-  deep/0001.exr ... 0024.exr     raw deep, kept on the frame stride (`manifest.render.deep_stride`)
+  deep/0001.exr ... 0024.exr     raw deep, until each frame is accepted
   layers/0001.exr ... 0024.exr   K = 4 sky-inclusive layer targets and role coverage, every frame
-  samples/<shot_id>_NNNN/        raw-sample sidecars of every recomposition frame (the deep stride)
+  merged/<shot_id>_NNNN/deep.npz  merged deep and layer statistics, every frame
+  samples/<shot_id>_NNNN/        raw-sample sidecars, until each frame is accepted
   qa/NNNN.json      raw QA acceptance of each frame (identity of every input it validated)
   scene/            optional: the USD the shot was rendered from (reproducibility, not training input)
   qa.json           optional: the generator's acceptance report
@@ -60,7 +74,7 @@ rendered range: most shots are 8-frame clips, a minority are 24-96-frame sequenc
 in pixels, `world_to_camera`, `distortion`, `shutter_open`/`shutter_close` in frames relative to
 the frame (both 0 when motion blur is off), `fstop` (0 means depth of field off),
 `focus_distance_m`, `focal_length_mm`, `sensor_width_mm`. `move` names the camera move
-(`locked`, `pan_tilt`, `handheld`, `dolly`, `orbit`).
+(`locked`, `pan_tilt`, `handheld`, `dolly`, `orbit`, or the continuous long-shot `path`).
 
 ## manifest.json
 
@@ -108,7 +122,7 @@ alpha 1, the sky colour and inverse depth 0. Training reads these for every fram
 The same file holds, for every frame, float32 `roles.<role>` (`strata_dataset.roles.coverage`): the
 visible coverage of the role in the pixel, the sum over the frame's deep samples of the sample's
 role channel (premultiplied, nested by `strata_dataset.roles.nested`) times the transmittance in
-front, from the frame's own deep before any raw deep is pruned. A merged sample contributes exactly
+front, from the frame's own raw deep before acceptance. A merged sample contributes exactly
 its sources' share of each role; instance ids play no part. Every surface's role primvars follow its
 `manifest.instance_ids` range name (`strata_dataset.roles.membership`):
 
@@ -121,11 +135,57 @@ its sources' share of each role; instance ids play no part. Every surface's role
 `0 <= fur <= hero <= foreground <= 1` in every pixel; the sky's coverage is the pixel coverage minus
 `foreground`.
 
+## merged/<shot_id>_NNNN/deep.npz
+
+Every packed frame has this compressed, pickle-free NPZ, published as a whole immutable directory
+by rename. `strata_dataset.merged.read` returns owned arrays; `Merged.targets(K)` calls the same
+`layers.reduce_samples` implementation used by raw packing. Offline `remove-samples` removes both
+raw and merged sidecars for the requested frames; repacking refuses a different published value.
+
+| array | dtype, shape | meaning |
+| --- | --- | --- |
+| `shape`, `offsets` | int64 (2,), (H*W+1,) | image shape and row-major run offsets |
+| `z`, `zback` | float32 (N,) | first and last source depth of each run, not a representative mean |
+| `ids` | int64 (N,) | the run's decoded id, including -1 for unlabelled |
+| `alpha`, `rgb`, `roles` | float64 (N,), (N,3), (N,3) | exact front-to-back over-composite, accumulated in float64 |
+| `statistics` | float64 (N,4) | source front transmittance T, summed visible alpha W, summed visible inverse-depth moment M, summed visible sky coverage S |
+
+`validate.py` checks the archive's exact fields, dtypes, shapes, offsets, interval ordering, finite
+values, role nesting and statistics. The float64 physical over-composite permits at most eight
+float64 epsilons of alpha/role-bound roundoff (about 1.78e-15); raw float32 sidecar validation stays
+strict. This accounts for accumulation at opaque runs without rounding or clipping stored moments.
+
+Runs join only consecutive depth-sorted samples with the same decoded id and consecutive log gap
+at most ln(`layers.GAP_RATIO`) = ln(1.15). Equal-depth order stays stable. Samples discarded by the
+layer rule (visible alpha <= 1e-12) remain singletons: absorbing one could change the rule's visible
+endpoints or threshold membership. No identity is inferred from roles, including id -1.
+
+For original sample i, the statistics use the raw rule's transmittance t_i, w_i = t_i alpha_i,
+M = sum(w_i / z_i), S = sum(w_i for sky samples), and W = sum(w_i). Keeping T and W also preserves
+the raw rule's visibility cutoff and cumulative-log rounding across pixels; recomputing only a
+representative depth or merged alpha loses these facts. Physical over-composites include all source
+RGB and role contributions. Layer RGB uses the run's physical over-composite; float64 avoids an
+extra float32 quantization before the final layer cast.
+
+The layer rule measures a gap from the previous **kept sample's back** to the next front. Raw
+samples have back = front and their own inverse-depth contribution, so their existing operation
+order is unchanged. Merged statistics supply visible sums and moments to that same rule. Sky is
+carried by S, not reclassified from a run's averaged roles. For depths [1, 1.1, 1.2] and ids [1, 1, 2],
+the first run ends at 1.1: there is no false 1-to-1.2 split.
+
+Deterministic tests exercise K=1..8, multi-id boundary chains, empty and occluded pixels, zero and
+opaque alpha, sky and mixed roles. Raw and merged targets require identical nonempty and sky layer
+masks, alpha and inverse depth within 1e-5 absolute, and RGB within 1e-5 relative (1e-12 absolute
+floor for numerical zero). These bounds allow only float32-scale final rounding and float64
+regrouping/cumulative-log error, not different clustering. Flattened RGB, alpha and roles must also
+agree independently of the layer statistics. K=4 production targets remain packed from raw.
+
 ## samples/<shot_id>_NNNN/
 
-The raw samples of a recomposition frame (every frame on the deep stride from the first frame),
+Before acceptance, each frame's raw samples are stored
 as uncompressed C-order NPY (`strata_dataset.samples`). A frame directory is write-once: it appears
-whole, by one rename, and is never changed afterwards; only an offline removal deletes it. It is a
+whole, by one rename, and is never rewritten. Acceptance deletes it after committing the retained
+frame; offline removal is allowed only while raw deep remains available. It is a
 real directory, never a symlink. `identity.json` records the SHA-256 of every file below, and its
 own SHA-256 is the frame's identity (recorded by raw QA). `strata_dataset.samples.read` opens the
 directory once, reads every file through that handle and verifies each against `identity.json`:

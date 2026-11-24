@@ -1,18 +1,20 @@
 # Native hybrid supervision
 
 The authoritative producer format is `contract/dataset/README.md` and
-`strata_dataset.records.VERSION`: only `strata-dataset-0.4.0` is accepted.
+`strata_dataset.records.VERSION`: only `strata-dataset-0.5.0` is accepted.
 Re-render or drop older datasets; changing their version strings does not add
 linear roles or recover missing identity checks.
 
 Read sky-inclusive K=4 targets and `roles.foreground`, `roles.hero`, `roles.fur`
-from every packed frame, even after raw deep is pruned. Role coverage is fractional,
+from every packed frame. Keep merged deep, beauty and layers on every frame; delete
+raw deep and sample sidecars after acceptance. Role coverage is fractional,
 not binary and not renormalised. The flat `coverage` AOV includes sky and is not a
 foreground mask. Sky membership comes only from the linear foreground role.
 
-Each recomposition frame needs the producer's immutable `samples/<frame-id>/`
-sidecar, including `deep/roles.npy`, or conformant raw deep with both identity
-checks and linear roles. The reader verifies sidecar identities through
+The training loader does not yet read `merged/`: accepted frames are photometric-only
+for training until loader adoption lands. Recomposition needs immutable
+`samples/<frame-id>/`, including `deep/roles.npy`, or conformant raw deep with both
+identity checks and linear roles. The reader verifies sidecar identities through
 `strata_dataset.samples.read`. Native alpha comes from float `coverage`, never
 half `A`. Raw identity decoding calls `strata_dataset.identity.decode`.
 

@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 
 from strata_dataset import segmented
 
-Array = NDArray[np.float64]
+Array = NDArray[np.float32] | NDArray[np.float64]
 LAYERS = 4
 GAP_RATIO = 1.15
 
@@ -35,11 +35,15 @@ def reduce_samples(
     layers: int = LAYERS,
     gap_ratio: float = GAP_RATIO,
     sky: NDArray[np.bool_] | None = None,
+    zback: Array | None = None,
+    statistics: NDArray[np.float64] | None = None,
 ) -> Layers:
     """Own K-layer arrays; borrowed inputs are immutable and calls are thread-safe.
 
     Samples are pixel-major, in any depth order. RGB is premultiplied.
     Optional sky membership masks geometry of any cluster with visible sky.
+    Interval samples use zback for gaps and statistics (T, W, M, S) for visible
+    transmittance, alpha, inverse-depth moment and sky contribution.
     """
     pixels = shape[0] * shape[1]
     if layers < 1 or gap_ratio <= 1:
@@ -50,6 +54,13 @@ def reduce_samples(
         raise ValueError("sample counts must be nonnegative and depths finite and positive")
     if alpha.shape != depth.shape or (sky is not None and sky.shape != depth.shape):
         raise ValueError("sample alpha and sky shapes must match depth")
+    back = depth if zback is None else zback
+    if back.shape != depth.shape or not (np.isfinite(back).all() and np.all(back >= depth)):
+        raise ValueError("sample back depths must be finite and at least their front depths")
+    if statistics is not None and (
+        statistics.shape != (depth.size, 4) or not np.isfinite(statistics).all() or np.any(statistics < 0)
+    ):
+        raise ValueError("layer statistics must be finite, nonnegative and have shape (samples, 4)")
     output = np.zeros((pixels * layers, 5), dtype=np.float64)
     if depth.size:
         segmented.fill(
@@ -61,6 +72,8 @@ def reduce_samples(
             np.zeros(depth.size, dtype=np.bool_) if sky is None else sky,
             layers,
             float(np.log(gap_ratio)),
+            back,
+            statistics,
         )
     cube = output.reshape(*shape, layers, 5).transpose(2, 3, 0, 1).astype(np.float32)
     return Layers(cube[:, 0], np.clip(cube[:, 1], 0, 1), cube[:, 2:])

@@ -166,7 +166,6 @@ def manifest(shot: Shot, library: Library, render: RenderParams) -> dict[str, ob
             "frames": [shot.frames[0], shot.frames[-1]],
             "aovs": [a.name for a in settings.BEAUTY_AOVS],
             "deep_aovs": list(settings.DEEP_AOVS),
-            "deep_stride": render.deep_stride,
         },
         "timings": {},
     }

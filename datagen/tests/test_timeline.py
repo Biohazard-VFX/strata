@@ -1,7 +1,9 @@
 import unittest
 
 import numpy as np
+from jsonschema import Draft202012Validator
 
+import validate
 from strata_datagen import timeline
 from strata_datagen.fields import Ground
 from strata_datagen.generators import camera
@@ -35,6 +37,8 @@ class CameraPathTest(unittest.TestCase):
             choices = camera.CameraChoices(depth_of_field=True)
             track = camera.sample(stream(seed, "c"), ground, targets, 1.6, frames=frames, choices=choices)
             self.assertEqual(track.move, camera.PATH)
+            schema = {**validate.SCHEMA, "$ref": "#/$defs/camera/properties/move"}
+            self.assertEqual(list(Draft202012Validator(schema).iter_errors(track.move)), [])
             records = [
                 {
                     "world_to_camera": w2c.tolist(),

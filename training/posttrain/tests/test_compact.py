@@ -24,7 +24,7 @@ def test_compact_frame_without_raw_deep_preserves_targets_and_denoised_part(tmp_
                 "contract": CONTRACT,
                 "shot_id": "shot",
                 "background": {"instance_id": 0},
-                "render": {"deep_stride": 24},
+                "render": {"frames": [2, 2]},
             }
         )
     )

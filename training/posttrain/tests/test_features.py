@@ -52,7 +52,7 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
             ],
         },
     )
-    write_json(tmp_path / "manifest.json", {"contract": CONTRACT})
+    write_json(tmp_path / "manifest.json", {"contract": CONTRACT, "render": {"frames": [1, 2]}})
     entry = {
         "id": "frame",
         "shot": "shot",
@@ -104,6 +104,7 @@ def test_native_denoised_extraction_persists_matching_inference_image_and_reject
     assert_allclose(targets["beauty"][0].numpy(), np.zeros_like(denoised))
     features.extract(index, root, "depthpro2-s", clip_length=2, device="cpu")
     assert len(observed) == 1
+    mapped.arrays.cache_clear()
     shutil.rmtree(root / "other")
     features.extract(index, root, "depthpro2-s", clip_length=2, device="cpu")
     assert len(observed) == 2

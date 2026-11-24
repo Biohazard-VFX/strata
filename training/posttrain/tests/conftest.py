@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 from pathlib import Path
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 from strata_dataset.roles import membership
+from strata_dataset.samples import frame_id
 
 
 def authored_roles(alpha: Any, ids: Any) -> Any:
@@ -23,6 +25,14 @@ def packed_shot(tmp_path: Path) -> Path:
     shot = tmp_path / "dataset/shot"
     shutil.copytree(Path(os.environ["STRATA_DATASET_FIXTURE"]), shot)
     return shot
+
+
+@pytest.fixture
+def unavailable_samples_shot(packed_shot: Path) -> Path:
+    manifest = json.loads((packed_shot / "manifest.json").read_text())
+    shutil.rmtree(packed_shot / "samples" / frame_id(manifest["shot_id"], 2))
+    (packed_shot / "deep" / "0002.exr").unlink()
+    return packed_shot
 
 
 @pytest.fixture(params=["cpu", "cuda"] if torch.cuda.is_available() else ["cpu"])
