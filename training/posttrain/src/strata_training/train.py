@@ -41,7 +41,7 @@ def _train(config_path: Path) -> dict[str, Any]:
     config = training_defaults(json.loads(config_path.read_text()))
     config["objective"] = COVERAGE_OBJECTIVE
     if config["early_stopping"]:
-        config["selection"] = "coverage-sweep-layer-v1"
+        config["selection"] = "coverage-sweep-layer-v2"
     config["sampling"] = "step-seed-gpu-v2" if config["loader_math"] == "torch" else "step-seed-v2"
     validate_config(config)
     device = config.get("device", "cuda")

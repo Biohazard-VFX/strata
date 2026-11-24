@@ -240,7 +240,7 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
         [0.4, 0.3, 0.2, 0.1, 0.05, 0.01] if passing else [0.4, 0.3, 0.2, 0.1]
     )
     assert final["validation"]["stale_evals"] == 2
-    final["config"].pop("selection")
+    final["config"]["selection"] = "coverage-sweep-layer-v1"
     old_selection = output / "old-selection.pt"
     with atomic_path(old_selection) as temporary:
         torch.save(final, temporary)

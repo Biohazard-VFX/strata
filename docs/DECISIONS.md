@@ -51,3 +51,4 @@
 - Validation brightness comes from GT beauty, not denoised model input; test_validation_brightness_uses_gt_not_denoised_model_input fixes the source.
 - Sweep opaque interior includes sky at the far clamp; leakage requires a finite GT surface; test_sky_interior_is_scored_and_invalid_prediction_depth_is_not_sky checks sky.
 - Before first pass patience follows overall leakage, not a relaxed bucket mean; test_prepass_prefers_overall_leakage_even_when_a_passing_bucket_rises checks it.
+- Selection v2 rejects v1 resume history after changing masks and leakage ranking; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume checks it.
