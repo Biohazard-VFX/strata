@@ -17,6 +17,7 @@ def leakage_samples(
     before = (prediction.inverse_depth > 0) & (prediction.inverse_depth >= 1 / plane)
     transmitted = np.prod(np.where(before, 1 - prediction.alpha.astype(np.float64), 1), axis=0)
     _, interior = coverage_regions(target, mixed)
+    interior &= inverse > 0
     if region is not None:
         interior &= region
     brightness = beauty.max(axis=0)

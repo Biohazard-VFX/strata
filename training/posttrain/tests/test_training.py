@@ -213,7 +213,7 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
             "loss": value * 2,
             "mixed_pixels": 1024,
             "frames": 1,
-            "leakage": {"worst_mean": leak, "passed": leak <= 0.001},
+            "leakage": {"worst_mean": leak, "passed": leak <= 0.001, "all": {"mean": leak}},
         }
 
     trainer: Any = import_module("strata_training.train")
@@ -250,6 +250,32 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     write_json(path, {**config, "resume": str(output / "last.pt")})
     with pytest.raises(ValueError, match="exhausted validation patience"):
         train(path)
+
+
+def test_validation_brightness_uses_gt_not_denoised_model_input(tmp_path: Path) -> None:
+    from torch import nn
+
+    from strata_training.data.dataset import Frame
+    from strata_training.model.head import DeepHead
+    from strata_training.validation import evaluate_validation
+
+    config, _ = _configuration(tmp_path)
+    entry = json.loads(Path(config["index"]).read_text())[0]
+    with np.load(entry["cache"]) as data:
+        arrays = dict(data)
+    arrays["mixed"][:, :16] = False
+    arrays["beauty"][:] = 2
+    save_arrays(Path(entry["cache"]), **arrays)
+    image = np.zeros((3, 32, 32), dtype=np.float32)
+    root = Path(config["features"]) / "train"
+    save_array(root / "image.npy", image)
+    write_json(root / "context.json", {"image_sha256": hashlib.sha256(image.tobytes()).hexdigest()})
+    frame = Frame(entry, Path(config["features"]))
+    assert frame.has_image
+    assert not frame.arrays["beauty"].any()
+    report = evaluate_validation(DeepHead(128, nn.Identity(), 4), config, [frame])
+    assert report["leakage"]["bright"]["pixels"] == 384
+    assert report["leakage"]["dark"]["pixels"] == 0
 
 
 def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode(

@@ -7,7 +7,7 @@ LEAKAGE_MIN_DELTA = 1e-5
 def selection_key(metrics: dict[str, Any]) -> tuple[bool, float, float, int]:
     leak = metrics["leakage"]
     score = float(metrics["coverage_sweep"]["selection"])
-    leakage = float(leak["worst_mean"])
+    leakage = float(leak["all"]["mean"])
     step = int(metrics["checkpoint_step"])
     return (False, score, leakage, step) if leak["passed"] else (True, leakage, score, step)
 
@@ -26,4 +26,6 @@ def meaningful_improvement(candidate: dict[str, Any], anchor: dict[str, Any] | N
             anchor["coverage_sweep"]["selection"] - candidate["coverage_sweep"]["selection"]
             >= SWEEP_MIN_DELTA
         )
-    return anchor["leakage"]["worst_mean"] - candidate["leakage"]["worst_mean"] >= LEAKAGE_MIN_DELTA
+    return (
+        anchor["leakage"]["all"]["mean"] - candidate["leakage"]["all"]["mean"] >= LEAKAGE_MIN_DELTA
+    )

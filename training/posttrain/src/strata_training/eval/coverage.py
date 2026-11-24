@@ -61,6 +61,8 @@ def coverage_integrals(
 
 def coverage_samples(prediction: Layers, target: Layers, mixed: Array) -> dict[str, Array]:
     def depths(layers: Layers) -> Array:
+        if not np.isfinite(layers.inverse_depth).all() or np.any(layers.inverse_depth < 0):
+            raise FloatingPointError("Invalid coverage-sweep inverse depth")
         return np.divide(
             1.0,
             layers.inverse_depth,
@@ -94,11 +96,7 @@ def coverage_regions(target: Layers, mixed: Array) -> tuple[Array, Array]:
     )
     edges = boundary | mixed.astype(bool)
     band = ndimage.distance_transform_edt(~edges) <= 4 if edges.any() else edges
-    interior = (
-        (1 - np.prod(1 - target.alpha.astype(np.float64), axis=0) >= 0.999)
-        & (target.inverse_depth[0] > 0)
-        & ~band
-    )
+    interior = (1 - np.prod(1 - target.alpha.astype(np.float64), axis=0) >= 0.999) & ~band
     return band, interior
 
 

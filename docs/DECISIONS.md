@@ -43,8 +43,11 @@
 - Sweep bounds use this pixel's GT/prediction minimum Z through 200 m; sky maps to 200 m; test_opaque_sweep_is_log_distance_and_signed fixes the far clamp.
 - Split volumetric intervals by Beer-Lambert transmission, not alpha interpolation; test_beer_lambert_overlaps_and_opaque_intervals_match_independent_quadrature checks it.
 - Select the pixel-pooled edge-band plus opaque-interior sweep among gate passes; test_checkpoint_selection_is_order_independent_and_slot_mae_is_diagnostic checks ranking.
-- Before any gate pass select least worst-region leakage and label no production candidate; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume checks it.
+- Before any gate pass select least overall leakage and label no production candidate; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume checks it.
 - Patience resets on sweep improvement >=0.0001, or leakage fall >=0.00001 before first pass; test_patience_uses_explicit_deltas_not_every_new_best fixes both deltas.
-- Exact score ties prefer lower leakage then earliest checkpoint step, independent of arrival; test_checkpoint_selection_is_order_independent_and_slot_mae_is_diagnostic checks ties.
+- Exact score ties prefer lower overall leakage then earliest step, independent of arrival; test_checkpoint_selection_is_order_independent_and_slot_mae_is_diagnostic checks ties.
 - Brightness buckets pool pixels: below 250 are not evaluated; otherwise limit=max(0.001,25/n); overall always gates at 0.001; test_count_aware_brightness_gate fixes boundaries.
 - Report premature occlusion before the visible GT surface without gating; test_premature_occlusion_is_report_only_and_gt_surface_is_visible checks it.
+- Validation brightness comes from GT beauty, not denoised model input; test_validation_brightness_uses_gt_not_denoised_model_input fixes the source.
+- Sweep opaque interior includes sky at the far clamp; leakage requires a finite GT surface; test_sky_interior_is_scored_and_invalid_prediction_depth_is_not_sky checks sky.
+- Before first pass patience follows overall leakage, not a relaxed bucket mean; test_prepass_prefers_overall_leakage_even_when_a_passing_bucket_rises checks it.

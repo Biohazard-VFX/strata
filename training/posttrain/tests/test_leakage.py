@@ -31,7 +31,7 @@ def test_behind_surface_leakage(alpha: float, inverse: float, expected: float) -
 @pytest.mark.parametrize(("depth", "offset"), [(0.5, 0.01), (2.0, 0.02)])
 def test_plane_uses_one_centimetre_or_one_percent(depth: float, offset: float) -> None:
     target = _layers(1, 1 / depth)
-    for distance, expected in [(offset * 0.99, 0), (offset * 1.01, 1)]:
+    for distance, expected in [(offset * 0.99, 0), (offset, 0), (offset * 1.01, 1)]:
         prediction = _layers(1, 1 / (depth + distance))
         samples = leakage_samples(prediction, target, np.zeros((16, 16)), np.zeros((3, 16, 16)))
         assert leakage_summary(samples)["all"]["mean"] == expected

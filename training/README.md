@@ -70,6 +70,7 @@ repopulated. Overall mean leakage always gates at <=0.001. Each brightness bucke
 is not evaluated below 250 pooled pixels; otherwise its mean limit is
 max(0.001,25/n), with n pooled across frames. Report premature occlusion at the
 mirror plane just before the visible GT front surface, without gating on it.
+Validation reads brightness from the GT cache, never from the denoised model input.
 
 The saved protocol preserves all 28 train and 8 pose-240 holdout frames. Training uses native crops. Historical v004 checkpoints used fixed final steps; new runs use the separate OOD-validation policy below. `metrics.json` has pooled mixed-pixel alpha MAE, front/back and ordered inverse-depth median relative errors, layer color/count/order diagnostics, native directed boundary F1, silhouette recall, calibration reliability bins, composite and fixed-magenta-plane insertion errors, and edge-band recomposition errors. Every method is scored at its own metric scale with depth AbsRel/δ1; there are no global-scale or affine-aligned diagnostics. Ground truth never rescales predictions or model inputs, including fake deep, analytical and frozen-probe baselines.
 
@@ -94,7 +95,7 @@ deep from clustered targets or claim that their coverage curves are identical.
 
 Report too-near (prematurely eats an element) and too-far (lets it show through)
 separately over the four-pixel band around GT mixed/front-alpha boundaries and
-GT-opaque interior outside that band. The selection score is the pixel-weighted
+GT-opaque interior (including sky) outside that band. The selection score is the pixel-weighted
 mean of near+far over the union, pooled across frames; neither region is given
 an artificial equal weight. Final evaluation and validation share this rule.
 
@@ -116,9 +117,9 @@ test scoring remains allowed. Use held-out **synthetic** shots for early stoppin
 
 A step-zero validation establishes the initial best. Full native-frame validation
 then runs every N steps and at the ceiling. Select the lowest coverage sweep among
-leakage-gate passes, with lower worst-region leakage then earliest checkpoint step
+leakage-gate passes, with lower overall leakage then earliest checkpoint step
 breaking exact sweep ties.
-Before any pass retain the lowest worst-region leakage, breaking ties by sweep,
+Before any pass retain the lowest overall leakage, breaking ties by sweep,
 and label the run `no production candidate`. Slot-alpha MAE is diagnostic only.
 Patience counts evaluations without a cumulative sweep improvement of at least
 0.0001 log metres; before the first pass a cumulative leakage fall of at least

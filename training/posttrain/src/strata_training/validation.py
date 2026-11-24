@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from strata_training.data.cache import load_layers
 from strata_training.data.dataset import Frame
 from strata_training.data.policy import require_supervision
 from strata_training.data.targets import composite
@@ -13,7 +14,7 @@ from strata_training.eval.leakage import leakage_samples, leakage_summary
 from strata_training.eval.predict import predict
 from strata_training.eval.protocol import entries_for
 from strata_training.losses.deep import deep_loss
-from strata_training.types import Array, Layers
+from strata_training.types import Array
 
 
 def validation_frames(config: dict[str, Any], training: list[dict[str, Any]]) -> list[Frame]:
@@ -64,23 +65,23 @@ def evaluate_validation(
     try:
         for frame in frames:
             result = predict(model, config, frame)
-            mixed = frame.arrays["mixed"].astype(bool)
+            target_layers, arrays = load_layers(Path(frame.entry["cache"]))
+            mixed = arrays["mixed"].astype(bool)
             error += float(
-                np.abs(result.alpha[0] - frame.arrays["alpha"][0])[mixed].sum(dtype=np.float64)
+                np.abs(result.alpha[0] - arrays["alpha"][0])[mixed].sum(dtype=np.float64)
             )
             pixels += int(mixed.sum())
             prediction = {k: torch.as_tensor(v[None]).float() for k, v in result.arrays().items()}
             prediction["alpha_logits"] = torch.logit(prediction["alpha"].clamp(1e-7, 1 - 1e-7))
             prediction["layer_rgb"] = prediction["rgb"]
-            target_layers = Layers(*(frame.arrays[k] for k in ("inverse_depth", "alpha", "rgb")))
             for name, values in leakage_samples(
-                result, target_layers, mixed, frame.arrays["beauty"]
+                result, target_layers, mixed, arrays["beauty"]
             ).items():
                 leakage.setdefault(name, []).append(values)
             for name, values in coverage_samples(result, target_layers, mixed).items():
                 sweep.setdefault(name, []).append(values)
             target = {
-                k: torch.tensor(frame.arrays[k][None]).float()
+                k: torch.tensor(arrays[k][None]).float()
                 for k in ("inverse_depth", "alpha", "rgb", "mixed")
             }
             target["beauty"] = composite(target["alpha"].movedim(1, 0), target["rgb"].movedim(1, 0))

@@ -97,7 +97,7 @@ def _metrics(sweep: float, leak: float, mixed: float = 0.1, step: int = 0) -> di
     return {
         "checkpoint_step": step,
         "coverage_sweep": {"selection": sweep},
-        "leakage": {"passed": leak <= 0.001, "worst_mean": leak},
+        "leakage": {"passed": leak <= 0.001, "worst_mean": leak, "all": {"mean": leak}},
         "mixed_alpha_mae": mixed,
     }
 
@@ -126,6 +126,30 @@ def test_checkpoint_selection_is_order_independent_and_slot_mae_is_diagnostic() 
     for first, second in permutations(tied):
         best = second if validation_improves(second, first) else first
         assert best == tied[0]
+
+
+def test_sky_interior_is_scored_and_invalid_prediction_depth_is_not_sky() -> None:
+    alpha = np.ones((1, 8, 8))
+    target = Layers(np.zeros_like(alpha), alpha, np.zeros((1, 3, 8, 8)))
+    prediction = Layers(np.full_like(alpha, 0.5), alpha, target.rgb)
+    mixed = np.zeros((8, 8), dtype=bool)
+    report = coverage_summary(coverage_samples(prediction, target, mixed))
+    assert report["interior"]["pixels"] == 64
+    assert report["interior"]["too_near"] == pytest.approx(np.log(100))
+    assert report["interior"]["too_far"] == 0
+    for invalid in (np.nan, np.inf, -1):
+        prediction.inverse_depth[0, 0, 0] = invalid
+        with pytest.raises(FloatingPointError, match="Invalid coverage-sweep inverse depth"):
+            coverage_samples(prediction, target, mixed)
+
+
+def test_prepass_prefers_overall_leakage_even_when_a_passing_bucket_rises() -> None:
+    first, second = _metrics(0.3, 0.0015), _metrics(0.4, 0.0011)
+    first["leakage"]["worst_mean"] = 0.05
+    second["leakage"]["worst_mean"] = 0.06
+    assert validation_improves(second, first)
+    assert not validation_improves(first, second)
+    assert meaningful_improvement(second, first)
 
 
 def test_patience_uses_explicit_deltas_not_every_new_best() -> None:
