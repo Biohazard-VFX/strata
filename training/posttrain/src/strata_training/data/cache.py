@@ -244,6 +244,7 @@ def _prepare(dataset: Path, output: Path, layers: int) -> list[dict[str, Any]]:
                     "test_only": protected,
                     "dataset_root": str(dataset.resolve()),
                     "category": manifest.get("category", category(camera)),
+                    "noise_varies_per_frame": camera["noise_varies_per_frame"],
                     "cache": str(cache.resolve()),
                     "manifest": str(manifest_path.resolve()),
                     "recomposition_eligible": recorded_identity(shot / "samples" / identifier)

@@ -34,6 +34,10 @@ def schedule(shot_seed: int, frames: Sequence[int]) -> Schedule:
     }
 
 
+def noise_varies_per_frame(sampling: Mapping[str, object]) -> bool:
+    return sampling["mode"] in {"per-frame", "karma_default"}
+
+
 def _integers(value: object) -> TypeGuard[list[int]]:
     return isinstance(value, list) and all(type(item) is int for item in cast("list[object]", value))
 

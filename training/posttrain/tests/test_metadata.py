@@ -12,7 +12,7 @@ from strata_training.data.metadata import CONTRACT, camera_frames, category, int
 from strata_training.io import save_arrays
 
 
-@pytest.mark.parametrize("mode", ["authored", "karma_default", "missing"])
+@pytest.mark.parametrize("mode", ["fixed", "per-frame", "karma_default", "missing"])
 def test_published_camera_records_use_frame_list_and_native_intrinsics(
     tmp_path: Path, mode: str
 ) -> None:
@@ -39,7 +39,10 @@ def test_published_camera_records_use_frame_list_and_native_intrinsics(
     path.write_text(json.dumps({"contract": CONTRACT, "frames": [record]}))
     manifest_path = tmp_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    if mode == "missing":
+    if mode == "per-frame":
+        manifest["seed"] = 2
+        manifest["render"]["sampling_seed"] = sampling.schedule(2, (1,))
+    elif mode == "missing":
         del manifest["render"]["sampling_seed"]
     elif mode == "karma_default":
         manifest["render"]["sampling_seed"] = {"mode": "karma_default"}
@@ -50,12 +53,34 @@ def test_published_camera_records_use_frame_list_and_native_intrinsics(
             camera_frames(tmp_path)
         return
     frame = camera_frames(tmp_path)[1]
+    assert frame["noise_varies_per_frame"] is (mode != "fixed")
     assert_allclose(intrinsics(frame), [[100, 0, 8], [0, 110, 4], [0, 0, 1]])
     assert category(frame) == "sharp"
     record["frame"] = 1.5
     path.write_text(json.dumps({"contract": CONTRACT, "frames": [record]}))
     with pytest.raises(ValueError, match="frames do not cover"):
         camera_frames(tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["fixed", "per-frame", "karma_default"])
+def test_native_sampling_noise_metadata(tmp_path: Path, packed_shot: Path, mode: str) -> None:
+    path = packed_shot / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["seed"] = 2 if mode == "per-frame" else 0
+    manifest["render"]["sampling_seed"] = (
+        {"mode": "karma_default"}
+        if mode == "karma_default"
+        else sampling.schedule(manifest["seed"], (1, 2))
+    )
+    manifest["generator_versions"] = {"settings": "render-settings-0.4.0"}
+    path.write_text(json.dumps(manifest))
+    output = tmp_path / "targets"
+    entries = prepare(packed_shot.parent, output)
+    assert len(entries) == 2
+    for entry in entries:
+        assert entry["noise_varies_per_frame"] is (mode != "fixed")
+    assert json.loads((output / "index.json").read_text()) == entries
+    assert prepare(packed_shot.parent, output) == entries
 
 
 @pytest.mark.parametrize("protected", [None, "root", "shot"])

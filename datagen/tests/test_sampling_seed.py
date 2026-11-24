@@ -117,6 +117,8 @@ class SamplingSeedTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "sampling_seed"):
                 pack.pack(shot.directory, range(1, 4))
             self.assertTrue(checks.check_shot(shot.directory)["failures"])
+        del manifest["generator_versions"]["settings"]
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(manifest)))
         manifest["generator_versions"]["settings"] = "render-settings-0.4.0"
         path.write_text(json.dumps(manifest))
         self.assertEqual(records.errors(manifest, camera), [])
@@ -146,6 +148,35 @@ class SamplingSeedTest(unittest.TestCase):
             manifest["render"]["sampling_seed"] = value
             self.assertTrue(records.errors(manifest, camera))
             self.assertTrue(list(Draft202012Validator(schema).iter_errors(manifest)))
+
+    def test_karma_default_rejects_missing_or_unreadable_retained_evidence(self) -> None:
+        for evidence, message in (
+            ("missing-settings", "no USD render settings evidence"),
+            ("unreadable", "unreadable USD evidence"),
+            ("dangling-symlink", "missing USD evidence"),
+            ("missing-shot", "missing USD evidence"),
+        ):
+            with self.subTest(evidence=evidence):
+                root = Path(self.enterContext(TemporaryDirectory()))
+                write_shot(root, [[[Sample(0.2, 0.5, 1), SKY], SKY]])
+                path = root / "manifest.json"
+                manifest = json.loads(path.read_text())
+                manifest["generator_versions"] = {"settings": "render-settings-0.4.0"}
+                manifest["render"]["sampling_seed"] = {"mode": "karma_default"}
+                path.write_text(json.dumps(manifest))
+                scene = root / "scene" / "shot.usda"
+                scene.parent.mkdir()
+                if evidence == "missing-settings":
+                    stage = Usd.Stage.CreateNew(str(scene))
+                    stage.DefinePrim("/World")
+                    stage.GetRootLayer().Save()
+                elif evidence == "unreadable":
+                    scene.write_text("not a USD layer")
+                elif evidence == "dangling-symlink":
+                    scene.symlink_to("absent.usda")
+                with self.assertRaisesRegex(ValueError, message):
+                    pack.ShotFrames.load(root)
+                self.assertIn(message, str(checks.check_shot(root)["failures"]))
 
     def test_karma_default_packs_and_passes_qa_without_optional_scene(self) -> None:
         root = Path(self.enterContext(TemporaryDirectory()))

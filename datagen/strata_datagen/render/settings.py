@@ -130,7 +130,11 @@ def sampling_errors(shot: Path, manifest: Mapping[str, object]) -> list[str]:
         return []
     scene = shot / "scene" / "shot.usda"
     if not scene.exists():
-        return []
+        return (
+            ["render.sampling_seed karma_default has missing USD evidence"]
+            if scene.is_symlink() or scene.parent.exists()
+            else []
+        )
     try:
         stage = Usd.Stage.Open(str(scene))
         prim = stage.GetPrimAtPath(SETTINGS_PATH)

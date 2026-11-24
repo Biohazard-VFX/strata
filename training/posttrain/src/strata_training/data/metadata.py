@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 from strata_dataset.records import VERSION, errors
+from strata_dataset.sampling import noise_varies_per_frame
 
 from strata_training.types import Array
 
@@ -22,7 +23,10 @@ def camera_frames(shot: Path) -> dict[int, dict[str, Any]]:
         frame = record["frame"]
         if not isinstance(frame, int) or isinstance(frame, bool) or frame < 1 or frame in frames:
             raise ValueError("Camera frame identifiers must be distinct positive integers")
-        frames[frame] = record
+        frames[frame] = {
+            **record,
+            "noise_varies_per_frame": noise_varies_per_frame(manifest["render"]["sampling_seed"]),
+        }
     return frames
 
 
