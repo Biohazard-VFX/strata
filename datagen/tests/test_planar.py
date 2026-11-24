@@ -13,9 +13,10 @@ import OpenEXR
 
 from strata_datagen import exrcore
 from strata_datagen.exr import Deep, read_deep
-from strata_datagen.qa.deep import FRONT_SLAB, LAYER_GAP_M, OPAQUE, VISIBLE, flatten
+from strata_datagen.qa.deep import FRONT_SLAB, LAYER_GAP_M, OPAQUE, VISIBLE
 from strata_datagen.render import pack
 from tests.fixtures import SKY, Sample, write_shot
+from tests.flatten import flatten
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

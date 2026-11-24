@@ -82,8 +82,6 @@ class RetiredQATest(unittest.TestCase):
                 "flatten_excess",
                 "valid_id_fraction",
                 "unlabelled_coverage",
-                "identity_channels",
-                "role_channels",
                 "role_beauty_error",
                 "beauty_roles",
             ):
@@ -219,23 +217,35 @@ class RetiredQATest(unittest.TestCase):
                 for name in checks.RAW_ONLY_LIMITS:
                     self.assertNotIn(f"merged_{name}", retired.metrics)
 
-    def test_undeclared_visible_coverage_fails_after_loose_acceptance_and_retirement(self) -> None:
-        with TemporaryDirectory() as tmp:
-            shot = Path(tmp) / "shot"
-            bad = [Sample(0.01, 0.1, 7, 2 + i * 0.001) for i in range(10)] + [SKY]
-            good = [Sample(0.2, 0.5, 1), SKY]
-            write_shot(shot, [[bad, *[good for _ in range(12000)]]])
-            pack.pack(shot, range(1, 2))
-            raw = checks.accept(shot, range(1, 2))[0]
-            expected = 1.0 - (1.0 - (1.0 - float(np.float32(0.1))) ** 10) / 12001
-            self.assertAlmostEqual(raw.metrics["valid_id_fraction"], expected, places=14)
-            self.assertAlmostEqual(raw.metrics["merged_valid_id_fraction"], expected, places=14)
-            self.assertTrue(any(f.startswith("valid_id_fraction=") for f in raw.failures), raw)
-            with mock.patch.dict(checks.LIMITS, {"valid_id_fraction": (0.99, 1.0)}):
-                self.assertEqual(checks.accept(shot, range(1, 2))[0].failures, [])
-            self.assertFalse((shot / "deep" / "0001.exr").exists())
-            retired = checks.accept(shot, range(1, 2))[0]
-            self.assertTrue(any(f.startswith("merged_valid_id_fraction=") for f in retired.failures), retired)
+    def test_undeclared_visible_coverage_limit_before_and_after_retirement(self) -> None:
+        for alpha, hidden, passes in ((0.05, False, True), (0.1, False, False), (0.1, True, True)):
+            with self.subTest(alpha=alpha, hidden=hidden), TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "shot"
+                bad = [Sample(0.01, alpha, 7, 2 + i * 0.001) for i in range(10)] + [SKY]
+                if hidden:
+                    bad.insert(0, Sample(0.2, 1.0, 1, 1.0))
+                good = [Sample(0.2, 0.5, 1), SKY]
+                write_shot(shot, [[bad, *[good for _ in range(12000)]]])
+                pack.pack(shot, range(1, 2))
+                raw = checks.accept(shot, range(1, 2))[0]
+                expected = 1.0 if hidden else 1.0 - (1.0 - (1.0 - float(np.float32(alpha))) ** 10) / 12001
+                self.assertAlmostEqual(raw.metrics["valid_id_fraction"], expected, places=14)
+                self.assertAlmostEqual(raw.metrics["merged_valid_id_fraction"], expected, places=14)
+                if hidden:
+                    self.assertEqual(raw.metrics["valid_id_fraction"], 1.0)
+                    self.assertEqual(raw.metrics["merged_valid_id_fraction"], 1.0)
+                self.assertEqual(not raw.failures, passes, raw)
+                if not passes:
+                    self.assertTrue(any(f.startswith("valid_id_fraction=") for f in raw.failures), raw)
+                    with mock.patch.dict(checks.LIMITS, {"valid_id_fraction": (0.99, 1.0)}):
+                        self.assertEqual(checks.accept(shot, range(1, 2))[0].failures, [])
+                self.assertFalse((shot / "deep" / "0001.exr").exists())
+                retired = checks.accept(shot, range(1, 2))[0]
+                self.assertEqual(not retired.failures, passes, retired)
+                if not passes:
+                    self.assertTrue(
+                        any(f.startswith("merged_valid_id_fraction=") for f in retired.failures), retired
+                    )
 
     def test_bad_raw_back_depth_is_rejected_before_retirement(self) -> None:
         with TemporaryDirectory() as tmp:

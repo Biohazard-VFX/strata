@@ -9,10 +9,10 @@ import OpenEXR
 from numpy.typing import NDArray
 
 from strata_datagen.exr import Deep, read_deep
-from strata_datagen.qa.deep import flatten
 from strata_datagen.render import pack
 from strata_datagen.scene.export import CONTRACT_VERSION
 from strata_dataset import identity, roles
+from tests.flatten import flatten
 
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
 FOCAL_MM = 18.0

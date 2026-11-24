@@ -24,6 +24,8 @@ LUMA = (0.2126, 0.7152, 0.0722)
 ROLE_EXCESS = 2.0**-15
 ROLE_BEAUTY = 2.0**-15
 RAW_ONLY_LIMITS = {
+    "identity_channels": (1.0, 1.0),
+    "role_channels": (1.0, 1.0),
     "mean_samples": (1.0, 48.0),
     "max_samples": (1.0, 1024.0),
     "coverage_alpha_error": (0.0, 2.0**-11),
@@ -43,8 +45,6 @@ LIMITS = {
     "uncovered": (0.0, 0.0),
     "valid_id_fraction": (0.99995, 1.0),
     "unlabelled_coverage": (0.0, 2e-4),
-    "identity_channels": (1.0, 1.0),
-    "role_channels": (1.0, 1.0),
     "beauty_roles": (1.0, 1.0),
     "role_beauty_error": (0.0, ROLE_BEAUTY),
     "sky_in_front": (0.0, 1e-5),
@@ -107,7 +107,9 @@ def _identity_metrics(frame: pack.Samples | merged.Merged, ranges: list[tuple[in
     )
     labelled_coverage = float(visible[labelled].sum())
     metrics = {
-        "valid_id_fraction": float(visible[valid].sum() / labelled_coverage) if labelled_coverage else 1.0,
+        "valid_id_fraction": 1.0 - float(visible[labelled & ~valid].sum() / labelled_coverage)
+        if labelled_coverage
+        else 1.0,
         "unlabelled_coverage": float(visible[~labelled].sum() / (frame.offsets.size - 1)),
     }
     if isinstance(frame, pack.Samples):
@@ -351,8 +353,6 @@ def _merged_deep_metrics(runs: merged.Merged, beauty: dict[str, NDArray[np.float
     rgba = segmented.weighted_sum(transmitted, np.c_[runs.rgb, runs.alpha], counts)
     residual = np.stack([beauty[c].ravel() for c in "RGB"], -1) - rgba[:, :3]
     return {
-        "identity_channels": 1.0,
-        "role_channels": 1.0,
         "partial_share": float(partial_coverage(runs.z, runs.alpha, counts, rgba[:, 3]).mean()),
         "flatten_error": float(np.abs(residual).mean()),
         "flatten_excess": float(np.maximum(-residual, 0.0).mean()),

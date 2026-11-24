@@ -12,12 +12,13 @@ from strata_datagen.exr import Deep, read_deep
 from strata_datagen.generators import groom
 from strata_datagen.library import hdri
 from strata_datagen.qa import checks
-from strata_datagen.qa.deep import flatten, instance_ids, partial_coverage
+from strata_datagen.qa.deep import instance_ids, partial_coverage
 from strata_datagen.render import settings
 from strata_datagen.rng import stream
 from strata_datagen.usdutil import relative_asset, tag_instances
 from strata_dataset import identity, roles
 from tests.fixtures import membership
+from tests.flatten import flatten
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -113,6 +114,14 @@ def write_deep(path: Path, samples: list[list[tuple[float, ...]]]) -> None:
 
 
 class QaTest(unittest.TestCase):
+    def test_no_labelled_coverage_reports_fully_declared_and_fully_unlabelled(self) -> None:
+        deep = _deep([[(0.2, 0.2, 0.2, 1.0, 2.0, 1)]])
+        deep.channels["instance_check"][:] = 0.0
+        beauty = {c: np.array([[0.2]], np.float32) for c in "RGB"}
+        measured = checks.deep_metrics(deep, beauty, [(0, 4)])
+        self.assertEqual(measured["valid_id_fraction"], 1.0)
+        self.assertEqual(measured["unlabelled_coverage"], 1.0)
+
     def test_deep_with_a_sky_sample_flattens_to_the_beauty_everywhere(self) -> None:
         ranges = [(0, 4), (1000, 1001)]
         with tempfile.TemporaryDirectory() as tmp:
