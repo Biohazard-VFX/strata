@@ -64,12 +64,11 @@ class RenderLockTest(unittest.TestCase):
         self.directory.cleanup()
 
     def build(self, name: str) -> dict[str, str]:
-        """A packed, accepted two-frame shot with its job list; returns the environment for its job."""
+        """A packed two-frame shot with its job list; returns the environment for its job."""
         self.root = Path(self.directory.name) / name
         self.shot = self.root / "shots" / "s"
-        write_shot(self.shot, [FIRST, FIRST], stride=24)
+        write_shot(self.shot, [FIRST, FIRST])
         pack.pack(self.shot, FRAMES)
-        self.assertEqual([r.failures for r in checks.accept(self.shot, FRAMES)], [[], []])
         husk.write_job_list(self.root, husk.jobs(self.shot, self.root, tuple(FRAMES), husk.CHUNK_FRAMES))
         self.barrier = self.root / "barrier"
         self.barrier.mkdir()
@@ -89,7 +88,7 @@ class RenderLockTest(unittest.TestCase):
 
     def assert_competitors_refused(self) -> None:
         with self.assertRaisesRegex(shotlock.ShotLockedError, "locked by"):
-            checks.prune(self.shot, FRAMES)
+            checks.accept(self.shot, FRAMES)
         self.assertTrue((self.shot / "deep" / "0002.exr").exists())
         with self.assertRaisesRegex(shotlock.ShotLockedError, "locked by"):
             cli.main(["qa", "--root", str(self.root)])

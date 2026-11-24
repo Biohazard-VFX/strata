@@ -11,7 +11,8 @@ from pxr import Sdf, Usd
 import validate
 from strata_datagen import cli
 from strata_datagen.generators.camera import CameraChoices
-from strata_datagen.render import settings
+from strata_datagen.qa import checks
+from strata_datagen.render import pack, settings
 from strata_datagen.scene import compose, export
 from strata_datagen.scene.spec import ShotSpec
 from strata_dataset import records, sampling
@@ -61,9 +62,9 @@ class SamplingSeedTest(unittest.TestCase):
                 camera = cast("dict[str, object]", json.loads((shot.directory / "camera.json").read_text()))
                 metadata = cast("dict[str, object]", manifest["render"])
                 expected = sampling.schedule(seed, shot.frames)
+                self.assertEqual(records.errors(manifest, camera), [])
                 self.assertEqual(metadata["sampling_seed"], expected)
                 self.assertEqual(metadata["path_traced_samples"], spp)
-                self.assertEqual(records.errors(manifest, camera), [])
                 schema = {**validate.SCHEMA, "$ref": "#/$defs/manifest"}
                 self.assertEqual(list(Draft202012Validator(schema).iter_errors(manifest)), [])
                 stage = Usd.Stage.Open(str(shot.scene_dir / "shot.usda"))
@@ -73,6 +74,17 @@ class SamplingSeedTest(unittest.TestCase):
                 self.assertEqual([attr.Get(frame) for frame in shot.frames], expected["seeds"])
                 self.assertEqual(attr.GetTimeSamples(), [1.0, 2.0, 3.0] if seed == 2 else [])
                 self.assertEqual(prim.GetAttribute("karma:global:pathtracedsamples").Get(), spp)
+                self.assertEqual(pack.ShotFrames.load(shot.directory).shot_id, manifest["shot_id"])
+                del metadata["sampling_seed"]
+                (shot.directory / "manifest.json").write_text(json.dumps(manifest))
+                refused = records.errors(manifest, camera)
+                self.assertTrue(refused)
+                with self.assertRaisesRegex(ValueError, "sampling_seed"):
+                    pack.ShotFrames.load(shot.directory)
+                self.assertEqual(checks.check_shot(shot.directory)["failures"], refused)
+                errors = validate.validate(shot.directory)
+                self.assertTrue(errors)
+                self.assertTrue(all("sampling_seed" in error for error in errors))
 
     def test_schema_rejects_malformed_sampling_fields(self) -> None:
         schema = {
@@ -96,7 +108,10 @@ class SamplingSeedTest(unittest.TestCase):
             self.assertTrue(list(validator.iter_errors(value)), value)
 
     def test_record_validation_rejects_corrupted_sampling_metadata(self) -> None:
-        camera: dict[str, object] = {"contract": records.VERSION}
+        camera: dict[str, object] = {
+            "contract": records.VERSION,
+            "frames": [{"frame": frame} for frame in (1, 2, 3)],
+        }
         manifest: dict[str, object] = {
             "contract": records.VERSION,
             "seed": 2,
@@ -123,8 +138,15 @@ class SamplingSeedTest(unittest.TestCase):
             damaged = copy.deepcopy(manifest)
             cast("dict[str, object]", damaged["render"])["frames"] = frames
             self.assertTrue(records.errors(damaged, camera), frames)
-        legacy = {"contract": records.VERSION}
-        self.assertEqual(records.errors(legacy, camera), [])
+        damaged = copy.deepcopy(manifest)
+        damaged["seed"] = 0
+        cast("dict[str, object]", damaged["render"])["sampling_seed"] = {
+            "mode": "fixed",
+            "seeds": [1427725052] * 3,
+        }
+        self.assertTrue(records.errors(damaged, camera))
+        del cast("dict[str, object]", manifest["render"])["sampling_seed"]
+        self.assertTrue(records.errors(manifest, camera))
 
 
 if __name__ == "__main__":

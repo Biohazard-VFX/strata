@@ -31,7 +31,7 @@ class IngestTest(unittest.TestCase):
         base = Path(self.directory.name)
         self.root = base / "build"
         self.shot = self.root / "shots" / "s"
-        write_shot(self.shot, [FIRST], stride=1)
+        write_shot(self.shot, [FIRST])
         self.download = base / "download"
 
     def tearDown(self) -> None:
@@ -42,7 +42,7 @@ class IngestTest(unittest.TestCase):
         remote = Path(self.directory.name) / "remote" / "s"
         shutil.rmtree(remote.parent, ignore_errors=True)
         shutil.rmtree(self.download, ignore_errors=True)
-        write_shot(remote, [pixels], stride=1)
+        write_shot(remote, [pixels])
         pack.pack(remote, FRAMES)
         for folder in husk.OUTPUTS:
             if (remote / folder).is_dir():
@@ -57,7 +57,7 @@ class IngestTest(unittest.TestCase):
             self.ingest()
         self.assertGreater(watch.writes, 0)
         self.assertEqual(watch.unlocked, [])
-        for folder in ("beauty", "deep", "layers", "samples"):
+        for folder in ("beauty", "deep", "layers", "samples", "merged"):
             self.assertEqual(contents(self.shot / folder), contents(self.download / folder), folder)
         self.assertEqual(list((self.shot / pack.STAGING).iterdir()), [])
         self.assertTrue(free(self.shot))
@@ -78,6 +78,13 @@ class IngestTest(unittest.TestCase):
         self.farm(FIRST)
         moved = ingest.ingest(self.shot, self.download)
         self.assertNotIn("samples/s_0001", moved)
+        self.assertNotIn("merged/s_0001", moved)
+        merged_path = self.download / "merged" / "s_0001" / "deep.npz"
+        merged_path.write_bytes(b"different merged deep")
+        kept = contents(self.shot)
+        with self.assertRaisesRegex(ValueError, "different published frame"):
+            self.ingest()
+        self.assertEqual(contents(self.shot), kept)
         self.assertIn("beauty/0001.exr", moved)
         self.farm(OTHER)
         kept = contents(self.shot)
@@ -89,12 +96,13 @@ class IngestTest(unittest.TestCase):
         self.farm(OTHER)
         downloaded = contents(self.download)
         units = {
-            Path(*Path(key).parts[:2]) if key.startswith(ingest.SAMPLES) else Path(key) for key in downloaded
+            Path(*Path(key).parts[:2]) if Path(key).parts[0] in ingest.SIDECARS else Path(key)
+            for key in downloaded
         }
         self.assertGreater(len(units), 2)
         for failing_move in range(1, len(downloaded) + 2):
             shot = self.root / "shots" / f"retry{failing_move}"
-            write_shot(shot, [FIRST], stride=1)
+            write_shot(shot, [FIRST])
             before = contents(shot)
             try:
                 with self.failing_move(failing_move):

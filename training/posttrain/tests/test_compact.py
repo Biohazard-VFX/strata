@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from strata_dataset import sampling
+
 from strata_training.data.cache import prepare
 from strata_training.data.exr import exr, read_rgb
 from strata_training.data.metadata import CONTRACT
@@ -24,7 +26,8 @@ def test_compact_frame_without_raw_deep_preserves_targets_and_denoised_part(tmp_
                 "contract": CONTRACT,
                 "shot_id": "shot",
                 "background": {"instance_id": 0},
-                "render": {"deep_stride": 24},
+                "seed": 0,
+                "render": {"frames": [2, 2], "sampling_seed": sampling.schedule(0, (2,))},
             }
         )
     )

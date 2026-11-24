@@ -9,10 +9,10 @@ import OpenEXR
 from numpy.typing import NDArray
 
 from strata_datagen.exr import Deep, read_deep
-from strata_datagen.qa.deep import flatten
 from strata_datagen.render import pack
 from strata_datagen.scene.export import CONTRACT_VERSION
-from strata_dataset import identity, roles
+from strata_dataset import identity, roles, sampling
+from tests.flatten import flatten
 
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
 FOCAL_MM = 18.0
@@ -168,20 +168,24 @@ def frame_record(frame: int, width: int, height: int) -> dict[str, object]:
     }
 
 
-def write_shot(shot: Path, frames: list[list[Sample | list[Sample]]], stride: int) -> None:
-    """A shot of frames 1..N; each frame is a row of pixels. Deep frames on `stride` are recomposition."""
+def write_shot(shot: Path, frames: list[list[Sample | list[Sample]]]) -> None:
+    """A shot of frames 1..N with raw deep on every frame; each frame is a row of pixels."""
     width = len(frames[0])
     records = [frame_record(i + 1, width, 1) for i in range(len(frames))]
     manifest = {
         "contract": CONTRACT_VERSION,
         "shot_id": shot.name,
+        "seed": 0,
         "instance_ids": [
             {"name": "sky", "first_id": 0, "count": 1},
             {"name": "terrain", "first_id": 1, "count": 1},
             {"name": "hero_skin", "first_id": 2, "count": 1},
         ],
         "background": {"instance_id": 0, "radius_m": 3000.0, "far_clip_m": 5000.0},
-        "render": {"frames": [1, len(frames)], "deep_stride": stride},
+        "render": {
+            "frames": [1, len(frames)],
+            "sampling_seed": sampling.schedule(0, range(1, len(frames) + 1)),
+        },
         "scene": {
             "camera": {
                 "move": "locked",

@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
+from strata_dataset import sampling
+
 from strata_training.data.cache import prepare
 from strata_training.data.metadata import CONTRACT, camera_frames, category, intrinsics
 from strata_training.io import save_arrays
@@ -23,14 +25,22 @@ def test_published_camera_records_use_frame_list_and_native_intrinsics(tmp_path:
         "shutter_close": 0.0,
     }
     path = tmp_path / "camera.json"
-    (tmp_path / "manifest.json").write_text(json.dumps({"contract": CONTRACT}))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "contract": CONTRACT,
+                "seed": 0,
+                "render": {"frames": [1, 1], "sampling_seed": sampling.schedule(0, (1,))},
+            }
+        )
+    )
     path.write_text(json.dumps({"contract": CONTRACT, "frames": [record]}))
     frame = camera_frames(tmp_path)[1]
     assert_allclose(intrinsics(frame), [[100, 0, 8], [0, 110, 4], [0, 0, 1]])
     assert category(frame) == "sharp"
     record["frame"] = 1.5
     path.write_text(json.dumps({"contract": CONTRACT, "frames": [record]}))
-    with pytest.raises(ValueError, match="identifiers"):
+    with pytest.raises(ValueError, match="frames do not cover"):
         camera_frames(tmp_path)
 
 
@@ -68,7 +78,7 @@ def test_native_parts_and_role_masks_are_preserved_in_target_cache(
         assert "content_identity" in rebuilt
 
 
-@pytest.mark.parametrize("version", ["0.1.0", "0.2.0", "0.3.0", "0.5.0"])
+@pytest.mark.parametrize("version", ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.6.0"])
 @pytest.mark.parametrize("record", ["manifest", "camera"])
 def test_native_preparation_refuses_other_contracts(
     tmp_path: Path,

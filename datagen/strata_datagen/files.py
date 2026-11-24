@@ -18,6 +18,21 @@ def replacing(path: Path) -> Generator[Path]:
         temporary.unlink(missing_ok=True)
 
 
+def sync(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_durable(path: Path, text: str) -> None:
+    with replacing(path) as temporary:
+        temporary.write_text(text)
+        sync(temporary)
+    sync(path.parent)
+
+
 def write_text(path: Path, text: str) -> None:
     with replacing(path) as temporary:
         temporary.write_text(text)

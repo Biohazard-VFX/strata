@@ -19,16 +19,15 @@
 - Beauty, AOVs and deep share a one-pixel box filter so the flattened deep reproduces the beauty.
 - Beauty EXRs are multi-part, one part per AOV, ZIPS-compressed; no LPE lighting splits (unused by training, 43% of beauty size).
 - Every product name is time-sampled per frame; outputs never rely on `$F` expansion.
-- Karma noise stays: spp remains 64 (128 with DoF or blur), never raised for noise; noisy pairs learn the average without added render or storage cost.
 - Sampling seed modes default to 50/50 per-frame/fixed, assigned deterministically from each shot seed; integer-hashed frame seeds vary noise without new randomness.
-- New shots record render.sampling_seed mode and ordered seeds; existing 0.4.0 records may omit this metadata, but present schedules must match the shot seed.
+- Every shot requires render.sampling_seed mode and ordered seeds matching the shot seed schedule; readers reject missing sampling metadata.
 - Camera focal length and apertures are authored in tenths of a scene unit (mm / 100 at metres), per UsdGeomCamera.
 - Dome lights set `inputs:karma:light:renderlightgeo` so the HDRI is visible to camera rays.
 - HDRI directions use Karma's latlong frame: image centre at +Z, top row at +Y.
 - Each HDRI's sun is cut into a distant light whose intensity is the measured irradiance (Karma's distant-light unit).
 - Shots are normalised to a fixed horizontal irradiance (sky plus sun) so exposure is comparable across HDRIs.
 - Camera-visible skies use 8K outdoor HDRIs resampled to 4K.
-- Path-traced samples: 64, doubled when a shot has depth of field or motion blur, so per-layer alpha and RGB error match a still shot.
+- Path-traced samples: 64, doubled for DoF or motion blur, never raised for noise; noisy pairs learn the average without added render or storage cost.
 - FBX models are converted in Blender, then merged into one Y-up metre mesh per variation, footprint-centred on y = 0.
 - Megascans maps are stored at most 2K, 8-bit: sRGB albedo, raw normal, roughness and opacity; EXR albedo is linear.
 - Ground surfaces are natural Megascans surfaces only; asphalt, concrete, metal and wood are excluded.
@@ -48,11 +47,11 @@
 - Terrain is a 300 m, 0.5 m-cell heightfield with a flattened centre; beyond the scattered 60 m it flattens and sinks, so bare ground never rises into the HDRI horizon.
 - Renders are Karma XPU GPU-only and abort without a GPU; never the Embree CPU device, which drops hair samples and puts ZBack before Z.
 - Job lists (`jobs.json`, `jobs.sh`) hold one `strata-datagen render-task` per task, never bare husk, with paths relative to the build root.
-- render-task holds the shot lock across husk, pack, accept and prune; husk inherits the lock descriptor, so the shot stays locked while it runs.
+- render-task holds the shot lock across husk, pack and accept; husk inherits the lock descriptor, so the shot stays locked while it runs.
 - Farm nodes never write a local shot: downloaded output enters only via `ingest`, staged in the shot and renamed in under the lock.
 - Files are written atomically (temporary file, then rename).
 - Bulk shots are long continuous 720-frame shots; diversity comes from smooth seeded B-spline curves over time (timeline.Curve), never cuts.
-- Every frame gets float32 sky-inclusive K=4 targets (strata_dataset.layers, sky = samples under half foreground); raw deep and sample sidecars are kept every 24th frame, as long shots are 720 frames.
+- Every frame gets float32 sky-inclusive K=4 targets (strata_dataset.layers, sky = samples under half foreground); acceptance and retention follow docs/DECISIONS.md.
 - Thin structures are self-authored: flexible elements (cable, fence wire, twine, rope) as linear BasisCurves, rigid ones (posts, rails, bars) as tube meshes.
 - Thin-structure widths are drawn in pixels of a 1280-wide frame, main elements 0.15-5 px and members at most 24 px unless a kind's physical minimum is wider.
 - Thin structures sit in a depth band (foreground, between camera and subject, background) and are rejected if they come near any camera position or the subject.
@@ -81,8 +80,7 @@
 - The sky is a camera-only 3000 m backdrop sphere (id 0, HDRI mapped like the dome), so every pixel has a deep sample and the deep flattens to the beauty everywhere.
 - Camera distance and height scale with the hero's horizontal size (2.5-11 m for a 1.6 m subject), so any creature fills a similar share of the frame.
 - Background is part of the deep: one opaque, finite-Z sample per pixel with reserved id 0 (manifest.background); depth losses ignore it, colour and coverage use it.
-- Raw QA needs present, finite beauty role AOVs and the deep role coverage pack writes within 2^-15 of them per pixel (render roundoff < 1e-6), before accept or prune.
-- Off-stride raw deep is deleted by `prune` only when the frame's raw QA passed and every validated input (all but manifest timings) is unchanged.
+- Raw QA needs present, finite beauty role AOVs and the deep role coverage pack writes within 2^-15 of them per pixel (render roundoff < 1e-6), before acceptance.
 - Layer and sample alpha come from the float `coverage`, not half A, so near-opaque samples keep the visible layers behind them.
 - The flat geometry mask is the `foreground` role AOV (1 on geometry, 0 on the sky); deep `coverage` stays 1 on the sky for id decoding and float alpha.
 - `coverage` stays in the beauty product as well: Karma's deep product writes only AOVs that a raster product renders (husk: "Unable to find AOV coverage").

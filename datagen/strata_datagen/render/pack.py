@@ -1,11 +1,4 @@
-"""After rendering: K-layer targets and role coverage for every frame, raw-sample sidecars on the stride.
-
-Roles come from the deep role channels (`strata_dataset.roles`), never from instance ids.
-
-Packing never removes raw deep: it is QA evidence, and only `qa.checks.prune` removes it, after the
-frame has passed raw QA. Sidecars are write-once: a frame's directory is published whole and never
-changed; only the offline `remove_samples` deletes it. Every change holds the shot's writer lock.
-"""
+"""Publish every frame's targets and raw/merged sidecars; acceptance alone retires redundant raw data."""
 
 import json
 import os
@@ -19,14 +12,13 @@ import numpy as np
 import OpenEXR
 from numpy.typing import NDArray
 
-from strata_datagen import shotlock
+from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, read_deep, read_flat
 from strata_datagen.qa.deep import instance_ids
-from strata_dataset import records, roles
+from strata_dataset import merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
 from strata_dataset.layers import Layers, reduce_samples
 
-DEEP_STRIDE = 24
 STAGING = ".staging"
 REMOVE = "remove them with `strata-datagen remove-samples` while no reader runs, then pack again"
 
@@ -57,11 +49,9 @@ class Samples:
 
 @dataclass(frozen=True)
 class ShotFrames:
-    """The frame plan a manifest declares: frames on the deep stride are recomposition frames."""
+    """The validated shot identity shared by every frame directory."""
 
     shot_id: str
-    first: int
-    stride: int
 
     @staticmethod
     def load(shot: Path) -> "ShotFrames":
@@ -71,15 +61,13 @@ class ShotFrames:
         errors = records.errors(manifest, camera)
         if errors:
             raise ValueError(f"{shot}: {'; '.join(errors)}")
-        render = cast("dict[str, object]", manifest["render"])
-        frames = cast("list[int]", render["frames"])
-        return ShotFrames(str(manifest["shot_id"]), frames[0], cast("int", render["deep_stride"]))
-
-    def recomposition(self, frame: int) -> bool:
-        return (frame - self.first) % self.stride == 0
+        return ShotFrames(str(manifest["shot_id"]))
 
     def sample_dir(self, shot: Path, frame: int) -> Path:
         return shot / "samples" / contract_samples.frame_id(self.shot_id, frame)
+
+    def merged_dir(self, shot: Path, frame: int) -> Path:
+        return shot / "merged" / contract_samples.frame_id(self.shot_id, frame)
 
 
 def samples(deep: Deep) -> Samples:
@@ -88,28 +76,34 @@ def samples(deep: Deep) -> Samples:
     Role coverage is the deep role channels, nested within the sample alpha. Samples failing the
     identity check keep their colour, alpha and roles but carry `identity.UNLABELLED`.
     """
-    pixel = deep.pixel_index()
-    order = np.lexsort((deep.channels["Z"], pixel))
-    rgb = np.stack([deep.channels[c] for c in "RGB"], axis=-1)
+    order = segmented.order(deep.channels["Z"], deep.counts)
     alpha = np.ascontiguousarray(np.clip(deep.channels["coverage"][order], 0.0, 1.0), np.float32)
-    raw = np.stack([deep.channels[role][order] for role in roles.ROLES], axis=-1)
+    nested = roles.nested(tuple(deep.channels[role] for role in roles.ROLES), alpha, order=order)
+    rgb = cast("NDArray[np.float32]", segmented.gather(tuple(deep.channels[c] for c in "RGB"), order))
     return Samples(
         (deep.height, deep.width),
         deep.offsets.astype(np.int64),
         np.ascontiguousarray(deep.channels["Z"][order], np.float32),
         alpha,
-        np.ascontiguousarray(rgb[order], np.float32),
-        roles.nested(raw, alpha),
-        np.ascontiguousarray(instance_ids(deep)[order], np.int64),
+        rgb,
+        nested,
+        instance_ids(deep, order),
     )
+
+
+def read_samples(path: Path) -> Samples:
+    deep = read_deep(path)
+    for channel in ("A", "ZBack"):
+        del deep.channels[channel]
+    return samples(deep)
 
 
 def layers(frame: Samples) -> Layers:
     """The contract's K-layer rule with the sky kept: sky clusters keep colour and alpha, depth 0."""
     return reduce_samples(
-        frame.z.astype(np.float64),
-        frame.alpha.astype(np.float64),
-        frame.rgb.astype(np.float64),
+        frame.z,
+        frame.alpha,
+        frame.rgb,
         np.diff(frame.offsets),
         frame.shape,
         sky=roles.sky(frame.alpha, frame.roles[:, 0]),
@@ -193,34 +187,88 @@ def write_samples(frame: Samples, beauty_path: Path, published: Path) -> None:
         _verify_published(published, encoded)
 
 
+def write_merged(frame: Samples, published: Path) -> None:
+    """Atomically publish immutable merged deep, including the layer rule's sufficient statistics."""
+    runs = merged.merge(
+        frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+    )
+    arrays = runs.arrays()
+    if published.exists():
+        found = merged.read(published / "deep.npz").arrays()
+        if not all(np.array_equal(value, found[name]) for name, value in arrays.items()):
+            raise ValueError(
+                f"{published} holds different merged deep; published sidecars are immutable: {REMOVE}"
+            )
+        return
+    staging = _staging(published)
+    try:
+        staging.mkdir(parents=True)
+        np.savez_compressed(staging / "deep.npz", allow_pickle=False, **arrays)
+        published.parent.mkdir(parents=True, exist_ok=True)
+        staging.rename(published)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _replacement_raw(shot: Path, frame: int) -> None:
+    raw = shot / "deep" / f"{frame:04d}.exr"
+    replacement = read_samples(raw)
+    shape = _shape(shot, frame)
+    errors = contract_samples.sample_errors(replacement.arrays(), shape[0] * shape[1])
+    if replacement.shape != shape or errors:
+        raise ValueError(f"frame {frame}: replacement raw cannot be repacked: {errors}")
+    files.sync(raw)
+    files.sync(raw.parent)
+
+
 def remove_samples(shot: Path, frames: range) -> list[int]:
     """Offline: delete the published sidecars of `frames` and abandoned staging; readers must be stopped."""
     plan = ShotFrames.load(shot)
     removed: list[int] = []
     with shotlock.held(shot):
         for frame in frames:
-            published = plan.sample_dir(shot, frame)
-            if not published.exists(follow_symlinks=False):
-                continue
-            doomed = _staging(published)
-            doomed.parent.mkdir(parents=True, exist_ok=True)
-            published.rename(doomed)
-            removed.append(frame)
+            if not (shot / "deep" / f"{frame:04d}.exr").is_file():
+                raise ValueError(f"frame {frame}: cannot remove merged deep without raw; re-render first")
+            _replacement_raw(shot, frame)
+            removed_frame = False
+            for published in (plan.sample_dir(shot, frame), plan.merged_dir(shot, frame)):
+                if not published.exists(follow_symlinks=False):
+                    continue
+                doomed = _staging(published)
+                doomed.parent.mkdir(parents=True, exist_ok=True)
+                published.rename(doomed)
+                removed_frame = True
+            if removed_frame:
+                removed.append(frame)
         if (shot / STAGING).is_dir():
             shutil.rmtree(shot / STAGING)
     return removed
 
 
-def pack(shot: Path, frames: range) -> None:
-    """Write targets for `frames` and sidecars for their recomposition frames; never removes raw deep.
+def _shape(shot: Path, frame: int) -> tuple[int, int]:
+    camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
+    records = cast("list[dict[str, int]]", camera["frames"])
+    record = next(record for record in records if record["frame"] == frame)
+    return record["height"], record["width"]
 
-    Role coverage comes from each frame's own deep, so every frame keeps it after raw deep is pruned.
+
+def pack(shot: Path, frames: range) -> None:
+    """Write targets and raw/merged sidecars for every frame; never removes raw deep.
+
+    Role coverage comes from each frame's own retained deep.
     """
     plan = ShotFrames.load(shot)
     with shotlock.held(shot):
         for frame in frames:
             name = f"{frame:04d}.exr"
-            frame_samples = samples(read_deep(shot / "deep" / name))
+            raw = shot / "deep" / name
+            if not raw.is_file():
+                errors = merged.errors(plan.merged_dir(shot, frame) / "deep.npz", _shape(shot, frame))
+                if errors or not (shot / "layers" / name).is_file():
+                    raise ValueError(f"frame {frame}: missing packed frame or raw deep: {errors}")
+                continue
+            frame_samples = read_samples(raw)
             write_layers(targets(frame_samples), shot / "layers" / name)
-            if plan.recomposition(frame):
-                write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))
+            write_samples(frame_samples, shot / "beauty" / name, plan.sample_dir(shot, frame))
+            write_merged(frame_samples, plan.merged_dir(shot, frame))
+            del frame_samples

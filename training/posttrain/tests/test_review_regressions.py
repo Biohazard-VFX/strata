@@ -40,10 +40,10 @@ def prepared_frames(shot: Path, root: Path) -> tuple[list[Frame], Path]:
 
 
 @pytest.mark.parametrize("mode", ["numpy", "torch"])
-def test_stride_routing_keeps_off_stride_targets_and_seed_replay(
-    packed_shot: Path, tmp_path: Path, mode: str
+def test_missing_samples_keep_cached_targets_and_seed_replay(
+    unavailable_samples_shot: Path, tmp_path: Path, mode: str
 ) -> None:
-    frames, samples = prepared_frames(packed_shot, tmp_path)
+    frames, samples = prepared_frames(unavailable_samples_shot, tmp_path)
     loader = OnlineLoader(
         frames,
         samples,

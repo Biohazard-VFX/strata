@@ -39,14 +39,13 @@ def _integers(value: object) -> TypeGuard[list[int]]:
 
 
 def errors(manifest: Mapping[str, object]) -> list[str]:
-    """Validate sampling metadata when present; older dataset records have no sampling schedule."""
     render = manifest.get("render")
-    if not isinstance(render, dict) or "sampling_seed" not in render:
-        return []
+    if not isinstance(render, dict):
+        return ["missing render.sampling_seed"]
     render = cast("dict[str, object]", render)
     seed = manifest.get("seed")
     frames = render.get("frames")
-    sampling = render["sampling_seed"]
+    sampling = render.get("sampling_seed")
     if (
         type(seed) is not int
         or not _integers(frames)

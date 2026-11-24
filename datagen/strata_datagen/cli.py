@@ -68,7 +68,7 @@ def cmd_creatures(args: argparse.Namespace) -> None:
 
 def cmd_build(args: argparse.Namespace) -> None:
     library = catalogue.load(args.root)
-    render = compose.RenderParams(args.width, args.height, args.samples, args.deep_stride)
+    render = compose.RenderParams(args.width, args.height, args.samples)
     jobs: list[husk.Job] = []
     for spec in _specs(args):
         shot = compose.plan(spec, library, args.root, args.frames)
@@ -82,16 +82,14 @@ def cmd_build(args: argparse.Namespace) -> None:
 
 
 def finish_task(shot: Path, frames: range) -> bool:
-    """Pack, raw-QA and prune rendered `frames`; False, with raw deep kept, when raw QA fails."""
-    pack.pack(shot, frames)
-    if not _accepted(shot, frames):
-        return False
-    print("pruned raw deep", checks.prune(shot, frames), flush=True)
-    return True
+    """Pack and accept every frame; only accepted frames retire raw deep and NPY sidecars."""
+    with shotlock.held(shot):
+        pack.pack(shot, frames)
+        return _accepted(shot, frames)
 
 
 def render_task(shot: Path, frames: range, husk_path: str) -> dict[str, object]:
-    """Render, pack, accept and prune `frames` under one hold of the shot lock; husk inherits it."""
+    """Render, pack and accept `frames` under one hold of the shot lock; husk inherits it."""
     with shotlock.held(shot) as hold:
         timings = husk.run(shot, frames, husk_path, hold.descriptor)
         if timings["exit_code"] == 0:
@@ -99,7 +97,7 @@ def render_task(shot: Path, frames: range, husk_path: str) -> dict[str, object]:
         manifest_path = shot / "manifest.json"
         manifest = export.load_json(manifest_path)
         manifest["timings"] = timings
-        files.write_text(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+        files.write_durable(manifest_path, json.dumps(manifest, indent=1, sort_keys=True) + "\n")
     return timings
 
 
@@ -155,10 +153,6 @@ def cmd_accept(args: argparse.Namespace) -> None:
     if not _accepted(args.shot, _frames(args)):
         raise SystemExit(1)
     print("accepted", args.first, args.count, flush=True)
-
-
-def cmd_prune(args: argparse.Namespace) -> None:
-    print("pruned raw deep", checks.prune(args.shot, _frames(args)), flush=True)
 
 
 def cmd_remove_samples(args: argparse.Namespace) -> None:
@@ -241,21 +235,13 @@ def parser() -> argparse.ArgumentParser:
         "--frames", type=int, default=DEFAULT_FRAMES, help="frames per shot (presets fix their own)"
     )
     p.add_argument("--chunk", type=int, default=husk.CHUNK_FRAMES, help="frames per farm task")
-    p.add_argument(
-        "--deep-stride",
-        type=int,
-        default=pack.DEEP_STRIDE,
-        help="keep raw deep and sample sidecars every N frames",
-    )
     p.set_defaults(run=cmd_build)
     p = sub.add_parser("render", help="run the job list's render tasks locally")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--shots", nargs="*", default=[])
     p.add_argument("--husk", default=DEFAULT_HUSK)
     p.set_defaults(run=cmd_render)
-    p = sub.add_parser(
-        "render-task", help="one job: render with husk, pack, accept, prune, all under the lock"
-    )
+    p = sub.add_parser("render-task", help="one job: render with husk, pack and accept, all under the lock")
     p.add_argument("--shot", type=Path, required=True)
     p.add_argument("--first", type=int, required=True)
     p.add_argument("--count", type=int, required=True)
@@ -268,9 +254,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--source", type=Path, required=True)
     p.set_defaults(run=cmd_ingest)
     for name, run, text in (
-        ("pack", cmd_pack, "write layer targets for rendered frames and sidecars on the deep stride"),
+        ("pack", cmd_pack, "write layer targets and raw/merged sidecars for every rendered frame"),
         ("accept", cmd_accept, "raw QA of packed frames; records each frame's acceptance"),
-        ("prune", cmd_prune, "delete off-stride raw deep of accepted, unchanged frames"),
         ("remove-samples", cmd_remove_samples, "offline, no reader running: delete published sidecars"),
     ):
         p = sub.add_parser(name, help=text)

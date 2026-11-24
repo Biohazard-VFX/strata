@@ -255,6 +255,15 @@ wheels = [
 ]
 
 [[package]]
+name = "packaging"
+version = "26.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz", hash = "sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79", size = 313412, upload-time = "2026-08-04T18:15:28.737Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl", hash = "sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c", size = 129956, upload-time = "2026-08-04T18:15:27.159Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "13.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -578,6 +587,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "packaging" },
     { name = "pyright" },
     { name = "ruff" },
     { name = "types-usd" },
@@ -587,8 +597,8 @@ dev = [
 requires-dist = [
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "materialx", specifier = ">=1.39" },
-    { name = "numpy", specifier = ">=2.0" },
-    { name = "openexr", specifier = ">=3.3" },
+    { name = "numpy", specifier = ">=2.2" },
+    { name = "openexr", specifier = ">=3.5.4,<3.6" },
     { name = "pillow", specifier = ">=11.3" },
     { name = "scipy", specifier = ">=1.18.1" },
     { name = "strata-dataset", editable = "../contract/dataset" },
@@ -597,6 +607,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "packaging", specifier = ">=24" },
     { name = "pyright", specifier = "==1.1.414" },
     { name = "ruff", specifier = "==0.17.6" },
     { name = "types-usd", specifier = ">=24.5.2" },

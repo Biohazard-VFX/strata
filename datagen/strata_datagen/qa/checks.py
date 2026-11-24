@@ -1,14 +1,8 @@
-"""Per-shot acceptance checks; a shot that fails any check is rejected from the dataset.
-
-Raw deep is checked before anything is removed: `accept` records each frame's raw QA result with the
-identity of every input it validated (`inputs`), `prune` removes off-stride raw deep only from
-accepted frames whose inputs are unchanged, and `check_shot` re-checks every packed target and holds
-pruned frames to a recorded acceptance whose inputs, all but the removed deep, still match. `accept`
-and `prune` hold the shot's writer lock.
-"""
+"""Raw QA commits durable acceptance before retiring redundant raw evidence under the shot lock."""
 
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -20,33 +14,37 @@ from numpy.typing import NDArray
 from strata_datagen import files, shotlock
 from strata_datagen.exr import Deep, header, read_deep, read_flat
 from strata_datagen.generators.lighting import BACKDROP_M
-from strata_datagen.qa.deep import IDENTITY_CHANNELS, flatten
+from strata_datagen.qa.deep import partial_coverage
 from strata_datagen.render import pack
-from strata_dataset import identity, records, roles, segmented
+from strata_dataset import identity, merged, records, roles, segmented
 from strata_dataset import samples as contract_samples
 
-VALIDATION = "raw-qa-5"
+VALIDATION = "raw-qa-7"
 LUMA = (0.2126, 0.7152, 0.0722)
 ROLE_EXCESS = 2.0**-15
 ROLE_BEAUTY = 2.0**-15
-LIMITS = {
-    "median_luma": (0.02, 1.5),
-    "clipped_fraction": (0.0, 0.02),
+RAW_ONLY_LIMITS = {
     "mean_samples": (1.0, 48.0),
     "max_samples": (1.0, 1024.0),
+    "coverage_alpha_error": (0.0, 2.0**-11),
+    "bad_depth": (0.0, 0.0),
+    "role_excess": (0.0, ROLE_EXCESS),
+    "target_mismatch": (0.0, 0.0),
+    "samples_mismatch": (0.0, 0.0),
+    "merged_mismatch": (0.0, 0.0),
+}
+LIMITS = {
+    **RAW_ONLY_LIMITS,
+    "median_luma": (0.02, 1.5),
+    "clipped_fraction": (0.0, 0.02),
     "partial_share": (0.005, 1.0),
     "flatten_error": (0.0, 0.005),
     "flatten_excess": (0.0, 0.005),
     "uncovered": (0.0, 0.0),
     "valid_id_fraction": (0.99995, 1.0),
-    "id_check_failure_fraction": (0.0, 2e-4),
     "unlabelled_coverage": (0.0, 2e-4),
-    "identity_channels": (1.0, 1.0),
-    "role_channels": (1.0, 1.0),
-    "role_excess": (0.0, ROLE_EXCESS),
     "beauty_roles": (1.0, 1.0),
     "role_beauty_error": (0.0, ROLE_BEAUTY),
-    "coverage_alpha_error": (0.0, 2.0**-11),
     "sky_in_front": (0.0, 1e-5),
     "camera_error": (0.0, 1e-3),
     "intrinsics_error": (0.0, 1e-4),
@@ -54,32 +52,12 @@ LIMITS = {
     "role_coverage": (1.0, 1.0),
     "target_error": (0.0, 0.005),
     "target_excess": (0.0, 0.005),
-    "target_mismatch": (0.0, 0.0),
-    "samples_mismatch": (0.0, 0.0),
+    "rebuilt_mismatch": (0.0, 0.0),
 }
 COVERED = 0.999
 SKY_MIN_Z_M = 0.25 * BACKDROP_M
 STEP_LIMITS = {"position_m": 0.25, "rotation_deg": 2.0, "focal_ratio": 0.02, "fstop": 0.5, "focus_m": 0.5}
 FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
-DEEP_KEYS = (
-    "mean_samples",
-    "max_samples",
-    "bad_depth",
-    "partial_share",
-    "flatten_error",
-    "uncovered",
-    "flatten_excess",
-    "valid_id_fraction",
-    "id_check_failure_fraction",
-    "unlabelled_coverage",
-    "identity_channels",
-    "role_channels",
-    "role_excess",
-    "beauty_roles",
-    "role_beauty_error",
-    "coverage_alpha_error",
-    "sky_in_front",
-)
 LAYER_NAMES = tuple(f"L{k}.{c}" for k in range(4) for c in ("invdepth", "A", "R", "G", "B"))
 
 
@@ -105,42 +83,79 @@ def _id_ranges(manifest: dict[str, object]) -> list[tuple[int, int]]:
     return [(r["first_id"], r["first_id"] + r["count"]) for r in ranges]
 
 
-def _identity_metrics(frame: pack.Samples, ranges: list[tuple[int, int]]) -> dict[str, float]:
-    """Identity check failures, undeclared ids among checked samples, and the coverage left without an id.
+@segmented.jit(cache=True)
+def _declared_ids(ids: NDArray[np.int64], declared: NDArray[np.bool_]) -> NDArray[np.bool_]:
+    valid = np.zeros(ids.size, np.bool_)
+    for i, value in enumerate(ids):
+        valid[i] = 0 <= value < declared.size and declared[value]
+    return valid
 
-    `unlabelled_coverage` is the mean over pixels of the visible coverage of samples with id -1:
-    per-object uses lose it; roles do not, they come from the role channels.
-    """
-    counts = np.diff(frame.offsets)
+
+def _identity_metrics(frame: pack.Samples | merged.Merged, ranges: list[tuple[int, int]]) -> dict[str, float]:
+    """Declared fraction of labelled visible coverage; unlabelled coverage is measured per pixel."""
     labelled = frame.ids != identity.UNLABELLED
-    declared = np.zeros(frame.ids.size, bool)
+    declared = np.zeros(identity.MAX_ID, bool)
     for low, high in ranges:
-        declared |= (frame.ids >= low) & (frame.ids < high)
-    visible = frame.alpha.astype(np.float64) * segmented.transmittance(frame.alpha, counts)
-    return {
-        "id_check_failure_fraction": float((~labelled).mean()) if labelled.size else 0.0,
-        "valid_id_fraction": float(declared[labelled].mean()) if labelled.any() else 1.0,
-        "unlabelled_coverage": float(visible[~labelled].sum() / counts.size),
+        declared[max(low, 0) : max(0, min(high, identity.MAX_ID))] = True
+    valid = _declared_ids(frame.ids, declared)
+    visible = (
+        frame.statistics[:, 1]
+        if isinstance(frame, merged.Merged)
+        else segmented.transmittance(frame.alpha, np.diff(frame.offsets)) * frame.alpha
+    )
+    labelled_coverage = float(visible[labelled].sum())
+    metrics = {
+        "valid_id_fraction": 1.0 - float(visible[labelled & ~valid].sum() / labelled_coverage)
+        if labelled_coverage
+        else 1.0,
+        "unlabelled_coverage": float(visible[~labelled].sum() / (frame.offsets.size - 1)),
     }
+    if isinstance(frame, pack.Samples):
+        metrics["id_check_failure_fraction"] = (
+            np.count_nonzero(~labelled) / frame.ids.size if frame.ids.size else 0.0
+        )
+    return metrics
+
+
+@segmented.jit(cache=True)
+def _role_excess(chain: tuple[NDArray[np.floating], ...]) -> float:
+    if not chain[0].size:
+        return 0.0
+    excess = -np.inf
+    lowest = np.inf
+    for i in range(chain[0].size):
+        previous = np.float64(chain[0][i])
+        lowest = np.minimum(lowest, previous)
+        for channel in range(1, len(chain)):
+            value = np.float64(chain[channel][i])
+            excess = np.maximum(excess, value - previous)
+            lowest = np.minimum(lowest, value)
+            previous = value
+    return float(max(excess, -lowest, 0.0))
 
 
 def role_excess(deep: Deep) -> float:
     """How far the raw role channels leave 0 <= fur <= hero <= foreground <= coverage, at most."""
-    chain = np.stack([deep.channels[name].astype(np.float64) for name in ("coverage", *roles.ROLES)])
-    if not chain.size:
-        return 0.0
-    return float(max(np.diff(chain, axis=0).max(), -chain.min(), 0.0))
+    return _role_excess(tuple(deep.channels[name] for name in ("coverage", *roles.ROLES)))
 
 
-def _role_metrics(deep: Deep, frame: pack.Samples) -> dict[str, float]:
-    near_sky = roles.sky(frame.alpha, frame.roles[:, 0]) & (frame.z < SKY_MIN_Z_M)
-    return {
-        "role_excess": role_excess(deep),
-        "sky_in_front": float(near_sky.mean()) if near_sky.size else 0.0,
-    }
+def _sky_metrics(frame: pack.Samples | merged.Merged) -> dict[str, float]:
+    """Visible sky fraction in near runs, with raw canonicalized across threshold-straddling runs."""
+    runs = (
+        frame
+        if isinstance(frame, merged.Merged)
+        else merged.merge(
+            frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+        )
+    )
+    sky = runs.statistics[:, 3]
+    total = float(sky.sum())
+    return {"sky_in_front": float(sky[runs.z < SKY_MIN_Z_M].sum() / total) if total else 0.0}
 
 
-def role_beauty_metrics(frame: pack.Samples, beauty: dict[str, NDArray[np.float32]]) -> dict[str, float]:
+def role_beauty_metrics(
+    frame: pack.Samples | merged.Merged, beauty: dict[str, NDArray[np.float32]]
+) -> dict[str, float]:
     """The deep role coverage pack writes, against the beauty role AOVs rendered from the same primvars.
 
     `role_beauty_error` is the largest per-pixel difference over all roles; a missing or non-finite
@@ -157,30 +172,39 @@ def role_beauty_metrics(frame: pack.Samples, beauty: dict[str, NDArray[np.float3
     return {"beauty_roles": 1.0, "role_beauty_error": float(max(errors))}
 
 
-def deep_metrics(
-    deep: Deep, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
-) -> dict[str, float]:
-    flat = flatten(deep)
+def _base_metrics(deep: Deep) -> dict[str, float]:
     z, zback = deep.channels["Z"], deep.channels["ZBack"]
-    present = all(name in deep.channels for name in IDENTITY_CHANNELS)
-    labelled = all(name in deep.channels for name in roles.ROLES)
-    metrics: dict[str, float] = {"identity_channels": float(present), "role_channels": float(labelled)}
-    if present and labelled:
-        frame = pack.samples(deep)
-        metrics |= _identity_metrics(frame, ranges) | _role_metrics(deep, frame)
-        metrics |= role_beauty_metrics(frame, beauty)
-        difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
-        metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
-    residual = np.stack([beauty[c] - flat.rgba[..., i] for i, c in enumerate("RGB")], -1)
-    return metrics | {
+    metrics = {
         "mean_samples": float(deep.counts.mean()),
         "max_samples": float(deep.counts.max()),
         "bad_depth": float((~np.isfinite(z) | (z <= 0) | (zback < z * (1.0 - 1e-6) - 1e-4)).sum()),
-        "partial_share": float(flat.partial.mean()),
-        "flatten_error": float(np.abs(residual).mean()),
-        "uncovered": float((flat.alpha < COVERED).mean()),
-        "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
     }
+    difference = deep.channels["coverage"].astype(np.float64) - deep.channels["A"]
+    metrics["coverage_alpha_error"] = float(np.abs(difference).max(initial=0.0))
+    return metrics
+
+
+def _measure_samples(
+    deep: Deep,
+    beauty: dict[str, NDArray[np.float32]],
+    ranges: list[tuple[int, int]],
+    frame: pack.Samples | None,
+    base: dict[str, float],
+) -> dict[str, float]:
+    frame = pack.samples(deep) if frame is None else frame
+    runs = merged.merge(
+        frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+    )
+    metrics = _identity_metrics(frame, ranges) | {"role_excess": role_excess(deep)}
+    metrics |= _merged_deep_metrics(runs, beauty) | role_beauty_metrics(runs, beauty)
+    metrics["coverage_alpha_error"] = base.pop("coverage_alpha_error")
+    return metrics | base
+
+
+def deep_metrics(
+    deep: Deep, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
+) -> dict[str, float]:
+    return _measure_samples(deep, beauty, ranges, None, _base_metrics(deep))
 
 
 def _layer_dtypes(path: Path) -> dict[str, np.dtype[np.generic]]:
@@ -226,12 +250,21 @@ def _target_mismatch(path: Path, frame: pack.Samples) -> float:
 
 
 def _samples_mismatch(directory: Path, frame: pack.Samples, beauty_path: Path) -> tuple[float, list[str]]:
-    errors = contract_samples.errors(directory, frame.shape)
+    stored, errors = contract_samples.load_checked(directory, frame.shape)
     if errors:
         return 1.0, errors
-    stored = contract_samples.load(directory)
     expected: dict[str, NDArray[np.generic]] = {**frame.arrays(), **pack.images(beauty_path)}
     return float(any(not np.array_equal(stored[k], v) for k, v in expected.items())), []
+
+
+def _merged_mismatch(directory: Path, frame: pack.Samples) -> float:
+    stored, errors = merged.load_checked(directory / "deep.npz", frame.shape)
+    if errors:
+        return 1.0
+    expected = merged.merge(
+        frame.shape, frame.offsets, frame.z, frame.alpha, frame.rgb, semantic=frame.roles, ids=frame.ids
+    ).arrays()
+    return float(any(not np.array_equal(stored[name], value) for name, value in expected.items()))
 
 
 def _camera_error(path: Path, record: dict[str, object]) -> float:
@@ -258,37 +291,24 @@ def _intrinsics_error(path: Path, record: dict[str, object]) -> float:
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _canonical(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def inputs(shot: Path, frame: int) -> dict[str, str | None]:
-    """Identity of everything raw QA of `frame` reads; manifest `timings` is bookkeeping, not input."""
+    """Bind the raw-to-merged proof to its evidence, certified files and algorithm versions."""
     paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
-    manifest = cast("dict[str, object]", json.loads((shot / "manifest.json").read_text()))
-    camera = cast("dict[str, object]", json.loads((shot / "camera.json").read_text()))
-    records = cast("list[dict[str, object]]", camera.pop("frames"))
+    merged_path = plan.merged_dir(shot, frame) / "deep.npz"
     return {
-        "validation": _canonical({"version": VALIDATION, "limits": LIMITS, "deep_keys": DEEP_KEYS}),
-        "manifest": _canonical({k: v for k, v in manifest.items() if k != "timings"}),
-        "camera": _canonical({**camera, "frame": [r for r in records if r["frame"] == frame]}),
+        "merged": digest(merged_path) if merged_path.is_file() else None,
+        "merge_version": merged.MERGE_VERSION,
+        "rebuild_version": merged.REBUILD_VERSION,
         "beauty": digest(paths["beauty"]) if paths["beauty"].exists() else None,
         "deep": digest(paths["deep"]) if paths["deep"].exists() else None,
         "targets": digest(paths["layers"]) if paths["layers"].exists() else None,
-        "samples": (
-            contract_samples.recorded_identity(plan.sample_dir(shot, frame))
-            if plan.recomposition(frame)
-            else None
-        ),
+        "samples": contract_samples.recorded_identity(plan.sample_dir(shot, frame)),
+        **{f"raw_{key}_policy": json.dumps(LIMITS[key]) for key in RAW_ONLY_LIMITS},
     }
-
-
-def changed_inputs(record: dict[str, object], current: dict[str, str | None]) -> list[str]:
-    recorded = cast("dict[str, str | None]", record.get("inputs", {}))
-    return [name for name, value in current.items() if name not in recorded or recorded[name] != value]
 
 
 def _paths(shot: Path, frame: int) -> dict[str, Path]:
@@ -303,30 +323,119 @@ def _raw_metrics(
 ) -> tuple[dict[str, float], list[str]]:
     paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
     deep = read_deep(paths["deep"])
-    metrics = deep_metrics(deep, beauty, ranges)
+    base = _base_metrics(deep)
+    for channel in ("A", "ZBack"):
+        del deep.channels[channel]
     frame_samples = pack.samples(deep)
+    for channel in "RGB":
+        del deep.channels[channel]
+    metrics = _measure_samples(deep, beauty, ranges, frame_samples, base)
     failures: list[str] = []
     if paths["layers"].exists():
         metrics["target_mismatch"] = _target_mismatch(paths["layers"], frame_samples)
-    if plan.recomposition(frame):
-        mismatch, failures = _samples_mismatch(plan.sample_dir(shot, frame), frame_samples, paths["beauty"])
-        metrics["samples_mismatch"] = mismatch
+    del deep
+    mismatch, failures = _samples_mismatch(plan.sample_dir(shot, frame), frame_samples, paths["beauty"])
+    metrics["samples_mismatch"] = mismatch
+    metrics["merged_mismatch"] = _merged_mismatch(plan.merged_dir(shot, frame), frame_samples)
     return metrics, failures
 
 
-def _accepted(shot: Path, frame: int) -> tuple[dict[str, float], list[str]]:
-    """A pruned frame stands on its recorded raw acceptance, valid only for the targets it saw."""
+def _merged_deep_metrics(runs: merged.Merged, beauty: dict[str, NDArray[np.float32]]) -> dict[str, float]:
+    counts = np.diff(runs.offsets)
+    transmitted = segmented.transmittance(runs.alpha, counts)
+    rgba = segmented.weighted_sum(transmitted, np.c_[runs.rgb, runs.alpha], counts)
+    residual = np.stack([beauty[c].ravel() for c in "RGB"], -1) - rgba[:, :3]
+    return {
+        "partial_share": float(partial_coverage(runs.z, runs.alpha, counts, rgba[:, 3]).mean()),
+        "flatten_error": float(np.abs(residual).mean()),
+        "flatten_excess": float(np.maximum(-residual, 0.0).mean()),
+        "uncovered": float((rgba[:, 3] < COVERED).mean()),
+    } | _sky_metrics(runs)
+
+
+def _rebuilt_metrics(
+    shot: Path, frame: int, beauty: dict[str, NDArray[np.float32]], ranges: list[tuple[int, int]]
+) -> tuple[dict[str, float], list[str]]:
+    plan = pack.ShotFrames.load(shot)
+    path = plan.merged_dir(shot, frame) / "deep.npz"
+    shape = beauty["R"].shape
+    errors = merged.errors(path, (shape[0], shape[1]))
+    if errors:
+        return {"rebuilt_mismatch": 1.0}, errors
+    runs = merged.read(path)
+    rebuilt = pack.layer_channels(runs.targets()) | roles.coverage(
+        runs.alpha, runs.roles, np.diff(runs.offsets), runs.shape
+    )
+    target = _paths(shot, frame)["layers"]
+    stored = read_flat(target) if target.is_file() else {}
+    equal = rebuilt.keys() <= stored.keys() and all(
+        np.allclose(value, stored[name], rtol=1e-5, atol=1e-12)
+        if name.endswith((".R", ".G", ".B"))
+        else np.allclose(value, stored[name], rtol=0.0, atol=1e-5)
+        for name, value in rebuilt.items()
+    )
+    masks = equal and all(
+        np.array_equal(rebuilt[name] > 0, stored[name] > 0)
+        for name in rebuilt
+        if name.endswith((".A", ".invdepth"))
+    )
+    measured = _identity_metrics(runs, ranges) | role_beauty_metrics(runs, beauty)
+    measured |= _merged_deep_metrics(runs, beauty)
+    metrics = {f"merged_{name}": value for name, value in measured.items()}
+    return metrics | {"rebuilt_mismatch": float(not masks)}, []
+
+
+def _acceptance_errors(shot: Path, frame: int) -> list[str]:
+    missing = ["missing raw deep without matching acceptance"]
+    try:
+        receipt = json.loads(_paths(shot, frame)["acceptance"].read_text())
+    except (OSError, ValueError):
+        return missing
+    if not isinstance(receipt, dict):
+        return missing
+    receipt = cast("dict[str, object]", receipt)
+    checked = receipt.get("inputs")
+    if (
+        receipt.get("frame") != frame
+        or receipt.get("passed") is not True
+        or receipt.get("failures") != []
+        or not isinstance(checked, dict)
+    ):
+        return missing
+    checked = cast("dict[str, object]", checked)
+    current = inputs(shot, frame)
+    if any(checked.get(key) != current[key] for key in ("merge_version", "rebuild_version")):
+        return ["merge/rebuild version changed; re-render required"]
+    policy = [
+        f"{key}: raw QA policy changed; re-render required"
+        for key in RAW_ONLY_LIMITS
+        if checked.get(f"raw_{key}_policy") != current[f"raw_{key}_policy"]
+    ]
+    if policy:
+        return policy
+    changed = any(checked.get(key) != current[key] for key in ("beauty", "targets", "merged"))
+    changed_raw = any(
+        current[key] is not None and current[key] != checked.get(key) for key in ("deep", "samples")
+    )
+    return missing if changed or changed_raw else []
+
+
+def _retire_raw(shot: Path, frame: int) -> None:
     paths, plan = _paths(shot, frame), pack.ShotFrames.load(shot)
-    if plan.recomposition(frame):
-        return {}, ["recomposition frame lost its raw deep"]
-    if not paths["acceptance"].exists():
-        return {}, ["no raw deep and no raw acceptance"]
-    record = cast("dict[str, object]", json.loads(paths["acceptance"].read_text()))
-    failures = [] if record["passed"] else ["raw acceptance failed"]
-    changed = [name for name in changed_inputs(record, inputs(shot, frame)) if name != "deep"]
-    failures += [f"{name} changed since raw acceptance" for name in changed]
-    metrics = cast("dict[str, float]", record["metrics"])
-    return {k: v for k, v in metrics.items() if k in DEEP_KEYS}, failures
+    retained = [paths[key] for key in ("beauty", "layers", "acceptance")]
+    retained += [plan.merged_dir(shot, frame) / "deep.npz", shot / "manifest.json", shot / "camera.json"]
+    for path in retained:
+        files.sync(path)
+        files.sync(path.parent)
+    files.sync(shot / "merged")
+    files.sync(shot)
+    paths["deep"].unlink(missing_ok=True)
+    if paths["deep"].parent.is_dir():
+        files.sync(paths["deep"].parent)
+    directory = plan.sample_dir(shot, frame)
+    if directory.exists():
+        shutil.rmtree(directory)
+        files.sync(directory.parent)
 
 
 def check_frame(
@@ -342,18 +451,23 @@ def check_frame(
         metrics.update(target_metrics(paths["layers"], beauty))
     else:
         failures.append("missing layers")
-    raw, found = (
-        _raw_metrics(shot, frame, beauty, ranges) if paths["deep"].exists() else _accepted(shot, frame)
-    )
+    if paths["deep"].exists():
+        raw, found = _raw_metrics(shot, frame, beauty, ranges)
+    else:
+        raw, found = {}, _acceptance_errors(shot, frame)
     metrics.update(raw)
-    failures += found
+    rebuilt, found_merged = _rebuilt_metrics(shot, frame, beauty, ranges)
+    metrics.update(rebuilt)
+    failures += found + found_merged
     metrics["camera_error"] = _camera_error(paths["beauty"], record)
     metrics["intrinsics_error"] = _intrinsics_error(paths["beauty"], record)
-    failures += [f"{k}={metrics[k]:.4g}" for k in ("nonfinite", "bad_depth") if metrics.get(k, 0.0) > 0]
+    if metrics["nonfinite"] > 0:
+        failures.append(f"nonfinite={metrics['nonfinite']:.4g}")
     failures += [
-        f"{k}={metrics[k]:.4g} outside {low}..{high}"
+        f"{name}={metrics[name]:.4g} outside {low}..{high}"
         for k, (low, high) in LIMITS.items()
-        if k in metrics and not low <= metrics[k] <= high
+        for name in (k, f"merged_{k}")
+        if name in metrics and not low <= metrics[name] <= high
     ]
     return FrameResult(frame, metrics, failures)
 
@@ -366,10 +480,7 @@ def _records(shot: Path) -> tuple[dict[int, dict[str, object]], list[tuple[int, 
 
 
 def accept(shot: Path, frames: range) -> list[FrameResult]:
-    """Raw QA of rendered, packed frames; records each result with the identity of its inputs.
-
-    A frame whose raw deep is already pruned is checked against its recorded acceptance, never re-recorded.
-    """
+    """Accept every packed frame, durably bind its retained inputs, then retire its redundant raw data."""
     with shotlock.held(shot):
         return _accept(shot, frames)
 
@@ -381,55 +492,33 @@ def _accept(shot: Path, frames: range) -> list[FrameResult]:
         paths = _paths(shot, frame)
         checked = inputs(shot, frame)
         result = check_frame(shot, frame, records[frame], ranges)
+        if checked != inputs(shot, frame):
+            result.failures.append("inputs changed during QA; retry required")
         results.append(result)
-        if not paths["deep"].exists():
+        if result.failures:
+            if paths["deep"].exists():
+                files.write_text(
+                    paths["acceptance"], json.dumps({"passed": False, "failures": result.failures})
+                )
             continue
-        files.write_text(
+        if not _acceptance_errors(shot, frame):
+            _retire_raw(shot, frame)
+            continue
+        files.write_durable(
             paths["acceptance"],
             json.dumps(
                 {
                     "frame": frame,
                     "passed": not result.failures,
                     "failures": result.failures,
-                    "metrics": result.metrics,
                     "inputs": checked,
                 },
                 indent=1,
             )
             + "\n",
         )
+        _retire_raw(shot, frame)
     return results
-
-
-def prune(shot: Path, frames: range) -> list[int]:
-    """Delete off-stride raw deep of accepted frames whose every input is unchanged since QA."""
-    with shotlock.held(shot):
-        return _prune(shot, frames)
-
-
-def _prune(shot: Path, frames: range) -> list[int]:
-    plan = pack.ShotFrames.load(shot)
-    removable: list[Path] = []
-    refused: list[str] = []
-    for frame in frames:
-        paths = _paths(shot, frame)
-        if plan.recomposition(frame) or not paths["deep"].exists():
-            continue
-        record: dict[str, object] = (
-            cast("dict[str, object]", json.loads(paths["acceptance"].read_text()))
-            if paths["acceptance"].exists()
-            else {"passed": False}
-        )
-        changed = changed_inputs(record, inputs(shot, frame))
-        if not record["passed"] or changed or not paths["layers"].exists():
-            refused.append(f"{frame} ({', '.join(changed) or 'not accepted'})")
-        else:
-            removable.append(paths["deep"])
-    if refused:
-        raise ValueError(f"raw deep kept: frames {'; '.join(refused)} have no matching passed acceptance")
-    for path in removable:
-        path.unlink()
-    return [int(p.stem) for p in removable]
 
 
 def camera_steps(frames: list[dict[str, object]]) -> dict[str, float]:
@@ -479,20 +568,16 @@ def check_shot(shot: Path) -> dict[str, object]:
         return {"shot_id": shot.name, "passed": False, "failures": refused, "mean_metrics": {}, "frames": []}
     frames = cast("list[dict[str, object]]", camera["frames"])
     failures = camera_consistency(camera)
-    first, last = cast("list[int]", cast("dict[str, object]", manifest["render"])["frames"])
-    if [f["frame"] for f in frames] != list(range(first, last + 1)):
-        failures.append(f"camera.json frames do not cover the rendered range {first}..{last}")
     ranges = _id_ranges(manifest)
     results = [check_frame(shot, cast("int", f["frame"]), f, ranges) for f in frames]
     failures += [f"frame {r.frame}: {f}" for r in results for f in r.failures]
-    if not any(_paths(shot, r.frame)["deep"].exists() for r in results):
-        failures.append("no raw deep frame")
     summary = {
         k: float(np.mean([r.metrics[k] for r in results if k in r.metrics]))
         for k in sorted({k for r in results for k in r.metrics})
     }
     return {
         "shot_id": shot.name,
+        "validation": VALIDATION,
         "passed": not failures,
         "failures": failures,
         "mean_metrics": summary,
