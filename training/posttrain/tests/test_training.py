@@ -153,11 +153,15 @@ def test_cached_training_refuses_protected_feature_roots(tmp_path: Path) -> None
         train(path)
 
 
+@pytest.mark.parametrize("rising", [False, True])
+@pytest.mark.parametrize("baseline", [0.1, 0.39998, 1.0])
 @pytest.mark.parametrize("passing", [False, True])
 def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     passing: bool,
+    baseline: float,
+    rising: bool,
 ) -> None:
     import shutil
 
@@ -193,15 +197,15 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
         chain(
             [
                 (0.4, 0.3, 0.5),
-                (0.3, 0.2, 0.9),
-                (0.2, 0.0005, 0.5),
-                (0.1, 0.0009, 0.2),
-                (0.05, 0.0001, 0.3),
+                (0.3, 0.2, 0.4),
+                (0.2, 0.0005, 0.39999),
+                (0.1, 0.0009, 0.39998),
+                (0.05, 0.001, 0.4 if rising else 0.39998),
             ],
-            repeat((0.01, 0.0001, 0.21)),
+            repeat((0.01, 0.001, 0.41 if rising else 0.39998)),
         )
         if passing
-        else chain([(0.4, 0.3, 0.4), (0.3, 0.2, 0.3), (0.2, 0.4, 0.2)], repeat((0.1, 0.3, 0.1)))
+        else chain([(0.4, 0.3, 0.4), (0.3, 0.2, 0.3), (0.2, 0.4, 0.2)], repeat((0.1, 0.3, 0.3)))
     )
 
     def evaluate(model: object, config: object, frames: object) -> dict[str, Any]:
@@ -217,30 +221,41 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
         }
 
     trainer: Any = import_module("strata_training.train")
+    baseline_calls: list[object] = []
+
+    def evaluate_baseline(frames: object) -> dict[str, Any]:
+        baseline_calls.append(frames)
+        return {"selection": baseline, "reference": "layer-targets"}
+
+    monkeypatch.setattr(trainer, "evaluate_dp2_baseline", evaluate_baseline)
     monkeypatch.setattr(trainer, "evaluate_validation", evaluate)
     report = train(path)
-    assert report["stopped_step"] == (5 if passing else 6)
+    assert report["stopped_step"] == (5 if passing else 8)
     assert report["best_step"] == (3 if passing else 2)
     assert report["stopping_reason"] == "validation_patience"
     assert report["best_validation_mixed_alpha_mae"] == (0.1 if passing else 0.3)
     assert report["candidate_status"] == (
-        "production candidate" if passing else "no production candidate"
+        "production candidate" if passing and baseline > 0.39998 else "no production candidate"
     )
     output = Path(config["output"])
     best = torch.load(output / "best.pt", weights_only=True)
     final = torch.load(output / "final.pt", weights_only=True)
     assert best["step"] == (3 if passing else 2)
-    assert final["step"] == (5 if passing else 6)
+    assert final["step"] == (5 if passing else 8)
     assert not torch.equal(best["model"]["output.weight"], final["model"]["output.weight"])
     state = json.loads((output / "validation.json").read_text())
     assert [row["step"] for row in state["history"]] == (
-        [0, 1, 2, 3, 4, 5] if passing else [0, 2, 4, 6]
+        [0, 1, 2, 3, 4, 5] if passing else [0, 2, 4, 6, 8]
     )
     assert [row["mixed_alpha_mae"] for row in state["history"]] == (
-        [0.4, 0.3, 0.2, 0.1, 0.05, 0.01] if passing else [0.4, 0.3, 0.2, 0.1]
+        [0.4, 0.3, 0.2, 0.1, 0.05, 0.01] if passing else [0.4, 0.3, 0.2, 0.1, 0.1]
     )
     assert final["validation"]["stale_evals"] == 2
-    final["config"]["selection"] = "coverage-sweep-layer-v1"
+    assert len(baseline_calls) == 1
+    assert state["baseline"]["selection"] == baseline
+    assert report["dp2_baseline"]["selection"] == baseline
+    assert final["validation"]["best_sweep"] == (0.39998 if passing else 0.2)
+    final["config"].pop("selection")
     old_selection = output / "old-selection.pt"
     with atomic_path(old_selection) as temporary:
         torch.save(final, temporary)
@@ -250,6 +265,13 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     write_json(path, {**config, "resume": str(output / "last.pt")})
     with pytest.raises(ValueError, match="exhausted validation patience"):
         train(path)
+    if passing:
+        write_json(path, {**config, "resume": str(output / "best.pt")})
+        resumed = train(path)
+        assert resumed["stopped_step"] == 5
+        assert resumed["best_step"] == 3
+        assert resumed["candidate_status"] == report["candidate_status"]
+        assert len(baseline_calls) == 1
 
 
 def test_validation_brightness_uses_gt_not_denoised_model_input(tmp_path: Path) -> None:
@@ -351,3 +373,23 @@ def test_validation_metric_is_pooled_native_mixed_alpha_and_preserves_model_mode
     write_json(tmp_path / "manifest.json", {"split": "test-only"})
     with pytest.raises(ValueError, match="test-only"):
         evaluate_validation(model, config, [frame])
+
+
+def test_dp2_baseline_is_single_opaque_layer_from_frozen_metric_depth(tmp_path: Path) -> None:
+    from strata_training.data.dataset import Frame
+    from strata_training.validation import evaluate_dp2_baseline
+
+    config, _ = _configuration(tmp_path)
+    entry = json.loads(Path(config["index"]).read_text())[0]
+    with np.load(entry["cache"]) as archive:
+        arrays = dict(archive)
+    arrays["mixed"][:, :16] = False
+    save_arrays(Path(entry["cache"]), **arrays)
+    root = Path(config["features"]) / "train"
+    save_arrays(root / "base.npz", **base_arrays(np.full((32, 32), 0.5), 2.0))
+    frame = Frame(entry, Path(config["features"]))
+    report = evaluate_dp2_baseline([frame])
+    assert report["selection"] == pytest.approx(0.8 * np.log(2))
+    assert report["edge"]["too_near"] == pytest.approx(0.8 * np.log(2))
+    assert report["interior"]["too_near"] == pytest.approx(0.8 * np.log(2))
+    assert report["edge"]["too_far"] == 0

@@ -16,7 +16,7 @@ from strata_training.data.policy import require_supervision
 from strata_training.data.sequences import clip_indices
 from strata_training.data.workers import NativeBatches, device_batches
 from strata_training.eval.protocol import entries_for
-from strata_training.eval.selection import meaningful_improvement, validation_improves
+from strata_training.eval.selection import validation_improves
 from strata_training.io import write_json
 from strata_training.losses.deep import deep_loss
 from strata_training.model.checkpoint import save_checkpoint
@@ -25,7 +25,7 @@ from strata_training.model.head import COVERAGE_OBJECTIVE, DeepHead
 from strata_training.model.live import FrozenEncoder
 from strata_training.optim import gradient_norm, learning_rate_multiplier, parameter_groups
 from strata_training.torch_api import api
-from strata_training.validation import evaluate_validation, validation_frames
+from strata_training.validation import evaluate_dp2_baseline, evaluate_validation, validation_frames
 
 
 def train(config_path: Path) -> dict[str, Any]:
@@ -41,7 +41,7 @@ def _train(config_path: Path) -> dict[str, Any]:
     config = training_defaults(json.loads(config_path.read_text()))
     config["objective"] = COVERAGE_OBJECTIVE
     if config["early_stopping"]:
-        config["selection"] = "coverage-sweep-layer-v2"
+        config["selection"] = "coverage-sweep-layer-v3"
     config["sampling"] = "step-seed-gpu-v2" if config["loader_math"] == "torch" else "step-seed-v2"
     validate_config(config)
     device = config.get("device", "cuda")
@@ -115,7 +115,8 @@ def _train(config_path: Path) -> dict[str, Any]:
     validation_state: dict[str, Any] | None = (
         {
             "best_metrics": None,
-            "patience_anchor": None,
+            "best_sweep": None,
+            "baseline": None,
             "best_step": 0,
             "stale_evals": 0,
             "history": [],
@@ -192,21 +193,21 @@ def _train(config_path: Path) -> dict[str, Any]:
         metrics = evaluate_validation(model, config, validation)
         metrics["checkpoint_step"] = step
         improved = validation_improves(metrics, validation_state["best_metrics"])
-        meaningful = meaningful_improvement(metrics, validation_state["patience_anchor"])
-        validation_state["stale_evals"] = 0 if meaningful else validation_state["stale_evals"] + 1
-        if meaningful:
-            validation_state["patience_anchor"] = metrics
-        validation_state["candidate_status"] = (
-            "production candidate"
-            if metrics["leakage"]["passed"]
-            or (
-                validation_state["best_metrics"] is not None
-                and validation_state["best_metrics"]["leakage"]["passed"]
-            )
-            else "no production candidate"
-        )
+        sweep = metrics["coverage_sweep"]["selection"]
+        best_sweep = validation_state["best_sweep"]
+        new_best = best_sweep is None or sweep < best_sweep
+        validation_state["stale_evals"] = 0 if new_best else validation_state["stale_evals"] + 1
+        if new_best:
+            validation_state["best_sweep"] = sweep
         if improved:
             validation_state["best_metrics"], validation_state["best_step"] = metrics, step
+        best = validation_state["best_metrics"]
+        validation_state["candidate_status"] = (
+            "production candidate"
+            if best["leakage"]["passed"]
+            and best["coverage_sweep"]["selection"] < validation_state["baseline"]["selection"]
+            else "no production candidate"
+        )
         elapsed = previous_seconds + time.monotonic() - start
         validation_state["history"].append({"step": step, "seconds": elapsed, **metrics})
         write_json(output / "validation.json", validation_state)
@@ -224,6 +225,8 @@ def _train(config_path: Path) -> dict[str, Any]:
         return metrics
 
     if validation and not config.get("resume"):
+        assert validation_state is not None
+        validation_state["baseline"] = evaluate_dp2_baseline(validation)
         check_validation(0)
     crop, halo = config["crop"], config["halo"]
     running: list[float] = []
@@ -358,6 +361,7 @@ def _train(config_path: Path) -> dict[str, Any]:
         "best_validation_coverage_sweep": validation_state["best_metrics"]["coverage_sweep"]
         if validation_state
         else None,
+        "dp2_baseline": validation_state["baseline"] if validation_state else None,
         "candidate_status": validation_state["candidate_status"]
         if validation_state
         else "not evaluated",

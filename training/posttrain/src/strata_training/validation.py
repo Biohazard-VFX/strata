@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from strata_training.baselines.deep import fake_deep
 from strata_training.data.cache import load_layers
 from strata_training.data.dataset import Frame
 from strata_training.data.policy import require_supervision
@@ -112,3 +113,16 @@ def evaluate_validation(
         "mixed_pixels": pixels,
         "frames": len(frames),
     }
+
+
+def evaluate_dp2_baseline(frames: list[Frame]) -> dict[str, Any]:
+    sweep: dict[str, list[Array]] = {}
+    for frame in frames:
+        target, arrays = load_layers(Path(frame.entry["cache"]))
+        baseline = fake_deep(frame.base, arrays["beauty"], layers=1)
+        for name, values in coverage_samples(baseline, target, arrays["mixed"]).items():
+            sweep.setdefault(name, []).append(values)
+    result = coverage_summary({name: np.concatenate(values) for name, values in sweep.items()})
+    if result["selection"] is None or not np.isfinite(result["selection"]):
+        raise ValueError("DP2 baseline requires finite edge and opaque-interior sweeps")
+    return result

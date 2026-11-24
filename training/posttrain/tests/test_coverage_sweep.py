@@ -4,10 +4,14 @@ from typing import Any
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
-from scipy.integrate import quad
 
-from strata_training.eval.coverage import coverage_integrals, coverage_samples, coverage_summary
-from strata_training.eval.selection import meaningful_improvement, validation_improves
+from strata_training.eval.coverage import (
+    coverage_integrals,
+    coverage_regions,
+    coverage_samples,
+    coverage_summary,
+)
+from strata_training.eval.selection import validation_improves
 from strata_training.types import Layers
 
 
@@ -15,52 +19,13 @@ def test_opaque_sweep_is_log_distance_and_signed() -> None:
     front = np.array([2.0])[:, None, None]
     alpha = np.ones_like(front)
     for depth, expected in [(1.0, (np.log(2), 0)), (4.0, (0, np.log(2))), (2.0, (0, 0))]:
-        actual = coverage_integrals(front, front, alpha, np.full_like(front, depth), alpha)
+        actual = coverage_integrals(front, alpha, np.full_like(front, depth), alpha)
         assert_allclose(actual[:, 0, 0], expected, atol=1e-14)
     assert_allclose(
-        coverage_integrals(front, front, alpha, np.full_like(front, 3000), alpha)[:, 0, 0],
+        coverage_integrals(front, alpha, np.full_like(front, 3000), alpha)[:, 0, 0],
         [0, np.log(100)],
         atol=1e-14,
     )
-
-
-@pytest.mark.parametrize("opacity", [0.2, 0.8, 1.0])
-def test_beer_lambert_overlaps_and_opaque_intervals_match_independent_quadrature(
-    opacity: float,
-) -> None:
-    front, back, alpha = np.array([1.0, 2.0]), np.array([4.0, 6.0]), np.array([opacity, 0.6])
-    z, predicted = np.array([3.0, 7.0]), np.array([0.3, 1.0])
-
-    def difference(log_z: float) -> float:
-        depth = np.exp(log_z)
-        gt_t = 1.0
-        for f, b, a in zip(front, back, alpha, strict=True):
-            fraction = min(1.0, max(0.0, (depth - f) / (b - f)))
-            gt_t *= (1 - a) ** fraction
-        pred_t = 1.0
-        for point, a in zip(z, predicted, strict=True):
-            if depth >= point:
-                pred_t *= 1 - a
-        return gt_t - pred_t
-
-    expected = [
-        quad(
-            lambda value, sign=sign: max(sign * difference(value), 0),
-            0,
-            np.log(200),
-            points=np.log([2, 3, 4, 6, 7]),
-            epsabs=1e-11,
-        )[0]
-        for sign in (1, -1)
-    ]
-    actual = coverage_integrals(
-        front[:, None, None],
-        back[:, None, None],
-        alpha[:, None, None],
-        z[:, None, None],
-        predicted[:, None, None],
-    )
-    assert_allclose(actual[:, 0, 0], expected, atol=1e-10, rtol=0)
 
 
 def test_pooled_regions_preserve_directions_and_ignore_other_contestants() -> None:
@@ -90,7 +55,7 @@ def test_pooled_regions_preserve_directions_and_ignore_other_contestants() -> No
             "interior_too_far": np.array([1.0, 1.0, 1.0]),
         }
     )
-    assert asymmetric["selection"] == 1.5
+    assert asymmetric["selection"] == 2.0
 
 
 def _metrics(sweep: float, leak: float, mixed: float = 0.1, step: int = 0) -> dict[str, Any]:
@@ -122,10 +87,13 @@ def test_checkpoint_selection_is_order_independent_and_slot_mae_is_diagnostic() 
                 best = candidate
         assert best == history[1]
     assert not validation_improves(history[3], history[3])
-    tied = [_metrics(0.1, 0.0005, 0.9, 1), _metrics(0.1, 0.0005, 0.1, 2)]
-    for first, second in permutations(tied):
-        best = second if validation_improves(second, first) else first
-        assert best == tied[0]
+    for tied in (
+        [_metrics(0.1, 0.0005, 0.9, 1), _metrics(0.1, 0.0006, 0.1, 0)],
+        [_metrics(0.1, 0.0005, 0.9, 1), _metrics(0.1, 0.0005, 0.1, 2)],
+    ):
+        for first, second in permutations(tied):
+            best = second if validation_improves(second, first) else first
+            assert best == tied[0]
 
 
 def test_sky_interior_is_scored_and_invalid_prediction_depth_is_not_sky() -> None:
@@ -149,15 +117,19 @@ def test_prepass_prefers_overall_leakage_even_when_a_passing_bucket_rises() -> N
     second["leakage"]["worst_mean"] = 0.06
     assert validation_improves(second, first)
     assert not validation_improves(first, second)
-    assert meaningful_improvement(second, first)
 
 
-def test_patience_uses_explicit_deltas_not_every_new_best() -> None:
-    passing, failing = _metrics(0.2, 0.0005), _metrics(0.2, 0.1)
-    assert meaningful_improvement(passing, None)
-    assert meaningful_improvement(passing, failing)
-    assert not meaningful_improvement(failing, passing)
-    assert not meaningful_improvement(_metrics(0.2 - 0.00005, 0.0004), passing)
-    assert meaningful_improvement(_metrics(0.2 - 0.0002, 0.0006), passing)
-    assert not meaningful_improvement(_metrics(0.1, 0.1 - 0.000005), failing)
-    assert meaningful_improvement(_metrics(0.9, 0.1 - 0.00002), failing)
+def test_opaque_interior_threshold_is_inclusive_0999() -> None:
+    alpha = np.array([0.99, 0.9989, 0.999, 1.0])[None, None]
+    target = Layers(np.ones_like(alpha), alpha, np.zeros((1, 3, 1, 4)))
+    _, interior = coverage_regions(target, np.zeros((1, 4), dtype=bool))
+    assert interior.tolist() == [[False, False, True, True]]
+
+
+def test_point_deep_sweep_preserves_conditional_transmission() -> None:
+    z = np.array([2.0, 4.0])[:, None, None]
+    alpha = np.array([0.2, 1.0])[:, None, None]
+    predicted_z = np.array([1.0, 8.0])[:, None, None]
+    predicted_alpha = np.array([0.3, 1.0])[:, None, None]
+    actual = coverage_integrals(z, alpha, predicted_z, predicted_alpha)
+    assert_allclose(actual[:, 0, 0], [0.4 * np.log(2), 0.7 * np.log(2)], atol=1e-14)

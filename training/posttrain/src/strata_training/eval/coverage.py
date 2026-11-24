@@ -9,53 +9,21 @@ from strata_training.types import Array, Layers
 FAR_DEPTH = 200.0
 
 
-def coverage_integrals(
-    front: Array, back: Array, alpha: Array, z: Array, predicted: Array
-) -> Array:
-    front, back, z = (np.minimum(value.astype(np.float64), FAR_DEPTH) for value in (front, back, z))
+def coverage_integrals(front: Array, alpha: Array, z: Array, predicted: Array) -> Array:
+    front, z = (np.minimum(value.astype(np.float64), FAR_DEPTH) for value in (front, z))
     alpha, predicted = alpha.astype(np.float64), predicted.astype(np.float64)
-    if np.any(front <= 0) or np.any(back < front) or np.any(z <= 0):
-        raise ValueError("Coverage sweep requires positive ordered depth intervals")
-    endpoints = np.sort(np.concatenate((front, back, z, np.full_like(z[:1], FAR_DEPTH))), axis=0)
+    if np.any(front <= 0) or np.any(z <= 0):
+        raise ValueError("Coverage sweep requires positive depths")
+    endpoints = np.sort(np.concatenate((front, z, np.full_like(z[:1], FAR_DEPTH))), axis=0)
     result = np.zeros((2, *front.shape[1:]), dtype=np.float64)
-    nodes, weights = np.polynomial.legendre.leggauss(16)
-    duration = back - front
-    log_transmission = np.log1p(-np.minimum(alpha, np.nextafter(1.0, 0.0)))
-
-    def transmission(depth: Array) -> Array:
-        fraction = np.divide(
-            depth[None] - front,
-            duration,
-            out=(depth[None] >= front).astype(np.float64),
-            where=duration > 0,
-        ).clip(0, 1)
-        value = np.exp((fraction * log_transmission).sum(axis=0))
-        return np.where(((alpha == 1) & (depth[None] > front)).any(axis=0), 0, value)
-
     for low, high in pairwise(endpoints):
         middle = np.sqrt(low * high)
+        gt_t = np.prod(np.where(front <= middle[None], 1 - alpha, 1), axis=0)
         pred_t = np.prod(np.where(z <= middle[None], 1 - predicted, 1), axis=0)
-        varying = ((front < middle[None]) & (back > middle[None]) & (alpha > 0)).any(axis=0)
-        delta = transmission(middle) - pred_t
+        delta = gt_t - pred_t
         width = np.log(high / low)
-        result[0] += np.where(varying, 0, np.maximum(delta, 0) * width)
-        result[1] += np.where(varying, 0, np.maximum(-delta, 0) * width)
-        if not varying.any():
-            continue
-        left: Array = low.copy()
-        right: Array = high.copy()
-        for _ in range(48):
-            midpoint: Array = (left + right) / 2
-            before = transmission(midpoint) > pred_t
-            left, right = np.where(before, midpoint, left), np.where(before, right, midpoint)
-        crossing: Array = (left + right) / 2
-        for a, b in ((low, crossing), (crossing, high)):
-            half = np.log(b / a) / 2
-            centre = (np.log(a) + np.log(b)) / 2
-            for node, weight in zip(nodes, weights, strict=True):
-                difference = transmission(np.exp(centre + node * half)) - pred_t
-                result[0] += np.where(varying, np.maximum(difference, 0) * half * weight, 0)
-                result[1] += np.where(varying, np.maximum(-difference, 0) * half * weight, 0)
+        result[0] += np.maximum(delta, 0) * width
+        result[1] += np.maximum(-delta, 0) * width
     return result
 
 
@@ -75,7 +43,6 @@ def coverage_samples(prediction: Layers, target: Layers, mixed: Array) -> dict[s
     for row in range(0, mixed.shape[0], 32):
         part = slice(row, row + 32)
         output[:, part] = coverage_integrals(
-            gt_z[:, part],
             gt_z[:, part],
             target.alpha[:, part],
             pred_z[:, part],
@@ -102,7 +69,6 @@ def coverage_regions(target: Layers, mixed: Array) -> tuple[Array, Array]:
 
 def coverage_summary(samples: dict[str, Array]) -> dict[str, Any]:
     regions: dict[str, Any] = {}
-    total, pixels = 0.0, 0
     for region in ("edge", "interior"):
         near, far = (samples[f"{region}_{direction}"] for direction in ("too_near", "too_far"))
         count = int(near.size)
@@ -112,10 +78,9 @@ def coverage_summary(samples: dict[str, Array]) -> dict[str, Any]:
             "too_far": float(far.mean()) if count else None,
             "mean": float((near + far).mean()) if count else None,
         }
-        total += float(near.sum() + far.sum())
-        pixels += count
+    means = [regions[region]["mean"] for region in ("edge", "interior")]
     return {
         "reference": "layer-targets",
         **regions,
-        "selection": total / pixels if pixels else None,
+        "selection": float(np.mean(means)) if all(value is not None for value in means) else None,
     }
