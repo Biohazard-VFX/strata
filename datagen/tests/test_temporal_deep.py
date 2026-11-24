@@ -351,7 +351,7 @@ class TemporalDeepTest(unittest.TestCase):
             self.assertTrue(checks.check_shot(shot)["passed"])
 
     def test_unlabelled_visible_coverage_gates_but_raw_count_is_diagnostic(self) -> None:
-        for opacity in (1e-6, 0.5):
+        for opacity in (1e-6, 0.016, 0.5):
             with self.subTest(opacity=opacity), TemporaryDirectory() as temporary:
                 shot = Path(temporary) / "shot"
                 pixel = [Sample(0.003, 0.01, 1 + i % 2) for i in range(10)] + [SKY]

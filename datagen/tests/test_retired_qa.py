@@ -1,9 +1,10 @@
 import hashlib
 import json
 import unittest
+from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import TypedDict, cast
 from unittest import mock
 
 import numpy as np
@@ -15,6 +16,33 @@ from strata_datagen.render import pack
 from strata_dataset import merged
 from tests.fixtures import SKY, Sample, write_shot
 from tests.test_producer import CLEAN, SKY_IN_FRONT
+
+
+class RendererCrop(TypedDict):
+    frame: int
+    counts: list[int]
+    deep: dict[str, list[float]]
+    beauty: dict[str, list[float]]
+
+
+def write_renderer_crop(shot: Path, crop: RendererCrop) -> None:
+    write_shot(shot, [[SKY] * len(crop["counts"])])
+    path = shot / "deep" / "0001.exr"
+    header = dict(OpenEXR.File(str(path)).parts[0].header)
+    offsets = np.r_[0, np.cumsum(crop["counts"])]
+    channels: dict[str, OpenEXR.Channel] = {}
+    for name, samples in crop["deep"].items():
+        cells = np.empty((1, len(crop["counts"])), object)
+        values = np.asarray(samples, np.float32)
+        for p, (first, last) in enumerate(pairwise(offsets)):
+            cells[0, p] = values[first:last]
+        channels[name] = OpenEXR.Channel(cells)
+    OpenEXR.File(header, channels).write(str(path))
+    path = shot / "beauty" / "0001.exr"
+    part = OpenEXR.File(str(path), separate_channels=True).parts[0]
+    for name in part.channels:
+        part.channels[name].pixels = np.asarray(crop["beauty"][name], np.float32)[None]
+    OpenEXR.File(dict(part.header), part.channels).write(str(path))
 
 
 class RetiredQATest(unittest.TestCase):
@@ -48,12 +76,10 @@ class RetiredQATest(unittest.TestCase):
             metrics = cast("list[dict[str, float]]", baseline["frames"])[0]
             for metric in (
                 "sky_in_front",
-                "bad_depth",
                 "uncovered",
                 "partial_share",
                 "flatten_error",
                 "flatten_excess",
-                "role_excess",
                 "valid_id_fraction",
                 "unlabelled_coverage",
                 "identity_channels",
@@ -70,13 +96,16 @@ class RetiredQATest(unittest.TestCase):
                     self.assertTrue(
                         any(f"merged_{metric}=" in failure for failure in result.failures), result
                     )
-            self.assertEqual(metrics["merged_bad_depth"], 0.0)
-            for metric in ("mean_samples", "max_samples", "coverage_alpha_error"):
+            for metric in checks.RAW_ONLY_LIMITS:
                 low, high = checks.LIMITS[metric]
-                with self.subTest(metric=metric), mock.patch.dict(checks.LIMITS, {metric: (low, high / 2)}):
+                with self.subTest(metric=metric), mock.patch.dict(checks.LIMITS, {metric: (low, high + 1)}):
                     result = checks.accept(shot, range(1, 2))[0]
                     self.assertTrue(
-                        any(f"{metric}: raw QA policy changed" in f for f in result.failures), result
+                        any(
+                            f"{metric}: raw QA policy changed; re-render required" in f
+                            for f in result.failures
+                        ),
+                        result,
                     )
             self.assertTrue(checks.check_shot(shot)["passed"])
 
@@ -128,6 +157,7 @@ class RetiredQATest(unittest.TestCase):
                     [
                         [Sample(0.1, 0.25, 0, 740), Sample(0.1, 0.5, 0, 760), SKY],
                         [
+                            Sample(0.1, 0.5, 2, 1),
                             Sample(0.01, 0.01, 1, 2, checks=(0.0, 0.0)),
                             Sample(0.01, 0.01, 1, 2.1, checks=(0.0, 0.0)),
                             SKY,
@@ -144,11 +174,104 @@ class RetiredQATest(unittest.TestCase):
                 self.assertEqual(raw.failures, [])
                 retired = checks.accept(shot, range(1, 2))[0]
                 self.assertEqual(retired.failures, [])
-            self.assertAlmostEqual(raw.metrics["sky_in_front"], 0.625 / (1.0 + 0.99**2), places=8)
-            self.assertAlmostEqual(raw.metrics["unlabelled_coverage"], (1.0 - 0.99**2) / 3, places=8)
+            self.assertAlmostEqual(raw.metrics["sky_in_front"], 0.625 / (1.0 + 0.5 * 0.99**2), places=8)
+            self.assertAlmostEqual(raw.metrics["unlabelled_coverage"], 0.5 * (1.0 - 0.99**2) / 3, places=8)
             for name in ("sky_in_front", "unlabelled_coverage"):
                 self.assertAlmostEqual(raw.metrics[name], raw.metrics[f"merged_{name}"], places=14)
                 self.assertAlmostEqual(raw.metrics[name], retired.metrics[f"merged_{name}"], places=14)
+
+    def test_every_retained_limit_is_merge_invariant(self) -> None:
+        crops = cast(
+            "list[RendererCrop]",
+            json.loads((Path(__file__).parent / "data" / "qa_renderer_crops.json").read_text()),
+        )
+        fixtures: list[RendererCrop | None] = [None, *crops]
+        for crop in fixtures:
+            with self.subTest(frame=crop["frame"] if crop else "adversarial"), TemporaryDirectory() as tmp:
+                shot = Path(tmp) / "shot"
+                if crop:
+                    write_renderer_crop(shot, crop)
+                else:
+                    write_shot(
+                        shot,
+                        [
+                            [
+                                [Sample(0.1, 0.5, 2, 1), Sample(0.01, 0.01, 1, 2, checks=(0.0, 0.0)), SKY],
+                                [Sample(0.01, 0.05, 7, 2 + i * 0.001) for i in range(10)] + [SKY],
+                                [Sample(0.1, 0.3333, 0, 740), Sample(0.2, 0.5, 0, 760), SKY],
+                                [Sample(0.1, 0.5, 1, 0.1), Sample(0.1, 1.0, 2, 0.14)],
+                            ]
+                        ],
+                    )
+                pack.pack(shot, range(1, 2))
+                with mock.patch.dict(checks.LIMITS, dict.fromkeys(checks.LIMITS, (-1e10, 1e10))):
+                    raw = checks.accept(shot, range(1, 2))[0]
+                    self.assertEqual(raw.failures, [])
+                    self.assertFalse((shot / "deep" / "0001.exr").exists())
+                    retired = checks.accept(shot, range(1, 2))[0]
+                    self.assertEqual(retired.failures, [])
+                for name in checks.LIMITS.keys() - checks.RAW_ONLY_LIMITS.keys():
+                    with self.subTest(metric=name):
+                        key = f"merged_{name}" if f"merged_{name}" in retired.metrics else name
+                        np.testing.assert_allclose(
+                            raw.metrics[name], retired.metrics[key], rtol=1e-14, atol=1e-14
+                        )
+                for name in checks.RAW_ONLY_LIMITS:
+                    self.assertNotIn(f"merged_{name}", retired.metrics)
+
+    def test_undeclared_visible_coverage_fails_after_loose_acceptance_and_retirement(self) -> None:
+        with TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "shot"
+            bad = [Sample(0.01, 0.1, 7, 2 + i * 0.001) for i in range(10)] + [SKY]
+            good = [Sample(0.2, 0.5, 1), SKY]
+            write_shot(shot, [[bad, *[good for _ in range(12000)]]])
+            pack.pack(shot, range(1, 2))
+            raw = checks.accept(shot, range(1, 2))[0]
+            expected = 1.0 - (1.0 - (1.0 - float(np.float32(0.1))) ** 10) / 12001
+            self.assertAlmostEqual(raw.metrics["valid_id_fraction"], expected, places=14)
+            self.assertAlmostEqual(raw.metrics["merged_valid_id_fraction"], expected, places=14)
+            self.assertTrue(any(f.startswith("valid_id_fraction=") for f in raw.failures), raw)
+            with mock.patch.dict(checks.LIMITS, {"valid_id_fraction": (0.99, 1.0)}):
+                self.assertEqual(checks.accept(shot, range(1, 2))[0].failures, [])
+            self.assertFalse((shot / "deep" / "0001.exr").exists())
+            retired = checks.accept(shot, range(1, 2))[0]
+            self.assertTrue(any(f.startswith("merged_valid_id_fraction=") for f in retired.failures), retired)
+
+    def test_bad_raw_back_depth_is_rejected_before_retirement(self) -> None:
+        with TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "shot"
+            write_shot(shot, [CLEAN])
+            path = shot / "deep" / "0001.exr"
+            part = OpenEXR.File(str(path), separate_channels=True).parts[0]
+            part.channels["ZBack"].pixels[0, 0][0] = np.float32(1.9)
+            OpenEXR.File(dict(part.header), part.channels).write(str(path))
+            pack.pack(shot, range(1, 2))
+            result = checks.accept(shot, range(1, 2))[0]
+            self.assertEqual(result.metrics["bad_depth"], 1.0)
+            self.assertIn("bad_depth=1 outside 0.0..0.0", result.failures)
+            self.assertTrue(path.is_file())
+
+    def test_raw_role_excess_cannot_be_hidden_by_merging_or_retirement(self) -> None:
+        with TemporaryDirectory() as tmp:
+            shot = Path(tmp) / "shot"
+            pixel = [
+                Sample(0.2, 0.5, 2, 2, roles=(1.01, 1, 1)),
+                Sample(0.2, 0.5, 2, 2.001, roles=(0.98, 0.98, 0.98)),
+                SKY,
+            ]
+            write_shot(shot, [[pixel, [Sample(0.2, 0.5, 1), SKY], SKY]])
+            pack.pack(shot, range(1, 2))
+            raw = checks.accept(shot, range(1, 2))[0]
+            self.assertAlmostEqual(raw.metrics["role_excess"], 0.005, places=7)
+            self.assertTrue(any(f.startswith("role_excess=") for f in raw.failures), raw)
+            with mock.patch.dict(
+                checks.LIMITS, {"role_excess": (0, 1), "role_beauty_error": (0, 1), "role_coverage": (0, 1)}
+            ):
+                self.assertEqual(checks.accept(shot, range(1, 2))[0].failures, [])
+            retired = checks.accept(shot, range(1, 2))[0]
+            self.assertIn("role_excess: raw QA policy changed; re-render required", retired.failures)
+            self.assertNotIn("merged_role_excess", retired.metrics)
+            self.assertNotIn("merged_bad_depth", retired.metrics)
 
     def test_proof_refuses_missing_retained_evidence_even_if_receipt_also_says_none(self) -> None:
         with TemporaryDirectory() as temporary:

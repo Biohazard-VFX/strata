@@ -12,7 +12,7 @@ from strata_datagen.exr import Deep, read_deep
 from strata_datagen.generators import groom
 from strata_datagen.library import hdri
 from strata_datagen.qa import checks
-from strata_datagen.qa.deep import flatten, instance_ids
+from strata_datagen.qa.deep import flatten, instance_ids, partial_coverage
 from strata_datagen.render import settings
 from strata_datagen.rng import stream
 from strata_datagen.usdutil import relative_asset, tag_instances
@@ -62,6 +62,13 @@ def _deep(samples: list[list[tuple[float, float, float, float, float, float]]]) 
 
 
 class DeepTest(unittest.TestCase):
+    def test_partial_front_slab_includes_absolute_gap_and_opaque_alpha(self) -> None:
+        depth = np.array([0.1, 0.14, 0.1, 0.16, 0.1, 0.1], np.float32)
+        alpha = np.array([0.5, 1.0, 0.5, 1.0, 1.0, np.nextafter(1.0, 2.0)], np.float64)
+        with np.errstate(all="raise"):
+            found = partial_coverage(depth, alpha, np.array([2, 2, 1, 1]), np.ones(4))
+        self.assertEqual(found.tolist(), [False, True, False, False])
+
     def test_flatten_composites_front_to_back_and_flags_see_through_pixels(self) -> None:
         deep = _deep(
             [

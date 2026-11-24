@@ -93,7 +93,9 @@ class RawEvidenceTest(unittest.TestCase):
             _drop_hero_ids(shot)
             self.assertTrue((shot / "deep" / "0002.exr").exists())
             failures = shot_failures(shot)
-            self.assertTrue(any(f.startswith("frame 2: valid_id_fraction=0.8") for f in failures), failures)
+            self.assertTrue(
+                any(f.startswith("frame 2: valid_id_fraction=0.6667") for f in failures), failures
+            )
 
     def test_records_of_another_contract_version_or_id_domain_are_refused(self) -> None:
         wide = [

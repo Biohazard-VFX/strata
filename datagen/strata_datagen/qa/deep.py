@@ -69,7 +69,8 @@ def partial_coverage(
     populated = counts > 0
     near[populated] = np.minimum.reduceat(depth, starts[populated])
     front = depth <= near[pixel] * (1.0 + FRONT_SLAB) + LAYER_GAP_M
-    clear = np.bincount(pixel[front], weights=np.log1p(-np.minimum(alpha[front], 0.999999)), minlength=size)
+    with np.errstate(divide="ignore"):
+        clear = np.bincount(pixel[front], weights=np.log1p(-np.minimum(alpha[front], 1.0)), minlength=size)
     front_cover = 1.0 - np.exp(clear)
     return (front_cover > VISIBLE) & (front_cover < OPAQUE) & (covered > VISIBLE)
 
