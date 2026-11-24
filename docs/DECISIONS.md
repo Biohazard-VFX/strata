@@ -47,13 +47,13 @@
 - Sweep bounds use this pixel's GT/prediction minimum Z through 200 m; sky maps to 200 m; test_opaque_sweep_is_log_distance_and_signed fixes the far clamp.
 - Weight pixel-pooled edge and opaque-interior sweeps 50/50; revisit during training; check: test_pooled_regions_preserve_directions_and_ignore_other_contestants.
 - Before any gate pass select least overall leakage and label no production candidate; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume checks it.
-- Any new validation sweep best resets patience; flat/rising scores stop after patience checks; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume checks stop steps.
+- Patience resets on passing sweep bests, or lowest leakage before any pass; flat stops; test_patience_tracks_eligible_sweep_or_prepass_leakage_and_resumes checks state.
 - Exact score ties prefer lower overall leakage then earliest step, independent of arrival; test_checkpoint_selection_is_order_independent_and_slot_mae_is_diagnostic checks ties.
 - Brightness buckets pool pixels: below 250 are not evaluated; otherwise limit=max(0.001,25/n); overall always gates at 0.001; test_count_aware_brightness_gate fixes boundaries.
 - Report premature occlusion before the visible GT surface without gating; test_premature_occlusion_is_report_only_and_gt_surface_is_visible checks it.
 - Validation brightness comes from GT beauty, not denoised model input; test_validation_brightness_uses_gt_not_denoised_model_input fixes the source.
 - Sweep opaque interior includes sky at the far clamp; leakage requires a finite GT surface; test_sky_interior_is_scored_and_invalid_prediction_depth_is_not_sky checks sky.
-- Selection v3 rejects older resume history after sweep weighting and stopping changes; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume omits the saved key.
+- Selection v4 rejects older resume history after patience changes; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume omits the saved key.
 - Production eligibility requires leakage pass and sweep strictly below frozen DP2; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume checks no-candidate runs.
 - Freeze and log one DP2 single-opaque-layer sweep per run on the same validation frames; test_dp2_baseline_is_single_opaque_layer_from_frozen_metric_depth checks metric depths.
 - Opaque sweep interior requires total coverage >=0.999 outside the edge band; test_opaque_interior_threshold_is_inclusive_0999 fixes the inclusive threshold.

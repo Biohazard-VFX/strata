@@ -126,9 +126,11 @@ one frozen Depth Pro 2 baseline: cached metric depth as a single opaque layer,
 scored by the same sweep on the same validation frames. A production candidate
 must pass the unchanged leakage gate and strictly beat this baseline; otherwise
 label the run `no production candidate`.
-Patience counts evaluations without a new best validation sweep. Any strictly
-lower sweep resets it, even a tiny improvement; flat or rising sweep values
-exhaust patience. This sweep best is independent of leakage-ranked retention.
+Patience counts evaluations without progress. Before any leakage-gate pass,
+progress is strictly lower overall leakage. The first pass resets patience;
+afterward only passing checkpoints with a strictly lower passing sweep reset it,
+even for tiny improvements. Failing checkpoints never become the sweep bar or
+reset patience after a pass. Flat or worsening eligible scores exhaust patience.
 `best.pt` retains the best checkpoint for inspection, even if none is eligible;
 `last.pt` and `final.pt` retain the actual stopping-step state. Pipeline evaluation
 uses `best.pt`; check `candidate_status` before considering production use.

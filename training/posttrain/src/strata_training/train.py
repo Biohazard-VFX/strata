@@ -41,7 +41,7 @@ def _train(config_path: Path) -> dict[str, Any]:
     config = training_defaults(json.loads(config_path.read_text()))
     config["objective"] = COVERAGE_OBJECTIVE
     if config["early_stopping"]:
-        config["selection"] = "coverage-sweep-layer-v3"
+        config["selection"] = "coverage-sweep-layer-v4"
     config["sampling"] = "step-seed-gpu-v2" if config["loader_math"] == "torch" else "step-seed-v2"
     validate_config(config)
     device = config.get("device", "cuda")
@@ -116,6 +116,7 @@ def _train(config_path: Path) -> dict[str, Any]:
         {
             "best_metrics": None,
             "best_sweep": None,
+            "lowest_leakage": None,
             "baseline": None,
             "best_step": 0,
             "stale_evals": 0,
@@ -195,10 +196,19 @@ def _train(config_path: Path) -> dict[str, Any]:
         improved = validation_improves(metrics, validation_state["best_metrics"])
         sweep = metrics["coverage_sweep"]["selection"]
         best_sweep = validation_state["best_sweep"]
-        new_best = best_sweep is None or sweep < best_sweep
+        lowest_leakage = validation_state["lowest_leakage"]
+        if metrics["leakage"]["passed"]:
+            new_best = best_sweep is None or sweep < best_sweep
+            if new_best:
+                validation_state["best_sweep"] = sweep
+        elif best_sweep is None:
+            leakage = metrics["leakage"]["all"]["mean"]
+            new_best = lowest_leakage is None or leakage < lowest_leakage
+            if new_best:
+                validation_state["lowest_leakage"] = leakage
+        else:
+            new_best = False
         validation_state["stale_evals"] = 0 if new_best else validation_state["stale_evals"] + 1
-        if new_best:
-            validation_state["best_sweep"] = sweep
         if improved:
             validation_state["best_metrics"], validation_state["best_step"] = metrics, step
         best = validation_state["best_metrics"]

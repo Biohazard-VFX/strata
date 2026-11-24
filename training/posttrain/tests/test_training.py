@@ -238,7 +238,7 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     monkeypatch.setattr(trainer, "evaluate_dp2_baseline", evaluate_baseline)
     monkeypatch.setattr(trainer, "evaluate_validation", evaluate)
     report = train(path)
-    assert report["stopped_step"] == (5 if passing else 8)
+    assert report["stopped_step"] == (5 if passing else 6)
     assert report["best_step"] == (3 if passing else 2)
     assert report["stopping_reason"] == "validation_patience"
     assert report["best_validation_mixed_alpha_mae"] == (0.1 if passing else 0.3)
@@ -249,20 +249,20 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     best = torch.load(output / "best.pt", weights_only=True)
     final = torch.load(output / "final.pt", weights_only=True)
     assert best["step"] == (3 if passing else 2)
-    assert final["step"] == (5 if passing else 8)
+    assert final["step"] == (5 if passing else 6)
     assert not torch.equal(best["model"]["output.weight"], final["model"]["output.weight"])
     state = json.loads((output / "validation.json").read_text())
     assert [row["step"] for row in state["history"]] == (
-        [0, 1, 2, 3, 4, 5] if passing else [0, 2, 4, 6, 8]
+        [0, 1, 2, 3, 4, 5] if passing else [0, 2, 4, 6]
     )
     assert [row["mixed_alpha_mae"] for row in state["history"]] == (
-        [0.4, 0.3, 0.2, 0.1, 0.05, 0.01] if passing else [0.4, 0.3, 0.2, 0.1, 0.1]
+        [0.4, 0.3, 0.2, 0.1, 0.05, 0.01] if passing else [0.4, 0.3, 0.2, 0.1]
     )
     assert final["validation"]["stale_evals"] == 2
     assert len(baseline_calls) == 1
     assert state["baseline"]["selection"] == baseline
     assert report["dp2_baseline"]["selection"] == baseline
-    assert final["validation"]["best_sweep"] == (0.39998 if passing else 0.2)
+    assert final["validation"]["best_sweep"] == (0.39998 if passing else None)
     final["config"].pop("selection", None)
     old_selection = output / "old-selection.pt"
     with atomic_path(old_selection) as temporary:
@@ -280,6 +280,100 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
         assert resumed["best_step"] == 3
         assert resumed["candidate_status"] == report["candidate_status"]
         assert len(baseline_calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("stream", "stopped_step", "best_step", "resume_step", "best_sweep", "lowest_leakage"),
+    [
+        (
+            [(0.01, 0.1), (0.7, 0.0009), (0.001, 0.1), (0.6, 0.0008), (0.5, 0.0007)],
+            6,
+            4,
+            2,
+            0.5,
+            0.1,
+        ),
+        ([(0.4, 0.0005), (0.01, 0.1), (0.001, 0.1)], 2, 0, 1, 0.4, None),
+        (
+            [(0.01, 0.5), (0.2, 0.4), (0.3, 0.3), (0.4, 0.2), (0.001, 0.2)],
+            5,
+            4,
+            4,
+            None,
+            0.2,
+        ),
+    ],
+)
+def test_patience_tracks_eligible_sweep_or_prepass_leakage_and_resumes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stream: list[tuple[float, float]],
+    stopped_step: int,
+    best_step: int,
+    resume_step: int,
+    best_sweep: float | None,
+    lowest_leakage: float | None,
+) -> None:
+    import shutil
+
+    config, path = _ood_configuration(tmp_path)
+    config.update(early_stopping=True, validation_every=1, validation_patience=2, steps=12)
+    write_json(path, config)
+    metrics = chain(stream, repeat(stream[-1]))
+    trainer: Any = import_module("strata_training.train")
+    save_checkpoint = trainer.save_checkpoint
+    resume = tmp_path / "resume.pt"
+
+    def save(target: Path, *args: Any, **kwargs: Any) -> None:
+        save_checkpoint(target, *args, **kwargs)
+        if target.name == "last.pt" and args[4] == resume_step:
+            shutil.copyfile(target, resume)
+
+    def evaluate(model: object, config: object, frames: object) -> dict[str, Any]:
+        del model, config, frames
+        sweep, leak = next(metrics)
+        return {
+            "coverage_sweep": {"selection": sweep},
+            "mixed_alpha_mae": 0.1,
+            "loss": 0.2,
+            "leakage": {"worst_mean": leak, "passed": leak <= 0.001, "all": {"mean": leak}},
+        }
+
+    def evaluate_baseline(frames: object) -> dict[str, Any]:
+        del frames
+        return {"selection": 0.6}
+
+    monkeypatch.setattr(trainer, "evaluate_validation", evaluate)
+    monkeypatch.setattr(trainer, "evaluate_dp2_baseline", evaluate_baseline)
+    monkeypatch.setattr(trainer, "save_checkpoint", save)
+    report = train(path)
+    output = Path(config["output"])
+    final = torch.load(output / "final.pt", weights_only=True)
+    assert report["stopped_step"] == stopped_step
+    assert report["best_step"] == best_step
+    assert torch.load(output / "best.pt", weights_only=True)["step"] == best_step
+    assert report["candidate_status"] == (
+        "production candidate"
+        if best_sweep is not None and best_sweep < 0.6
+        else "no production candidate"
+    )
+    saved = torch.load(resume, weights_only=True)
+    assert saved["step"] == resume_step
+    assert saved["validation"]["stale_evals"] == 1
+    assert final["validation"]["best_sweep"] == best_sweep
+    assert final["validation"]["lowest_leakage"] == lowest_leakage
+    assert final["validation"]["stale_evals"] == 2
+    metrics = chain(stream[resume_step + 1 :], repeat(stream[-1]))
+    write_json(path, {**config, "resume": str(resume)})
+    resumed = train(path)
+    restored = torch.load(output / "final.pt", weights_only=True)
+    assert resumed["stopped_step"] == stopped_step
+    assert resumed["best_step"] == best_step
+    assert resumed["candidate_status"] == report["candidate_status"]
+    for key in ("best_sweep", "lowest_leakage", "stale_evals", "best_metrics"):
+        assert restored["validation"][key] == final["validation"][key]
+    for key, value in final["model"].items():
+        torch.testing.assert_close(restored["model"][key], value, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize(
