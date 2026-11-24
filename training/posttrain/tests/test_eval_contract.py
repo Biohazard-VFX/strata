@@ -53,6 +53,9 @@ def test_solid_frames_remain_in_geometry_metrics_without_fabricated_alpha_scores
     assert not any("align" in key for key in summary)
     assert summary["depth_delta1"] == 0
     assert summary["composite_mae"] == 0
+    assert summary["leakage"]["all"]["mean"] == 1
+    assert summary["leakage"]["all"]["pixels"] == 256
+    assert not summary["leakage"]["passed"]
     target.alpha[:, 0, 0] = 0
     target.inverse_depth[:, 0, 0] = 0
     target.rgb[:, :, 0, 0] = 0
@@ -81,6 +84,37 @@ def test_evaluation_uses_fractional_stored_foreground_beyond_three_metres() -> N
     assert results["all", "stored"].summary()["silhouette_recall_foreground"] == 1
     assert results["sharp / fur", "stored"].pixels == 48
     assert results["sharp / hard", "stored"].pixels == 48
+
+
+def test_leakage_regions_and_visible_sample_counts_are_pooled_independently() -> None:
+    alpha = np.zeros((4, 16, 16))
+    inverse = np.full_like(alpha, 0.5)
+    alpha[0] = 0.99
+    alpha[1] = 1
+    target = Layers(inverse, alpha, np.zeros((4, 3, 16, 16)))
+    prediction = Layers(inverse.copy(), alpha.copy(), target.rgb.copy())
+    prediction.alpha[0, :, :8] = 1
+    prediction.alpha[1:, :, :8] = 1
+    prediction.inverse_depth[:, :, 8:] = 0.25
+    fur = np.zeros((16, 16))
+    fur[:, :8] = 1
+    data = {
+        "mixed": np.zeros((16, 16), dtype=bool),
+        "fur": fur,
+        "foreground": np.ones((16, 16)),
+        "beauty": np.zeros((3, 16, 16)),
+    }
+    results: dict[tuple[str, str], Collected] = {}
+    collect(prediction, target, data, "test", {"category": "sharp"}, results)
+    for group, leakage, count in [
+        ("all", 0.5, 256),
+        ("sharp / fur", 0.0, 128),
+        ("sharp / hard", 1.0, 128),
+    ]:
+        report = results[group, "test"].summary()
+        assert report["leakage"]["all"]["mean"] == leakage
+        assert report["leakage"]["all"]["pixels"] == count
+        assert report["sample_count_mae_a003"] == 0
 
 
 def test_directed_boundary_detects_sign_and_location_not_global_scale() -> None:

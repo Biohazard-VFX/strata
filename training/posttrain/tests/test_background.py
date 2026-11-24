@@ -28,6 +28,7 @@ def test_sky_depth_is_masked_without_discarding_its_colour_or_coverage() -> None
         "alpha_logits": logits,
         "alpha": logits.sigmoid(),
         "rgb": rgb,
+        "layer_rgb": rgb,
     }
     target = {k: torch.tensor(v)[None] for k, v in layers.arrays().items()}
     target.update(beauty=torch.ones(1, 3, 1, 1), mixed=torch.ones(1, 1, 1))
@@ -38,7 +39,7 @@ def test_sky_depth_is_masked_without_discarding_its_colour_or_coverage() -> None
     assert depth.grad is not None
     assert depth.grad[0, 1, 0, 0].item() == 0
     assert logits.grad is not None
-    assert logits.grad[0, 1, 0, 0].item() < 0
+    assert logits.grad[0, 0, 0, 0].item() > 0
     assert rgb.grad is not None
     assert torch.all(rgb.grad[0, 1] < 0).item()
 

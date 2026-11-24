@@ -18,11 +18,15 @@ def composite[T: (Array, torch.Tensor)](alpha: T, rgb: T) -> T:
     return cast(T, result)
 
 
-def visible_inverse(layers: Layers) -> Array:
+def visible_coverage(layers: Layers) -> Array:
     trans = np.concatenate(
         (np.ones_like(layers.alpha[:1]), np.cumprod(1 - layers.alpha[:-1], axis=0))
     )
-    weight = trans * layers.alpha
+    return trans * layers.alpha
+
+
+def visible_inverse(layers: Layers) -> Array:
+    weight = visible_coverage(layers)
     return (weight * layers.inverse_depth).sum(axis=0) / np.maximum(weight.sum(axis=0), 1e-8)
 
 

@@ -34,13 +34,13 @@
 - Post-training lives in training/posttrain so model export remains independently owned.
 - Dataset ingestion accepts only strata_dataset.records.VERSION; old shots and role caches must be regenerated.
 - OOD baselines reuse frozen training-only coverage calibration; depth retains each method's own metric scale.
-- Supervise coverage with float32 soft-target BCE logits so sigmoid saturation cannot erase mixed-pixel correction gradients.
+- Supervise nonterminal conditional alpha with float32 soft-target BCE logits; terminal alpha is fixed; check: test_coverage_supervision_recovers_from_opaque_saturation.
 - Warm up new-head and pretrained-decoder optimizer groups at separate learning rates; reject resume across objective or schedule changes.
 - Recomposition consumes only producer-published samples through strata_dataset.samples.read, including its identity verification.
 - NumPy clustering is owned by strata_dataset; the training-owned Torch adapter shares constants and must match its CPU/CUDA targets.
 - Hybrid training uses native 512² independent crops, 40% clean-cache reuse and frozen bf16/SDPA encoding otherwise; augmented features are never cached.
 - Sky membership comes from linear foreground coverage; sky keeps colour and alpha while clusters containing visible sky have no depth supervision.
-- Select best checkpoints by OOD-validation mixed-alpha MAE every 250 steps; stop after four stale checks and treat step budgets as ceilings.
+- OOD validation selects by leakage and sweep, gated by frozen DP2; patience tracks passing sweep bests or pre-pass leakage lows; test_patience_tracks_eligible_sweep_or_prepass_leakage_and_resumes.
 - Canary shots and real-matte sets are test-only: no training, early stopping or tuning; inherited manifest split=test-only blocks supervision, and validation uses held-out synthetic shots.
 - Index sample eligibility routes unavailable-sample views through cached targets and photometric-only augmentation; donor selection uses eligible frames only.
 - Target cache names include a digest of manifest, camera, packed beauty/layers, published sample identity, K and cache version; source changes never overwrite live mappings.

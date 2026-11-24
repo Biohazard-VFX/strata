@@ -79,8 +79,16 @@ def test_metric_inputs_and_frozen_ood_calibration_preserve_training_provenance(
         "preset": "depthpro2-h",
         "layers": 4,
         "features": "unused",
+        "objective": "coverage-simplex-bce-v1",
     }
     checkpoint = tmp_path / "model.pt"
+    torch.save({"config": config, "model": DeepHead(128, nn.Identity()).state_dict()}, checkpoint)
+    historical = {**config, "objective": "coverage-bce-logits-v1"}
+    torch.save(
+        {"config": historical, "model": DeepHead(128, nn.Identity()).state_dict()}, checkpoint
+    )
+    with pytest.raises(ValueError, match="coverage-by-construction"):
+        cache_predictions(index, protocol, checkpoint, tmp_path / "historical", 0, "cpu", root)
     torch.save({"config": config, "model": DeepHead(128, nn.Identity()).state_dict()}, checkpoint)
     raw = tmp_path / "raw"
     report = cache_predictions(index, protocol, checkpoint, raw, 0, "cpu", root)

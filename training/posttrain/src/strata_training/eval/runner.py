@@ -13,9 +13,11 @@ from strata_training.config import reject_scale_config
 from strata_training.data.cache import cache_reader, load_layers
 from strata_training.data.dataset import Frame
 from strata_training.data.exr import write_deep
-from strata_training.data.targets import composite, visible_inverse
+from strata_training.data.targets import composite, visible_coverage, visible_inverse
 from strata_training.eval.boundaries import boundary_f1, directed_boundary_counts, silhouette_recall
 from strata_training.eval.calibration import calibration
+from strata_training.eval.coverage import coverage_regions, coverage_samples, coverage_summary
+from strata_training.eval.leakage import leakage_samples, leakage_summary
 from strata_training.eval.metrics import mixed_errors
 from strata_training.eval.predict import load_model, predict
 from strata_training.eval.protocol import entries_for
@@ -81,6 +83,19 @@ class Collected:
         result["silhouette_recall_foreground"] = (
             float(np.mean(self.silhouettes)) if self.silhouettes else None
         )
+        result["leakage"] = leakage_summary(
+            {
+                name: values[f"leakage_{name}"]
+                for name in ("all", "bright", "normal", "dark", "premature")
+            }
+        )
+        result["coverage_sweep"] = coverage_summary(
+            {
+                key.removeprefix("sweep_"): value
+                for key, value in values.items()
+                if key.startswith("sweep_")
+            }
+        )
         return result
 
 
@@ -101,7 +116,10 @@ def collect(
     merge = np.abs(insert_plane(prediction) - insert_plane(target)).mean(axis=0)
     edge = ndimage.binary_dilation(data["mixed"], iterations=2)
     layer_rgb = np.abs(prediction.rgb - target.rgb).mean(axis=(0, 1))
-    count_error = np.abs((prediction.alpha > 0.03).sum(axis=0) - (target.alpha > 0.03).sum(axis=0))
+    count_error = np.abs(
+        (visible_coverage(prediction) > 0.03).sum(axis=0)
+        - (visible_coverage(target) > 0.03).sum(axis=0)
+    )
     reversed_order = (prediction.inverse_depth[:-1] < prediction.inverse_depth[1:]).any(axis=0)
     relative = np.abs(gt_inverse / np.maximum(pred_inverse, 1e-8) - 1)
     delta1 = (
@@ -138,11 +156,24 @@ def collect(
             else {}
         ),
     }
+    leakage = leakage_samples(prediction, target, data["mixed"], data["beauty"])
+    sweep = coverage_samples(prediction, target, data["mixed"])
+    edge_region, interior_region = coverage_regions(target, data["mixed"])
     for group, region in masks.items():
         mixed = data["mixed"] & region
         if not region.any():
             continue
         result = collected.setdefault((group, method), Collected())
+        group_leakage = (
+            leakage
+            if group == "all"
+            else leakage_samples(prediction, target, data["mixed"], data["beauty"], region)
+        )
+        for name, values in sweep.items():
+            mask = edge_region if name.startswith("edge_") else interior_region
+            result.append(f"sweep_{name}", values[region[mask]])
+        for name, values in group_leakage.items():
+            result.append(f"leakage_{name}", values)
         geometry = region & (gt_inverse > 0)
         historical_errors = mixed_errors(
             historical_inverse, prediction.alpha[0], reference_inv, reference_alpha, mixed
