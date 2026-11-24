@@ -263,13 +263,16 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     assert state["baseline"]["selection"] == baseline
     assert report["dp2_baseline"]["selection"] == baseline
     assert final["validation"]["best_sweep"] == (0.39998 if passing else None)
-    final["config"].pop("selection", None)
     old_selection = output / "old-selection.pt"
-    with atomic_path(old_selection) as temporary:
-        torch.save(final, temporary)
-    write_json(path, {**config, "resume": str(old_selection)})
-    with pytest.raises(ValueError, match="Resume model/data"):
-        train(path)
+    for selection in (None, "coverage-sweep-layer-v3"):
+        final["config"].pop("selection", None)
+        if selection is not None:
+            final["config"]["selection"] = selection
+        with atomic_path(old_selection) as temporary:
+            torch.save(final, temporary)
+        write_json(path, {**config, "resume": str(old_selection)})
+        with pytest.raises(ValueError, match=r"^Resume model/data does not match config$"):
+            train(path)
     write_json(path, {**config, "resume": str(output / "last.pt")})
     with pytest.raises(ValueError, match="exhausted validation patience"):
         train(path)
@@ -286,28 +289,55 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
     ("stream", "stopped_step", "best_step", "resume_step", "best_sweep", "lowest_leakage"),
     [
         (
-            [(0.01, 0.1), (0.7, 0.0009), (0.001, 0.1), (0.6, 0.0008), (0.5, 0.0007)],
+            [
+                (0.01, 0.1, 0.1),
+                (0.7, 0.0009, 0.0009),
+                (0.001, 0.05, 0.05),
+                (0.6, 0.0008, 0.0008),
+                (0.5, 0.0007, 0.0007),
+            ],
             6,
             4,
             2,
             0.5,
             0.1,
         ),
-        ([(0.4, 0.0005), (0.01, 0.1), (0.001, 0.1)], 2, 0, 1, 0.4, None),
         (
-            [(0.01, 0.5), (0.2, 0.4), (0.3, 0.3), (0.4, 0.2), (0.001, 0.2)],
+            [(0.4, 0.0005, 0.0005), (0.01, 0.1, 0.1), (0.001, 0.1, 0.1)],
+            2,
+            0,
+            1,
+            0.4,
+            None,
+        ),
+        (
+            [
+                (0.01, 0.5, 0.6),
+                (0.2, 0.4, 0.7),
+                (0.3, 0.3, 0.8),
+                (0.4, 0.2, 0.9),
+                (0.001, 0.2, 0.9),
+            ],
             5,
             4,
             4,
             None,
             0.2,
         ),
+        (
+            [(0.1, 0.0005, 0.002), (0.2, 0.0006, 0.002), (0.3, 0.0008, 0.0008)],
+            4,
+            2,
+            1,
+            0.3,
+            0.0005,
+        ),
     ],
 )
 def test_patience_tracks_eligible_sweep_or_prepass_leakage_and_resumes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    stream: list[tuple[float, float]],
+    stream: list[tuple[float, float, float]],
     stopped_step: int,
     best_step: int,
     resume_step: int,
@@ -331,12 +361,17 @@ def test_patience_tracks_eligible_sweep_or_prepass_leakage_and_resumes(
 
     def evaluate(model: object, config: object, frames: object) -> dict[str, Any]:
         del model, config, frames
-        sweep, leak = next(metrics)
+        sweep, leak, bright_leak = next(metrics)
         return {
             "coverage_sweep": {"selection": sweep},
             "mixed_alpha_mae": 0.1,
             "loss": 0.2,
-            "leakage": {"worst_mean": leak, "passed": leak <= 0.001, "all": {"mean": leak}},
+            "leakage": {
+                "worst_mean": max(leak, bright_leak),
+                "passed": max(leak, bright_leak) <= 0.001,
+                "all": {"mean": leak},
+                "bright": {"mean": bright_leak},
+            },
         }
 
     def evaluate_baseline(frames: object) -> dict[str, Any]:
