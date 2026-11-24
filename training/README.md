@@ -88,16 +88,17 @@ For each pixel, integrate positive and negative parts of A_pred(z)-A_GT(z) in
 log depth from the minimum GT/prediction Z to 200 m, clamping farther depths.
 There is no range normalisation and no dependence on another model. An opaque
 point displaced from z_gt to z_pred costs |ln(z_pred)-ln(z_gt)| within the clamp.
-The kernel splits volumetric reference intervals using homogeneous Beer-Lambert
-transmission; point spans are exact, varying spans use 16-point Gauss-Legendre
-integration split at the coverage crossing. Selection does not reconstruct raw
-deep from clustered targets or claim that their coverage curves are identical.
+Point spans integrate exactly. Selection does not reconstruct raw deep from
+clustered targets or claim their coverage curves are identical. Re-measure this
+reference against merged deep once real 0.5.0 shots exist.
 
 Report too-near (prematurely eats an element) and too-far (lets it show through)
 separately over the four-pixel band around GT mixed/front-alpha boundaries and
-GT-opaque interior (including sky) outside that band. The selection score is the pixel-weighted
-mean of near+far over the union, pooled across frames; neither region is given
-an artificial equal weight. Final evaluation and validation share this rule.
+GT-opaque interior (total coverage >=0.999, including sky) outside that band.
+Pool near+far over pixels across frames separately within each region, then
+average the two regional means with 50/50 weight. Both regions must be present.
+This weighting may be revisited during training. Final evaluation and validation
+share this rule.
 
 ## OOD-validation early stopping
 
@@ -119,20 +120,27 @@ A step-zero validation establishes the initial best. Full native-frame validatio
 then runs every N steps and at the ceiling. Select the lowest coverage sweep among
 leakage-gate passes, with lower overall leakage then earliest checkpoint step
 breaking exact sweep ties.
-Before any pass retain the lowest overall leakage, breaking ties by sweep,
-and label the run `no production candidate`. Slot-alpha MAE is diagnostic only.
-Patience counts evaluations without a cumulative sweep improvement of at least
-0.0001 log metres; before the first pass a cumulative leakage fall of at least
-0.00001 resets it instead. The patience anchor is separate from the exact best.
-`best.pt` is the selected checkpoint; `last.pt` and `final.pt` retain the actual
-stopping-step state. Pipeline evaluation uses `best.pt`.
+Before any pass retain the lowest overall leakage, breaking ties by sweep.
+Slot-alpha MAE is diagnostic only. Before the step-zero check, compute and log
+one frozen Depth Pro 2 baseline: cached metric depth as a single opaque layer,
+scored by the same sweep on the same validation frames. A production candidate
+must pass the unchanged leakage gate and strictly beat this baseline; otherwise
+label the run `no production candidate`.
+Patience counts evaluations without a new best validation sweep. Any strictly
+lower sweep resets it, even a tiny improvement; flat or rising sweep values
+exhaust patience. This sweep best is independent of leakage-ranked retention.
+`best.pt` retains the best checkpoint for inspection, even if none is eligible;
+`last.pt` and `final.pt` retain the actual stopping-step state. Pipeline evaluation
+uses `best.pt`; check `candidate_status` before considering production use.
 `history.json` logs training loss and validation points, and `validation.json` retains
-all validation loss/MAE points, best step and patience state. Validation loss uses
-the same objective on full-frame predictions, with logits reconstructed from clipped
-inference probabilities; selection uses unclipped coverage curves.
+all validation loss/MAE points, the frozen DP2 baseline, best step and patience
+state. Validation loss uses the same objective on full-frame predictions, with
+logits reconstructed from clipped inference probabilities; selection uses
+unclipped coverage curves.
 
-Resume retains validation history/patience and requires identical validation sources,
-cadence and output directory. It rejects a checkpoint whose patience is exhausted.
+Resume retains the frozen baseline and validation history/patience, and requires
+identical validation sources, cadence and output directory. It rejects old
+selection versions and checkpoints whose patience is exhausted.
 `early_stopping: false` is explicit opt-out for historical reproduction and fixed
 400-step diagnostics, not the default. The ordinary configs expect prepared OOD
 validation assets under `/data/validation`; adjust these paths for the deployment.
