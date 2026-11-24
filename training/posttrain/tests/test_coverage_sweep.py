@@ -56,6 +56,16 @@ def test_pooled_regions_preserve_directions_and_ignore_other_contestants() -> No
         }
     )
     assert asymmetric["selection"] == 2.0
+    for missing in ("edge", "interior"):
+        incomplete = coverage_summary(
+            {
+                f"{region}_{direction}": np.array([] if region == missing else [1.0])
+                for region in ("edge", "interior")
+                for direction in ("too_near", "too_far")
+            }
+        )
+        assert incomplete[missing]["pixels"] == 0
+        assert incomplete["selection"] is None
 
 
 def _metrics(sweep: float, leak: float, mixed: float = 0.1, step: int = 0) -> dict[str, Any]:

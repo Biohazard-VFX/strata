@@ -153,16 +153,7 @@ def test_cached_training_refuses_protected_feature_roots(tmp_path: Path) -> None
         train(path)
 
 
-@pytest.mark.parametrize("rising", [False, True])
-@pytest.mark.parametrize("baseline", [0.1, 0.39998, 1.0])
-@pytest.mark.parametrize("passing", [False, True])
-def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    passing: bool,
-    baseline: float,
-    rising: bool,
-) -> None:
+def _ood_configuration(tmp_path: Path) -> tuple[dict[str, Any], Path]:
     import shutil
 
     config, path = _configuration(tmp_path)
@@ -183,13 +174,29 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
         },
     )
     config.update(
+        validation_index=str(index),
+        validation_protocol=str(protocol),
+        validation_features=str(root),
+    )
+    return config, path
+
+
+@pytest.mark.parametrize("rising", [False, True])
+@pytest.mark.parametrize("baseline", [0.1, 0.39998, 1.0])
+@pytest.mark.parametrize("passing", [False, True])
+def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    passing: bool,
+    baseline: float,
+    rising: bool,
+) -> None:
+    config, path = _ood_configuration(tmp_path)
+    config.update(
         early_stopping=True,
         validation_every=1 if passing else 2,
         validation_patience=2,
         steps=20,
-        validation_index=str(index),
-        validation_protocol=str(protocol),
-        validation_features=str(root),
         log_every=1,
     )
     write_json(path, config)
@@ -273,6 +280,59 @@ def test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_
         assert resumed["best_step"] == 3
         assert resumed["candidate_status"] == report["candidate_status"]
         assert len(baseline_calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("stream", "best_step"),
+    [
+        ([(0.6, 0.01), (0.3, 0.0005), (0.2, 0.01)], 1),
+        ([(0.6, 0.0005), (0.3, 0.0005), (0.7, 0.0005)], 1),
+        ([(0.6, 0.01), (0.5, 0.01), (0.3, 0.0005)], 2),
+    ],
+)
+def test_candidate_status_belongs_to_kept_checkpoint_at_final_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stream: list[tuple[float, float]],
+    best_step: int,
+) -> None:
+    config, path = _ood_configuration(tmp_path)
+    config.update(early_stopping=True, validation_every=1, validation_patience=3, steps=2)
+    write_json(path, config)
+    metrics = iter(stream)
+
+    def evaluate(model: object, config: object, frames: object) -> dict[str, Any]:
+        del model, config, frames
+        sweep, leak = next(metrics)
+        return {
+            "coverage_sweep": {"selection": sweep},
+            "mixed_alpha_mae": 0.1,
+            "loss": 0.2,
+            "mixed_pixels": 1024,
+            "frames": 1,
+            "leakage": {"worst_mean": leak, "passed": leak <= 0.001, "all": {"mean": leak}},
+        }
+
+    def evaluate_baseline(frames: object) -> dict[str, Any]:
+        del frames
+        return {"selection": 0.4}
+
+    trainer: Any = import_module("strata_training.train")
+    monkeypatch.setattr(trainer, "evaluate_validation", evaluate)
+    monkeypatch.setattr(trainer, "evaluate_dp2_baseline", evaluate_baseline)
+    report = train(path)
+    output = Path(config["output"])
+    best = torch.load(output / "best.pt", weights_only=True)
+    final = torch.load(output / "final.pt", weights_only=True)
+    state = json.loads((output / "validation.json").read_text())
+    assert report["stopped_step"] == final["step"] == 2
+    assert report["best_step"] == best["step"] == best_step
+    assert state["best_metrics"]["checkpoint_step"] == best_step
+    assert [row["coverage_sweep"]["selection"] for row in state["history"]] == [
+        sweep for sweep, _ in stream
+    ]
+    for result in (report, state, best["validation"], final["validation"]):
+        assert result["candidate_status"] == "production candidate"
 
 
 def test_validation_brightness_uses_gt_not_denoised_model_input(tmp_path: Path) -> None:
@@ -391,9 +451,32 @@ def test_dp2_baseline_is_single_opaque_layer_from_frozen_metric_depth(
     save_arrays(Path(entry["cache"]), **arrays)
     root = Path(config["features"]) / "train"
     save_arrays(root / "base.npz", **base_arrays(np.full((32, 32), inverse), 2.0))
-    frame = Frame(entry, Path(config["features"]))
-    report = evaluate_dp2_baseline([frame])
-    assert report["selection"] == pytest.approx((near + far) * np.log(2))
-    for region in ("edge", "interior"):
-        assert report[region]["too_near"] == pytest.approx(near * np.log(2))
-        assert report[region]["too_far"] == pytest.approx(far * np.log(2))
+    first = Frame(entry, Path(config["features"]))
+    second_root = Path(config["features"]) / "second"
+    save_array(second_root / "features.npy", np.zeros((128, 32, 32), dtype=np.float32))
+    second_inverse = 0.125 if inverse == 0.5 else 0.5
+    second_near, second_far = (0.0, 1.2) if inverse == 0.5 else (0.8, 0.0)
+    save_arrays(second_root / "base.npz", **base_arrays(np.full((32, 32), second_inverse), 2.0))
+    arrays["mixed"][:] = False
+    arrays["mixed"][:, :4] = True
+    second_cache = tmp_path / "second.npz"
+    save_arrays(second_cache, **arrays)
+    second = Frame({**entry, "id": "second", "cache": str(second_cache)}, Path(config["features"]))
+    report = evaluate_dp2_baseline([first, second])
+    expected: list[float] = []
+    for region, first_pixels, second_pixels in (("edge", 640, 256), ("interior", 384, 768)):
+        pixels = first_pixels + second_pixels
+        assert report[region]["pixels"] == pixels
+        pooled_near = (near * first_pixels + second_near * second_pixels) / pixels
+        pooled_far = (far * first_pixels + second_far * second_pixels) / pixels
+        assert report[region]["too_near"] == pytest.approx(pooled_near * np.log(2))
+        assert report[region]["too_far"] == pytest.approx(pooled_far * np.log(2))
+        expected.append((pooled_near + pooled_far) * np.log(2))
+    assert report["selection"] == pytest.approx(sum(expected) / 2)
+    for mixed in (False, True):
+        arrays["mixed"][:] = mixed
+        missing_cache = tmp_path / f"missing-region-{mixed}.npz"
+        save_arrays(missing_cache, **arrays)
+        missing = Frame({**entry, "cache": str(missing_cache)}, Path(config["features"]))
+        with pytest.raises(ValueError, match="requires finite edge and opaque-interior sweeps"):
+            evaluate_dp2_baseline([missing])
