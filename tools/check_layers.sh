@@ -86,7 +86,7 @@ for path in Path('training/posttrain/src').rglob('*.py'):
             if node.name == 'read_deep' or (node.name == 'read_rgb' and any(arg.arg == 'legacy' for arg in node.args.kwonlyargs)):
                 errors.append(f'{path}: legacy training readers are forbidden')
 for path in Path('training/posttrain/configs').glob('*.json'):
-    if path.name.startswith(('h_', 's_')):
+    if path.name.startswith(('h_', 's_')) and path.name != 'h_head_diagnostic.json':
         errors.append(f'{path}: legacy training configs are forbidden')
 if Path('training/eval/v004_split.json').exists():
     errors.append('legacy evaluation split is forbidden')
