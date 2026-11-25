@@ -50,6 +50,8 @@ The existing DP2 graph and weights are not edited. Its public output contains on
 
 The head runs float32 in 256-pixel cores with a 32-pixel halo, matching its receptive field. It receives cropped frozen features, ACEScg-converted model RGB and camera-converted inverse metres. Export ignores learned sample colour: this plumbing uses the approved plate-only DeepRecolor-style colour policy. Depth-only inference and position output remain DP2 outputs. `strata_run` uses the original backbone without feature outputs even when a head is configured; switching between depth and deep reloads the backbone session. Deep inference still retains the full-frame feature output on host and device; only head evaluation is tiled.
 
+Deep feature buffers scale with frame size: about 4 GB host + 4 GB GPU at UHD and about 17 GB each at 7680×4352; full-frame deep above UHD needs streaming (follow-up).
+
 For deterministic, untrained plumbing qualification only, add `--create-plumbing-only`, with both checkpoint and ONNX filenames containing `plumbing-only`. It refuses to overwrite an existing checkpoint; checkpoint metadata says `purpose=plumbing-only`, `trained=false`. Never publish or commit those artifacts. Model contract v2 removes the retired single-sample deep contract: regenerate only the JSON manifest beside an existing DP2 export using `strata_contract.write_manifest`; no DP2 graph or weights need changing.
 
 ## CLI

@@ -21,8 +21,10 @@ MUTANTS = {
 
 
 TILE_MUTANTS = {
-    'halo-x': ('x > 32 ? x - 32 : 0', 'x > 16 ? x - 16 : 0'),
-    'halo-y': ('y > 32 ? y - 32 : 0', 'y > 16 ? y - 16 : 0'),
+    'halo-x0': ('x > 32 ? x - 32 : 0', 'x > 16 ? x - 16 : 0'),
+    'halo-y0': ('y > 32 ? y - 32 : 0', 'y > 16 ? y - 16 : 0'),
+    'halo-x1': ('x + 288 < width ? x + 288 : width', 'x + 272 < width ? x + 272 : width'),
+    'halo-y1': ('y + 288 < height ? y + 288 : height', 'y + 272 < height ? y + 272 : height'),
     'core-offset': ('(size_t)(x - tile->x0)];', '(size_t)(x - tile->x0 + (x == tile->x && x > 0))];'),
     'feature-stride': ('features[c * padded + padded_pixel]', 'features[c * (padded - 1) + padded_pixel]'),
 }
