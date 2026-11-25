@@ -324,7 +324,12 @@ int main(int argc, char **argv)
 	if (strata_write_depth(path, &result, &err))
 		goto fail;
 	snprintf(path, sizeof(path), "%s/deep.exr", argv[1]);
-	if (strata_depth_to_deep(&image, &result, &deep, &err) ||
+	for (size_t i = 0; i < WIDTH * HEIGHT; ++i) {
+		inverse[i] = 1 / depth[i];
+		depth[i] = 1;
+	}
+	if (strata_prediction_to_deep(&image, &result.frame, 1, inverse, depth,
+				      &deep, &err) ||
 	    strata_write_deep(path, &deep, &err))
 		goto fail;
 	if (strata_write_depth(path, NULL, &err) != -1 ||

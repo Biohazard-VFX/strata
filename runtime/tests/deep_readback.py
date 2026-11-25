@@ -103,7 +103,9 @@ def main():
             np.testing.assert_array_equal(points,expected_p)
             assert file.header()['strata:P_space'] == space
             assert file.header()['strata:depth_units'] == 'metres'
-    verify_deep(out/"deep.exr",rgba[...,:3],derived)
+    with np.errstate(divide="ignore"):
+        deep_z = np.float32(1) / (np.float32(1) / z)
+    verify_deep(out/"deep.exr",rgba[...,:3],deep_z)
     verify_variable(out/"variable.exr")
     verify_variable(out/"empty.exr",empty=True)
     print("C ABI / PNG / JPEG / offset EXR / flat / deep / OpenEXR / OIIO passed")

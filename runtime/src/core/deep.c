@@ -57,45 +57,70 @@ int strata_deep_validate(const struct strata_deep_result *deep,
 	return 0;
 }
 
-int strata_depth_to_deep(const struct strata_image *image,
-			 const struct strata_result *depth,
-			 struct strata_deep_result *deep,
-			 struct strata_error *err)
+int strata_prediction_to_deep(const struct strata_image *image,
+			      const struct strata_frame_metadata *frame,
+			      int layers, const float *inverse,
+			      const float *alpha,
+			      struct strata_deep_result *deep,
+			      struct strata_error *err)
 {
-	size_t pixels;
+	size_t pixels, capacity, offset = 0;
 	int ret = -1;
 
 	if (!deep)
 		return strata_fail(err, "missing deep output");
 	strata_deep_free(deep);
-	if (!image || !image->rgba || !depth || !depth->network_inverse_depth ||
-	    image->width != depth->width || image->height != depth->height)
-		return strata_fail(err, "colour/depth dimensions differ");
-	if (strata_dimensions(image->width, image->height, err) ||
-	    strata_camera_validate(&depth->frame.camera, 1, err))
-		return -1;
+	if (!image || !image->rgba || !frame || !inverse || !alpha ||
+	    layers < 1 || strata_dimensions(image->width, image->height, err))
+		return strata_fail(err, "invalid layered prediction");
 	pixels = (size_t)image->width * (size_t)image->height;
+	if (pixels > SIZE_MAX / (size_t)layers / (4 * sizeof(float)))
+		return strata_fail(err, "deep allocation overflow");
+	capacity = pixels * (size_t)layers;
 	deep->width = image->width;
 	deep->height = image->height;
-	deep->frame = depth->frame;
+	deep->frame = *frame;
 	deep->frame.linear = image->linear;
-	deep->sample_count = pixels;
-	deep->counts = malloc(pixels * sizeof(uint32_t));
-	deep->rgba = malloc(pixels * 4 * sizeof(float));
-	deep->z = malloc(pixels * sizeof(float));
-	deep->zback = malloc(pixels * sizeof(float));
+	deep->counts = calloc(pixels, sizeof(uint32_t));
+	deep->rgba = malloc(capacity * 4 * sizeof(float));
+	deep->z = malloc(capacity * sizeof(float));
+	deep->zback = malloc(capacity * sizeof(float));
 	if (!deep->counts || !deep->rgba || !deep->z || !deep->zback) {
 		strata_fail(err, "out of memory");
 		goto out;
 	}
 	for (size_t i = 0; i < pixels; ++i) {
-		deep->counts[i] = 1;
-		memcpy(deep->rgba + i * 4, image->rgba + i * 4,
-		       3 * sizeof(float));
-		deep->rgba[i * 4 + 3] = 1;
-		deep->z[i] = strata_camera_z_metres(depth, i);
-		deep->zback[i] = deep->z[i];
+		double remaining = 1;
+		float previous = 0;
+		for (int k = 0; k < layers; ++k) {
+			size_t index = (size_t)k * pixels + i;
+			float a = alpha[index], inv = inverse[index];
+			float z = inv > 0 ? 1 / inv : INFINITY;
+			if (!isfinite(a) || a < 0 || a > 1 || !isfinite(inv) ||
+			    inv < 0 || z < previous) {
+				strata_fail(
+					err,
+					"invalid head depth or conditional alpha");
+				goto out;
+			}
+			previous = z;
+			if (a == 0 || remaining == 0)
+				continue;
+			++deep->counts[i];
+			deep->z[offset] = deep->zback[offset] = z;
+			for (size_t c = 0; c < 3; ++c)
+				deep->rgba[offset * 4 + c] =
+					image->rgba[i * 4 + c] * a;
+			deep->rgba[offset * 4 + 3] = a;
+			remaining *= 1 - (double)a;
+			++offset;
+		}
+		if (remaining != 0) {
+			strata_fail(err, "head coverage does not sum to one");
+			goto out;
+		}
 	}
+	deep->sample_count = offset;
 	ret = strata_deep_validate(deep, err);
 out:
 	if (ret)

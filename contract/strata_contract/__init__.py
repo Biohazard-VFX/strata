@@ -13,9 +13,9 @@ type Json = bool | int | float | str | list[Json] | dict[str, Json] | None
 
 
 def spec() -> dict[str, Json]:
-    """Read the canonical version-one model interface."""
+    """Read the canonical version-two model interface."""
     return cast(
-        "dict[str, Json]", json.loads(files(__package__).joinpath("model_v1.json").read_text())
+        "dict[str, Json]", json.loads(files(__package__).joinpath("model_v2.json").read_text())
     )
 
 

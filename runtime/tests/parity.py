@@ -13,7 +13,6 @@ import numpy as np
 import OpenEXR
 from PIL import Image
 
-from deep_readback import verify_deep
 
 SKIP = 77
 EDGE_LOG_STEP = .3
@@ -60,7 +59,6 @@ def suppressions(stderr):
 def run_case(args, case, data, prefix):
     command = [str(args.cli), 'depth', '--model', str(args.model), '--in', str(data/case['input']),
                '--out-depth', str(prefix.with_suffix('.depth.exr')),
-               '--out-deep', str(prefix.with_suffix('.deep.exr')),
                '--provider', 'cuda', '--exposure', str(case.get('exposure', 0))]
     if not case.get('auto_focal', False):
         command += ['--f-px', str(case['focal_px'])]
@@ -169,18 +167,15 @@ def main():
     assert not missing, f'parity needs every oracle: {missing} unset'
     data = Path(present['data'])
     references = {key: Path(present[key]) for key in ('fp16', 'fp32')}
-    cases = json.loads(args.cases.read_text())
+    cases = json.loads(args.cases.read_text())['depth']
     assert cases and len({case['id'] for case in cases}) == len(cases)
     for case in cases:
         assert set(case) <= CASE_KEYS, (case['id'], set(case) - CASE_KEYS)
     args.out.mkdir(parents=True, exist_ok=True)
     check_overflow(args)
     rows, failed, all_errors = [], [], []
-    for index, case in enumerate(cases):
+    for case in cases:
         row, magnitude, z = check_case(args, case, data, references)
-        if index == 0:
-            rgb = np.asarray(Image.open(data/case['input']).convert('RGB'), dtype=np.float32)/255
-            verify_deep(args.out/(case['id']+'.deep.exr'), rgb, z)
         row['failed'] = gate(row['network_inverse_depth'], row['fp32']['native'], row['fp32']['torch_fp16'])
         failed += [(case['id'], row['failed'])] if row['failed'] else []
         rows.append(row)

@@ -14,7 +14,7 @@ from strata_contract import write_manifest
 
 
 def run(cli, cwd, **paths):
-    defaults = {'model': 'models/model.onnx', 'in': 'input.png', 'out-depth': 'depth.exr', 'out-deep': 'deep.exr'}
+    defaults = {'model': 'models/model.onnx', 'in': 'input.png', 'out-depth': 'depth.exr', 'out-position': 'P.exr'}
     defaults.update({key.replace('_', '-'): value for key, value in paths.items()})
     command = [str(cli), 'depth', '--provider', 'cpu', '--f-px', '1']
     for key, value in defaults.items():
@@ -36,16 +36,16 @@ def main():
     aliases = [
         {'out_depth': './input.png'},
         {'out_depth': f'{root}/./input.png'},
-        {'out_deep': 'sub/../input.png'},
+        {'out_position': 'sub/../input.png'},
         {'out_depth': f'{root}/sub/../models/model.onnx'},
-        {'out_deep': root/'input.png'},
+        {'out_position': root/'input.png'},
         {'in': root/'input.png', 'out_depth': 'input.png'},
         {'out_depth': 'link/input.png'},
-        {'out_deep': 'hardlink.png'},
+        {'out_position': 'hardlink.png'},
         {'camera': 'camera.json', 'out_position': 'link/sub/../camera.json'},
-        {'out_depth': 'out.exr', 'out_deep': './out.exr'},
-        {'out_depth': 'out.exr', 'out_deep': root/'out.exr'},
-        {'out_deep': 'deep.exr', 'out_position': 'link/deep.exr'},
+        {'out_depth': 'out.exr', 'out_position': './out.exr'},
+        {'out_depth': 'out.exr', 'out_position': root/'out.exr'},
+        {'out_position': 'input.png'},
         {'out_depth': 'sub/../depth.exr', 'out_position': 'link/sub/../depth.exr'},
         {'out_depth': 'missing/depth.exr'},
         {'out_depth': 'sub/'},
@@ -55,7 +55,7 @@ def main():
         assert completed.returncode == 2 and completed.stderr.startswith('strata depth'), (paths, completed)
         for name, content in inputs.items():
             assert (root/name).read_bytes() == content, (paths, name)
-    for paths in ({}, {'out_depth': 'link/sub/depth.exr', 'out_position': 'P.exr'}, {'out_deep': root/'sub/deep.exr'}):
+    for paths in ({}, {'out_depth': 'link/sub/depth.exr', 'out_position': 'P.exr'}, {'out_position': root/'sub/deep.exr'}):
         completed = run(cli, root, **paths)
         assert completed.returncode == 1 and 'model contract missing' in completed.stderr, (paths, completed)
     print(f'{len(aliases)} aliased output paths rejected without touching inputs')
@@ -101,7 +101,7 @@ def model_directory(cli, root):
     os.link(model/'model.json', work/'manifest.json')
     os.link(model/'model.fov.onnx', work/'fov.onnx')
     before = tree(model)
-    flags = ('out_depth', 'out_deep', 'out_position')
+    flags = ('out_depth', 'out_position')
     refused = [
         (work, '../model/model.onnx', '../model/new.exr'),
         (work, '../model/model.onnx', '../model/./depth.weights'),
@@ -121,11 +121,11 @@ def model_directory(cli, root):
         (model/'sub', '../model.onnx', 'new.exr'),
     ]
     for index, (cwd, path, output) in enumerate(refused):
-        flag = flags[index % 3]
-        completed = run(cli, cwd, model=path, **{'in': work/'input.png', 'out_depth': work/'depth.exr', 'out_deep': work/'deep.exr', flag: output})
+        flag = flags[index % len(flags)]
+        completed = run(cli, cwd, model=path, **{'in': work/'input.png', 'out_depth': work/'depth.exr', 'out_position': work/'deep.exr', flag: output})
         assert completed.returncode == 2 and completed.stderr.startswith('strata depth'), (cwd, path, output, completed)
         assert tree(model) == before, (cwd, path, output)
-    outputs = {'out_depth': 'depth.weights', 'out_deep': 'model.json', 'out_position': 'model.fov.onnx'}
+    outputs = {'out_depth': 'depth.weights', 'out_position': 'model.fov.onnx'}
     for fov in ('corrupt', 'fifo', 'missing'):
         if fov == 'fifo':
             (model/'model.fov.onnx').unlink()
@@ -153,7 +153,7 @@ def escapes(cli, root):
     for index, location in enumerate(locations):
         path = root/'model'/f'model{index}.onnx'
         depth_model(path, location)
-        completed = run(cli, root, model=path, out_depth=f'depth{index}.exr', out_deep=f'deep{index}.exr')
+        completed = run(cli, root, model=path, out_depth=f'depth{index}.exr', out_position=f'deep{index}.exr')
         reason = 'Absolute path not allowed' if location.startswith('/') else 'External data path escapes model directory'
         assert completed.returncode == 1 and reason in completed.stderr, (location, completed)
     print(f'{len(locations)} external data locations outside the model directory refused by ONNX Runtime')

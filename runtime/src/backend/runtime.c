@@ -2,6 +2,7 @@
 #include "../core/internal.h"
 #include <dlfcn.h>
 #include <onnxruntime_c_api.h>
+#include <openssl/evp.h>
 
 struct buffers {
 	int width;
@@ -10,6 +11,8 @@ struct buffers {
 	OrtValue *host_output;
 	OrtValue *device_input;
 	OrtValue *device_output;
+	OrtValue *host_features;
+	OrtValue *device_features;
 };
 
 struct strata_context {
@@ -18,6 +21,9 @@ struct strata_context {
 	OrtSessionOptions *options;
 	OrtSession *session;
 	OrtSession *fov;
+	OrtSession *head;
+	char *head_path;
+	char *feature_path;
 	OrtIoBinding *binding;
 	OrtMemoryInfo *cpu;
 	const OrtEpDevice *device;
@@ -152,18 +158,22 @@ static int select_provider(strata_context *ctx,
 }
 
 static int tensor_info(strata_context *ctx, OrtSession *session, int input,
-		       char **name, OrtTypeInfo **type_info,
+		       size_t index, char **name, OrtTypeInfo **type_info,
 		       OrtAllocator *allocator, struct strata_error *err)
 {
 	const OrtApi *api = ctx->api;
 	OrtStatus *status;
 
-	status = input ? api->SessionGetInputName(session, 0, allocator, name) :
-			 api->SessionGetOutputName(session, 0, allocator, name);
+	status = input ? api->SessionGetInputName(session, index, allocator,
+						  name) :
+			 api->SessionGetOutputName(session, index, allocator,
+						   name);
 	if (ort_failed(api, status, err))
 		return -1;
-	status = input ? api->SessionGetInputTypeInfo(session, 0, type_info) :
-			 api->SessionGetOutputTypeInfo(session, 0, type_info);
+	status = input ? api->SessionGetInputTypeInfo(session, index,
+						      type_info) :
+			 api->SessionGetOutputTypeInfo(session, index,
+						       type_info);
 	return ort_failed(api, status, err);
 }
 
@@ -194,8 +204,9 @@ static int shape_matches(strata_context *ctx,
 }
 
 static int tensor_contract(strata_context *ctx, OrtSession *session, int input,
-			   const char *expected_name, const int64_t *expected,
-			   size_t rank, struct strata_error *err)
+			   size_t index, const char *expected_name,
+			   const int64_t *expected, size_t rank,
+			   struct strata_error *err)
 {
 	const OrtApi *api = ctx->api;
 	const OrtTensorTypeAndShapeInfo *info = NULL;
@@ -206,8 +217,8 @@ static int tensor_contract(strata_context *ctx, OrtSession *session, int input,
 
 	if (ort_failed(api, api->GetAllocatorWithDefaultOptions(&allocator),
 		       err) ||
-	    tensor_info(ctx, session, input, &name, &type_info, allocator,
-			err) ||
+	    tensor_info(ctx, session, input, index, &name, &type_info,
+			allocator, err) ||
 	    ort_failed(api, api->CastTypeInfoToTensorInfo(type_info, &info),
 		       err))
 		goto out;
@@ -238,16 +249,17 @@ static int session_contract(strata_context *ctx, OrtSession *session, int fov,
 	    ort_failed(ctx->api,
 		       ctx->api->SessionGetOutputCount(session, &outputs), err))
 		return -1;
-	if (inputs != 1 || outputs != 1)
+	if (inputs != 1 || outputs != (fov == 2 ? 2u : 1u))
 		return strata_fail(
 			err,
 			"ONNX tensor contract requires one input and one output");
-	if (tensor_contract(ctx, session, 1, STRATA_INPUT_NAME, image, 4, err))
+	if (tensor_contract(ctx, session, 1, 0, STRATA_INPUT_NAME, image, 4,
+			    err))
 		return -1;
-	return tensor_contract(ctx, session, 0,
-			       fov ? STRATA_FOV_OUTPUT_NAME :
-				     STRATA_OUTPUT_NAME,
-			       fov ? angles : depth, fov ? 2u : 4u, err);
+	return tensor_contract(
+		ctx, session, 0, 0,
+		fov == 1 ? STRATA_FOV_OUTPUT_NAME : STRATA_OUTPUT_NAME,
+		fov == 1 ? angles : depth, fov == 1 ? 2u : 4u, err);
 }
 
 static int load_session(strata_context *ctx, const char *path,
@@ -337,6 +349,8 @@ static void release_buffers(strata_context *ctx)
 	release_value(ctx->api, &ctx->buffers.host_output);
 	release_value(ctx->api, &ctx->buffers.device_input);
 	release_value(ctx->api, &ctx->buffers.device_output);
+	release_value(ctx->api, &ctx->buffers.host_features);
+	release_value(ctx->api, &ctx->buffers.device_features);
 	ctx->buffers.width = 0;
 	ctx->buffers.height = 0;
 }
@@ -352,6 +366,9 @@ void strata_unload(strata_context *ctx)
 		ctx->api->ReleaseSession(ctx->session);
 	ctx->fov = NULL;
 	ctx->session = NULL;
+	if (ctx->head)
+		ctx->api->ReleaseSession(ctx->head);
+	ctx->head = NULL;
 }
 
 void strata_close(strata_context *ctx)
@@ -367,6 +384,8 @@ void strata_close(strata_context *ctx)
 		ctx->api->ReleaseEnv(ctx->env);
 	free(ctx->model_path);
 	free(ctx->fov_path);
+	free(ctx->head_path);
+	free(ctx->feature_path);
 	free(ctx);
 }
 
@@ -426,6 +445,13 @@ static int bind_buffers(strata_context *ctx, struct strata_error *err)
 					   input),
 		       err))
 		return -1;
+	if (ctx->head_path &&
+	    ort_failed(ctx->api,
+		       ctx->api->BindOutput(ctx->binding, "strata_features",
+					    ctx->device ? b->device_features :
+							  b->host_features),
+		       err))
+		return -1;
 	return ort_failed(ctx->api,
 			  ctx->api->BindOutput(ctx->binding, STRATA_OUTPUT_NAME,
 					       output),
@@ -437,6 +463,7 @@ static int ensure_buffers(strata_context *ctx, int pw, int ph,
 {
 	const int64_t input[] = { 1, 3, ph, pw };
 	const int64_t output[] = { 1, 1, ph, pw };
+	const int64_t features[] = { 1, 128, ph, pw };
 	OrtDeviceMemoryType host = ctx->device ?
 					   OrtDeviceMemoryType_HOST_ACCESSIBLE :
 					   OrtDeviceMemoryType_DEFAULT;
@@ -451,6 +478,11 @@ static int ensure_buffers(strata_context *ctx, int pw, int ph,
 					   input, &b->device_input, err) ||
 			     create_tensor(ctx, OrtDeviceMemoryType_DEFAULT,
 					   output, &b->device_output, err))) ||
+	    (ctx->head_path &&
+	     (create_tensor(ctx, host, features, &b->host_features, err) ||
+	      (ctx->device &&
+	       create_tensor(ctx, OrtDeviceMemoryType_DEFAULT, features,
+			     &b->device_features, err)))) ||
 	    bind_buffers(ctx, err)) {
 		release_buffers(ctx);
 		return -1;
@@ -589,6 +621,13 @@ static int infer(strata_context *ctx, const struct strata_frame *frame,
 	if (copy_tensor(ctx, b->device_output, b->host_output,
 			&timings->download_ms, err))
 		return -1;
+	if (ctx->head_path) {
+		double feature_ms;
+		if (copy_tensor(ctx, b->device_features, b->host_features,
+				&feature_ms, err))
+			return -1;
+		timings->download_ms += feature_ms;
+	}
 	start = strata_milliseconds();
 	if (strata_postprocess(prediction, padded.width, result, err))
 		return -1;
@@ -612,7 +651,10 @@ int strata_run(strata_context *ctx, const struct strata_frame *frame,
 		return -1;
 	if (!ctx->session &&
 	    (strata_check_manifest(ctx->model_path, err) ||
-	     load_session(ctx, ctx->model_path, &ctx->session, 0, err)))
+	     load_session(ctx,
+			  ctx->feature_path ? ctx->feature_path :
+					      ctx->model_path,
+			  &ctx->session, ctx->feature_path ? 2 : 0, err)))
 		return -1;
 	result->width = frame->image->width;
 	result->height = frame->image->height;
@@ -624,4 +666,340 @@ int strata_run(strata_context *ctx, const struct strata_frame *frame,
 		return -1;
 	}
 	return 0;
+}
+
+static int metadata_matches(strata_context *ctx, const char *key,
+			    const char *expected, struct strata_error *err)
+{
+	OrtModelMetadata *metadata = NULL;
+	OrtAllocator *memory;
+	char *value = NULL;
+	int ret = -1;
+
+	if (ort_failed(ctx->api,
+		       ctx->api->GetAllocatorWithDefaultOptions(&memory),
+		       err) ||
+	    ort_failed(ctx->api,
+		       ctx->api->SessionGetModelMetadata(ctx->head, &metadata),
+		       err) ||
+	    ort_failed(ctx->api,
+		       ctx->api->ModelMetadataLookupCustomMetadataMap(
+			       metadata, memory, key, &value),
+		       err))
+		goto out;
+	ret = value && !strcmp(value, expected) ?
+		      0 :
+		      strata_fail(err, "head metadata mismatch: %s", key);
+out:
+	if (value)
+		memory->Free(memory, value);
+	if (metadata)
+		ctx->api->ReleaseModelMetadata(metadata);
+	return ret;
+}
+
+static int model_digest(const char *path, char text[65],
+			struct strata_error *err)
+{
+	FILE *stream = fopen(path, "rb");
+	EVP_MD_CTX *digest = EVP_MD_CTX_new();
+	unsigned char buffer[65536], hash[32];
+	size_t count;
+	unsigned int length;
+	int ret = -1;
+
+	if (!stream || !digest ||
+	    !EVP_DigestInit_ex(digest, EVP_sha256(), NULL))
+		goto out;
+	while ((count = fread(buffer, 1, sizeof(buffer), stream)) != 0)
+		if (!EVP_DigestUpdate(digest, buffer, count))
+			goto out;
+	if (ferror(stream) || !EVP_DigestFinal_ex(digest, hash, &length) ||
+	    length != 32)
+		goto out;
+	for (size_t i = 0; i < 32; ++i)
+		snprintf(text + 2 * i, 3, "%02x", hash[i]);
+	ret = 0;
+out:
+	if (stream)
+		fclose(stream);
+	EVP_MD_CTX_free(digest);
+	return ret ? strata_fail(err, "cannot hash backbone") : 0;
+}
+
+static int head_contract(strata_context *ctx, struct strata_error *err)
+{
+	const char *inputs[] = { "features", "image", "base" };
+	const char *outputs[] = { "inverse_depth", "alpha" };
+	const int64_t channels[] = { 128, 3, 1 };
+	size_t count;
+
+	if (ort_failed(ctx->api,
+		       ctx->api->SessionGetInputCount(ctx->head, &count), err))
+		return -1;
+	if (count != 3)
+		return strata_fail(err, "head requires three inputs");
+	if (ort_failed(ctx->api,
+		       ctx->api->SessionGetOutputCount(ctx->head, &count), err))
+		return -1;
+	if (count != 2)
+		return strata_fail(err, "head requires two outputs");
+	for (size_t i = 0; i < 3; ++i) {
+		int64_t shape[] = { 1, channels[i], -1, -1 };
+		if (tensor_contract(ctx, ctx->head, 1, i, inputs[i], shape, 4,
+				    err))
+			return -1;
+	}
+	for (size_t i = 0; i < 2; ++i) {
+		int64_t shape[] = { 1, 4, -1, -1 };
+		if (tensor_contract(ctx, ctx->head, 0, i, outputs[i], shape, 4,
+				    err))
+			return -1;
+	}
+	return 0;
+}
+
+static int load_head(strata_context *ctx, struct strata_error *err)
+{
+	char digest[65];
+
+	if (ort_failed(ctx->api,
+		       ctx->api->CreateSession(ctx->env, ctx->head_path,
+					       ctx->options, &ctx->head),
+		       err) ||
+	    metadata_matches(ctx, "strata.objective", "coverage-simplex-bce-v1",
+			     err) ||
+	    metadata_matches(ctx, "strata.layers", "4", err) ||
+	    metadata_matches(ctx, "strata.colour",
+			     "plate-premultiplied-conditional-alpha", err) ||
+	    model_digest(ctx->model_path, digest, err) ||
+	    metadata_matches(ctx, "strata.backbone_sha256", digest, err) ||
+	    model_digest(ctx->feature_path, digest, err) ||
+	    metadata_matches(ctx, "strata.feature_backbone_sha256", digest,
+			     err) ||
+	    head_contract(ctx, err)) {
+		if (ctx->head)
+			ctx->api->ReleaseSession(ctx->head);
+		ctx->head = NULL;
+		return -1;
+	}
+	return 0;
+}
+
+int strata_set_head(strata_context *ctx, const char *path,
+		    struct strata_error *err)
+{
+	size_t length;
+
+	if (!ctx || !path)
+		return strata_fail(err, "missing head path or context");
+	length = strlen(path);
+	if (length < 5 || strcmp(path + length - 5, ".onnx"))
+		return strata_fail(err, "head path must end in .onnx");
+	strata_unload(ctx);
+	free(ctx->head_path);
+	free(ctx->feature_path);
+	ctx->head_path = strdup(path);
+	ctx->feature_path = malloc(length + sizeof(".backbone.onnx"));
+	if (!ctx->head_path || !ctx->feature_path)
+		return strata_fail(err, "out of memory");
+	memcpy(ctx->feature_path, path, length - 5);
+	strcpy(ctx->feature_path + length - 5, ".backbone.onnx");
+	return load_head(ctx, err);
+}
+
+struct head_tile {
+	int x, y, x0, y0, width, height;
+	float *features, *image, *base;
+};
+
+static int tile_inputs(strata_context *ctx, const struct strata_frame *frame,
+		       const struct strata_result *depth,
+		       struct head_tile *tile, struct strata_error *err)
+{
+	const float *features = tensor_data(ctx, ctx->buffers.host_features);
+	size_t padded =
+		(size_t)ctx->buffers.width * (size_t)ctx->buffers.height;
+	size_t pixels = (size_t)tile->width * (size_t)tile->height;
+
+	tile->features = malloc(pixels * 128 * sizeof(float));
+	tile->image = malloc(pixels * 3 * sizeof(float));
+	tile->base = malloc(pixels * sizeof(float));
+	if (!features || !tile->features || !tile->image || !tile->base)
+		return strata_fail(err, "head input allocation failed");
+	for (int y = 0; y < tile->height; ++y) {
+		for (int x = 0; x < tile->width; ++x) {
+			size_t local =
+				(size_t)y * (size_t)tile->width + (size_t)x;
+			size_t pixel =
+				(size_t)(tile->y0 + y) * (size_t)depth->width +
+				(size_t)(tile->x0 + x);
+			size_t padded_pixel =
+				(size_t)(tile->y0 + y) *
+					(size_t)ctx->buffers.width +
+				(size_t)(tile->x0 + x);
+			for (size_t c = 0; c < 128; ++c)
+				tile->features[c * pixels + local] =
+					features[c * padded + padded_pixel];
+			for (size_t c = 0; c < 3; ++c)
+				tile->image[c * pixels + local] =
+					frame->image->rgba[pixel * 4 + c];
+			tile->base[local] = strata_inverse_metres(depth, pixel);
+		}
+	}
+	return 0;
+}
+
+static float *head_output(strata_context *ctx, OrtValue *value, int width,
+			  int height, struct strata_error *err)
+{
+	OrtTensorTypeAndShapeInfo *info = NULL;
+	const int64_t shape[] = { 1, 4, height, width };
+	int matches = 0;
+
+	if (ort_failed(ctx->api, ctx->api->GetTensorTypeAndShape(value, &info),
+		       err))
+		return NULL;
+	if (shape_matches(ctx, info, shape, 4, &matches, err))
+		matches = 0;
+	ctx->api->ReleaseTensorTypeAndShapeInfo(info);
+	if (!matches) {
+		strata_fail(err, "head output shape mismatch");
+		return NULL;
+	}
+	return tensor_data(ctx, value);
+}
+
+static int run_tile(strata_context *ctx, struct head_tile *tile, float *inverse,
+		    float *alpha, int width, int height,
+		    struct strata_error *err)
+{
+	const char *names[] = { "features", "image", "base" };
+	const char *outputs[] = { "inverse_depth", "alpha" };
+	float *data[] = { tile->features, tile->image, tile->base };
+	int64_t channels[] = { 128, 3, 1 };
+	OrtValue *inputs[3] = { 0 }, *values[2] = { 0 };
+	size_t pixels = (size_t)tile->width * (size_t)tile->height;
+	int ret = -1;
+
+	for (size_t i = 0; i < 3; ++i) {
+		int64_t shape[] = { 1, channels[i], tile->height, tile->width };
+		if (ort_failed(ctx->api,
+			       ctx->api->CreateTensorWithDataAsOrtValue(
+				       ctx->cpu, data[i],
+				       pixels * (size_t)channels[i] *
+					       sizeof(float),
+				       shape, 4,
+				       ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+				       &inputs[i]),
+			       err))
+			goto out;
+	}
+	if (ort_failed(ctx->api,
+		       ctx->api->Run(ctx->head, NULL, names,
+				     (const OrtValue *const *)inputs, 3,
+				     outputs, 2, values),
+		       err))
+		goto out;
+	for (size_t i = 0; i < 2; ++i) {
+		const float *prediction = head_output(
+			ctx, values[i], tile->width, tile->height, err);
+		float *target = i ? alpha : inverse;
+		if (!prediction)
+			goto out;
+		for (size_t k = 0; k < 4; ++k)
+			for (int y = tile->y; y < height && y < tile->y + 256;
+			     ++y)
+				for (int x = tile->x;
+				     x < width && x < tile->x + 256; ++x)
+					target[(k * (size_t)height + (size_t)y) *
+						       (size_t)width +
+					       (size_t)x] = prediction
+						[k * pixels +
+						 (size_t)(y - tile->y0) *
+							 (size_t)tile->width +
+						 (size_t)(x - tile->x0)];
+	}
+	ret = 0;
+out:
+	for (size_t i = 0; i < 3; ++i)
+		release_value(ctx->api, &inputs[i]);
+	for (size_t i = 0; i < 2; ++i)
+		release_value(ctx->api, &values[i]);
+	return ret;
+}
+
+static int predict_layers(strata_context *ctx, const struct strata_frame *frame,
+			  const struct strata_result *depth, float *inverse,
+			  float *alpha, struct strata_error *err)
+{
+	int width = depth->width, height = depth->height;
+
+	if (!ctx->head && load_head(ctx, err))
+		return -1;
+	for (int y = 0; y < height; y += 256) {
+		for (int x = 0; x < width; x += 256) {
+			int x1 = x + 288 < width ? x + 288 : width;
+			int y1 = y + 288 < height ? y + 288 : height;
+			struct head_tile tile = { .x = x,
+						  .y = y,
+						  .x0 = x > 32 ? x - 32 : 0,
+						  .y0 = y > 32 ? y - 32 : 0 };
+			int ret;
+			tile.width = x1 - tile.x0;
+			tile.height = y1 - tile.y0;
+			ret = tile_inputs(ctx, frame, depth, &tile, err) ||
+			      run_tile(ctx, &tile, inverse, alpha, width,
+				       height, err);
+			free(tile.features);
+			free(tile.image);
+			free(tile.base);
+			if (ret)
+				return -1;
+		}
+	}
+	return 0;
+}
+
+int strata_run_deep(strata_context *ctx, const struct strata_frame *frame,
+		    struct strata_result *depth,
+		    struct strata_deep_result *deep, struct strata_error *err)
+{
+	float *inverse = NULL, *alpha = NULL;
+	size_t pixels;
+	double start;
+	int ret = -1;
+
+	if (!deep)
+		return strata_fail(err, "missing deep output");
+	strata_deep_free(deep);
+	if (!depth)
+		return strata_fail(err, "missing depth output");
+	strata_result_free(depth);
+	if (!ctx || !ctx->head_path)
+		return strata_fail(err, "layered deep requires a head");
+	if (strata_run(ctx, frame, depth, err))
+		return -1;
+	start = strata_milliseconds();
+	pixels = (size_t)depth->width * (size_t)depth->height;
+	inverse = malloc(pixels * 4 * sizeof(float));
+	alpha = malloc(pixels * 4 * sizeof(float));
+	if (!inverse || !alpha) {
+		strata_fail(err, "out of memory");
+		goto out;
+	}
+	if (predict_layers(ctx, frame, depth, inverse, alpha, err) ||
+	    strata_prediction_to_deep(frame->image, &depth->frame, 4, inverse,
+				      alpha, deep, err))
+		goto out;
+	depth->timings.run_ms += strata_milliseconds() - start;
+	ret = 0;
+out:
+	free(inverse);
+	free(alpha);
+	if (ret) {
+		strata_deep_free(deep);
+		strata_result_free(depth);
+	}
+	return ret;
 }

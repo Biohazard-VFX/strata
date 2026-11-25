@@ -88,44 +88,48 @@ out:
 static void conversion_test(void)
 {
 	float rgba[] = { -1, 2, 3, .2f, .1f, .2f, .3f, .4f };
-	float z[] = { 250, 0 };
+	float inverse[] = { .5f, 1, .5f, .5f, .25f, .25f, 0, 0 };
+	float alpha[] = { .25f, 1, 0, .5f, .5f, 0, 1, 1 };
 	struct strata_image image = {
 		.width = 2, .height = 1, .linear = 1, .rgba = rgba
 	};
-	struct strata_result depth = {
-		.width = 2,
-		.height = 1,
-		.frame.camera = { .fx_px = 1000,
-				  .fy_px = 1000,
-				  .focal_source = STRATA_FOCAL_PROVIDED },
-		.network_inverse_depth = z
-	};
+	struct strata_frame_metadata frame = { .index = 17 };
 	struct strata_deep_result deep = { 0 };
 	struct strata_error err = { { 0 } };
+	double sum[3] = { 0 }, remaining = 1;
 
-	if (!EXPECT(strata_depth_to_deep(&image, &depth, &deep, &err) == 0))
+	if (!EXPECT(!strata_prediction_to_deep(&image, &frame, 4, inverse,
+					       alpha, &deep, &err)))
 		goto out;
-	EXPECT(deep.width == 2 && deep.height == 1 && deep.sample_count == 2);
-	EXPECT(deep.counts[0] == 1 && deep.counts[1] == 1);
-	EXPECT(deep.rgba[0] == -1 && deep.rgba[1] == 2 && deep.rgba[3] == 1);
-	EXPECT(deep.rgba[7] == 1 && deep.z[1] == INFINITY);
-	EXPECT(deep.z[0] == 2 && deep.zback[0] == 2 &&
-	       deep.zback[1] == INFINITY);
-	z[0] = 500;
-	if (EXPECT(strata_depth_to_deep(&image, &depth, &deep, &err) == 0))
-		EXPECT(deep.z[0] == 1 && deep.rgba[0] == -1);
-	z[0] = NAN;
-	EXPECT(strata_depth_to_deep(&image, &depth, &deep, &err) == -1);
+	EXPECT(deep.counts[0] == 3 && deep.counts[1] == 1 &&
+	       deep.sample_count == 4);
+	EXPECT(deep.z[0] == 2 && deep.z[1] == 4 && deep.z[2] == INFINITY);
+	EXPECT(deep.z[3] == 1 && deep.frame.index == 17);
+	for (size_t i = 0; i < 3; ++i) {
+		for (size_t c = 0; c < 3; ++c)
+			sum[c] += remaining * deep.rgba[i * 4 + c];
+		remaining *= 1 - (double)deep.rgba[i * 4 + 3];
+	}
+	EXPECT(remaining == 0);
+	for (size_t c = 0; c < 3; ++c)
+		EXPECT(sum[c] == rgba[c]);
+	inverse[4] = .5f;
+	EXPECT(!strata_prediction_to_deep(&image, &frame, 4, inverse, alpha,
+					  &deep, &err));
+	EXPECT(deep.z[0] == deep.z[1] && deep.counts[0] == 3);
+	inverse[4] = 1;
+	EXPECT(strata_prediction_to_deep(&image, &frame, 4, inverse, alpha,
+					 &deep, &err) == -1);
 	EXPECT_ZERO(deep);
-	z[0] = 500;
-	EXPECT(!strata_depth_to_deep(&image, &depth, &deep, &err));
-	depth.frame.camera.fx_px = 0;
-	EXPECT(strata_depth_to_deep(&image, &depth, &deep, &err) == -1);
+	inverse[4] = .25f;
+	alpha[6] = .9f;
+	EXPECT(strata_prediction_to_deep(&image, &frame, 4, inverse, alpha,
+					 &deep, &err) == -1);
 	EXPECT_ZERO(deep);
-	depth.frame.camera.fx_px = 1000;
-	EXPECT(!strata_depth_to_deep(&image, &depth, &deep, &err));
-	depth.width = 1;
-	EXPECT(strata_depth_to_deep(&image, &depth, &deep, &err) == -1);
+	alpha[6] = 1;
+	inverse[0] = NAN;
+	EXPECT(strata_prediction_to_deep(&image, &frame, 4, inverse, alpha,
+					 &deep, &err) == -1);
 	EXPECT_ZERO(deep);
 out:
 	strata_deep_free(&deep);

@@ -87,7 +87,7 @@ class ParityGates(unittest.TestCase):
         self.assertIn('median', gate(stats, stats, stats))
 
     def test_cases_cannot_exempt_gates(self):
-        cases = json.loads((Path(__file__).parent/'parity_cases.json').read_text())
+        cases = json.loads((Path(__file__).parent/'parity_cases.json').read_text())['depth']
         for case in cases:
             self.assertLessEqual(set(case), CASE_KEYS, case['id'])
 

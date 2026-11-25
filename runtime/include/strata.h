@@ -187,11 +187,20 @@ int strata_unproject_deep(const struct strata_deep_result *deep,
 			  struct strata_positions *positions,
 			  struct strata_error *err);
 void strata_positions_free(struct strata_positions *positions);
-/* Fills deep with copies of the image RGB and derived camera-Z. */
-int strata_depth_to_deep(const struct strata_image *image,
-			 const struct strata_result *depth,
-			 struct strata_deep_result *deep,
-			 struct strata_error *err);
+/* Copies path, unloads sessions; serialised with other context calls. */
+int strata_set_head(strata_context *ctx, const char *path,
+		    struct strata_error *err);
+/* Fills both owned outputs, using the configured four-layer head. */
+int strata_run_deep(strata_context *ctx, const struct strata_frame *frame,
+		    struct strata_result *depth,
+		    struct strata_deep_result *deep, struct strata_error *err);
+/* Borrowed layer-major metric inverse/conditional-alpha; fills owned deep. */
+int strata_prediction_to_deep(const struct strata_image *image,
+			      const struct strata_frame_metadata *frame,
+			      int layers, const float *inverse,
+			      const float *alpha,
+			      struct strata_deep_result *deep,
+			      struct strata_error *err);
 void strata_deep_free(struct strata_deep_result *deep);
 /* Fills layers with the nearest count samples of each pixel. */
 int strata_deep_to_layers(const struct strata_deep_result *deep, int count,

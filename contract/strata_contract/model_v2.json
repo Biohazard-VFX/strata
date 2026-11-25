@@ -1,5 +1,5 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "architecture": "apple.depthpro2-h.single-frame",
   "opset": 23,
   "input": {
@@ -84,10 +84,10 @@
       "ZBack"
     ],
     "dtype": "float32",
-    "samples_per_pixel": 1,
-    "alpha": 1,
+    "samples_per_pixel": "one per nonempty head layer, at most four, no merging",
+    "alpha": "conditional coverage with opaque terminal layer",
     "zback": "Z",
-    "rgb": "unmodified input RGB",
+    "rgb": "input RGB multiplied by conditional alpha",
     "alpha_semantics": "coverage",
     "rgb_association": "premultiplied"
   }

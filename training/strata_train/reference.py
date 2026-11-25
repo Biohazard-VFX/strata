@@ -124,7 +124,7 @@ def main() -> None:
     out: Path = args.out
     if args.repeat < 1:
         parser.error("repeat must be positive")
-    cases = cast("list[Case]", json.loads(cast("Path", args.cases).read_text()))
+    cases = cast("list[Case]", json.loads(cast("Path", args.cases).read_text())["depth"])
     if not cases or len({case["id"] for case in cases}) != len(cases):
         parser.error("cases must have nonempty, unique image IDs")
     start = time.perf_counter()

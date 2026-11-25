@@ -17,7 +17,8 @@ static int leak(void)
 	struct strata_deep_result deep = { 0 };
 	struct strata_error err = { { 0 } };
 
-	return strata_depth_to_deep(&image, &depth, &deep, &err);
+	return strata_prediction_to_deep(&image, &depth.frame, 1, q, q, &deep,
+					 &err);
 }
 
 int main(void)

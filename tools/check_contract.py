@@ -17,7 +17,6 @@ def run(cli, directory, expected):
     result = subprocess.run([str(cli),'depth','--model',str(directory/'model'/'model.onnx'),
                              '--in',str(directory/'input.png'),
                              '--out-depth',str(directory/'depth.exr'),
-                             '--out-deep',str(directory/'deep.exr'),
                              '--provider','cpu','--f-px','1'],capture_output=True,text=True,check=False)
     assert result.returncode == 1, result.stdout+result.stderr
     assert expected in result.stderr, result.stderr
@@ -26,7 +25,7 @@ def run(cli, directory, expected):
 def main():
     assert (ROOT/'contract/strata_contract.h').read_text() == c_header(), 'regenerate contract C header'
     if len(sys.argv) == 1:
-        print('generated C contract matches canonical version-one JSON')
+        print('generated C contract matches canonical version-two JSON')
         return
     import numpy as np
     import onnx
@@ -44,7 +43,7 @@ def main():
     validate_manifest(manifest)
     run(cli,directory,'ONNX Runtime:')
     changes = [
-        (('contract_version',),2),
+        (('contract_version',),1),
         (('input','name'),'wrong'),
         (('input','dtype'),'float16'),
         (('input','shape'),[1,4,'height','width']),
@@ -86,7 +85,7 @@ def main():
         if name != spec()['output']['name'] or channels != 1:
             run(cli,directory,'ONNX tensor contract mismatch')
     command = [str(cli),'depth','--model',str(model),'--in',str(directory/'input.png'),
-               '--out-depth',str(directory/'depth.exr'),'--out-deep',str(directory/'deep.exr'),
+               '--out-depth',str(directory/'depth.exr'),
                '--out-position',str(directory/'P.exr'),'--provider','cpu']
     import OpenEXR
     for option,value in (('--f-px','nan'),('--f-px','-1'),('--f-px','inf'),('--repeat','2'),('--device','1.5'),('--device','-1'),('--exposure','nan'),('--out-position',str(directory/'input.png'))):

@@ -1,10 +1,14 @@
 # Decisions
 
+- Runtime head is separate FP32 ONNX, preserving DP2 nodes/weights in a feature-output sidecar; layered_parity checks the split and matching Python predictions.
+- Runtime emits one sample per nonempty layer, no equal-depth merging; plate-premultiplied conditional alpha flattens to the plate; deep_memory and layered_parity check it.
+- Smoke checkpoints are current-objective, deterministic and plumbing-only, never production candidates; layered_parity checks provenance and rejects incompatible heads.
+
 - `runtime/` owns C; `training/` and `datagen/` own Python; only `contract/` bridges them, so no implementation imports another.
 - `datagen/` is a first-class layer that depends only on the dataset contract and third-party packages; runtime and training never import datagen.
 - Each project's lock and synced environment is the layer boundary; an AST import check, which rejects unresolvable dynamic imports and path changes, is the second line.
 - The model contract is distribution `strata-contract`, import `strata_contract`; the dataset contract is `strata-dataset`, import `strata_dataset`, in `contract/dataset/`.
-- Model contract v1 fixes tensor interfaces, normalization, padding, color and depth semantics; C rejects incompatible manifests and ONNX metadata before inference.
+- Model contract v2 fixes tensor interfaces, normalization, padding, color and depth semantics; C rejects incompatible manifests and ONNX metadata before inference.
 - DP2 H+ runs at native resolution with bottom/right replicate padding to 32; DP2 does not use Depth Pro 1's resize pipeline.
 - Metric depth is `f_px / (original_width * inverse_depth)`; zero inverse remains positive infinity.
 - Export opset 23 Attention and tensor-valued RoPE dimensions to preserve memory-efficient attention and arbitrary portrait/landscape inputs.
@@ -12,7 +16,7 @@
 - Compare export parity at matching PyTorch precision; report stock bfloat16 differences separately because changing precision is not export error.
 - Parity gates every image alike vs FP16 PyTorch: p99.9 1%, max 5% beyond 2 px of a log step >0.3, median and signed bias 0.25%, focal 0.1%; no per-image exemptions.
 - Against an FP32 oracle, native median and |signed bias| may exceed PyTorch FP16's own by 0.2 pp, the most PyTorch moves under 1-fp16-ulp input perturbations.
-- Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; deep RGB preserves source values and alpha is always one.
+- Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; head sample RGB is source RGB times conditional alpha.
 - Shoulder and sRGB math use double precision, rounded once to float32 before ImageNet normalization; encoder_input parity is bit-identical (atol 0).
 - Negative and NaN scene-linear input map to zero; +inf maps to one and -inf to zero; each result counts non-finite pixels.
 - Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
@@ -23,12 +27,12 @@
 - Exports bake ORT basic-level transforms, stride==kernel ConvTranspose as 1x1 Conv+DepthToSpace and fused RotaryEmbedding.
 - A separate, lazy `.fov.onnx` keeps automatic focal estimation optional and avoids paying its session cost when focal is supplied.
 - Deep scanline output uses Core's raw chunk C API and uncompressed float32 samples; OpenEXR 3.5.3's default deep packer is still a stub.
-- Flat output uses lossless ZIP with `Z` and `network_inverse_depth`; fake deep has exactly `R G B A Z ZBack`, one sample/pixel and `ZBack == Z`.
+- Flat output keeps DP2 `Z` and `network_inverse_depth`; layered deep has `R G B A Z ZBack` with `ZBack == Z`; layered_parity checks sample values.
 - Writers create a sibling temporary file and rename it over the target, so readers never see partial output.
 - Explicit providers fail when unavailable; `auto` falls back to CPU and reports why through `strata_fallback_reason`; the library never prints.
 - CUDA and the PyTorch oracles disable TF32 so float32 operations keep IEEE precision; allocator, arena and threads stay at ONNX Runtime defaults.
 - TensorRT, CoreML and DirectML are out of scope until each lands with a test and a measurement.
-- The CLI refuses outputs inside the model's directory instead of parsing ONNX for external data, which ONNX Runtime confines to that directory.
+- The CLI refuses outputs inside either model's directory instead of parsing ONNX for external data, which ONNX Runtime confines to that directory.
 - Keep merged deep, beauty and layers on every frame; delete raw EXRs and NPY sidecars only after durable acceptance verifies merged rebuilds the packed targets, making raw redundant.
 - Acceptance binds raw proof, retained digests, algorithm versions and raw-only limits; retired QA runs fresh, refusing changed raw-only policy; `test_retired_qa` checks this.
 - Identity gates: unlabelled visible coverage/pixel <=2e-4; declared/labelled visible coverage >=0.99995 (empty=1); raw ID counts only report; test_retired_qa checks merge invariance.
