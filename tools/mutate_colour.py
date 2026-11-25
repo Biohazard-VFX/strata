@@ -53,7 +53,7 @@ def verify(cli, output, case, env):
     assert completed.returncode == 0, ('runtime failed', completed.stderr)
     with np.load(output / (case['id'] + '.npz')) as archive:
         reference = dict(archive)
-    return compare(output / (case['id'] + '.deep.exr'), reference, 2e-5, case['colorspace'])
+    return compare(output / (case['id'] + '.deep.exr'), reference, 5e-6, case['colorspace'])
 
 
 def main():

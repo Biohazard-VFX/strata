@@ -102,7 +102,7 @@ def smoke_checkpoint(path: Path) -> None:
         torch_api.manual_seed(0)
         head = DeepHead(128, nn.Identity(), 4)
         with torch.no_grad():
-            head.output.weight.normal_(0, 0.001)
+            head.output.weight.normal_(0, 0.1)
             cast(torch.Tensor, head.output.bias).normal_(0, 0.01)
         optimizer = torch.optim.AdamW(head.parameters())
         save_checkpoint(

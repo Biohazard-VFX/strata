@@ -15,7 +15,7 @@ from strata_training.model.export import export_head, smoke_checkpoint
 
 def fixture(path):
     weights = {
-        'features_weight': np.full((128, 3, 1, 1), 1 / 384, np.float32),
+        'features_weight': np.random.default_rng(123).normal(0, .2, (128, 3, 1, 1)).astype(np.float32),
         'features_bias': np.arange(128, dtype=np.float32) / 1280,
         'inverse_weight': np.full((32, 128, 1, 1), 1 / 128, np.float32),
         'inverse_bias': np.full(32, .2, np.float32),
@@ -49,6 +49,9 @@ def main():
     weights = fixture(backbone)
     checkpoint = output / 'models/plumbing-only.pt'
     smoke_checkpoint(checkpoint)
+    repeated = output / 'models/plumbing-only-repeat.pt'
+    smoke_checkpoint(repeated)
+    assert checkpoint.read_bytes() == repeated.read_bytes(), 'Checkpoint bytes are not deterministic'
     original = backbone.read_bytes()
     exported = output / 'models/plumbing-only.onnx'
     export_head(checkpoint, exported, backbone)

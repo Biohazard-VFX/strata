@@ -1,8 +1,13 @@
 import argparse
 import json
+import os
+import sys
+
 from pathlib import Path
 import subprocess
 import tempfile
+
+from mutate_colour import preload, verify
 
 ROOT = Path(__file__).resolve().parent.parent
 MUTANTS = {
@@ -13,6 +18,37 @@ MUTANTS = {
     'incomplete-coverage': ('if (remaining != 0)', 'if (0)'),
     'reverse-depth-order': (' || z < previous', ' || (z < previous && 0)'),
 }
+
+
+TILE_MUTANTS = {
+    'halo-x': ('x > 32 ? x - 32 : 0', 'x > 16 ? x - 16 : 0'),
+    'halo-y': ('y > 32 ? y - 32 : 0', 'y > 16 ? y - 16 : 0'),
+    'core-offset': ('(size_t)(x - tile->x0)];', '(size_t)(x - tile->x0 + (x == tile->x && x > 0))];'),
+    'feature-stride': ('features[c * padded + padded_pixel]', 'features[c * (padded - 1) + padded_pixel]'),
+}
+
+
+def tile_mutations(build, work):
+    output = work / 'oracle'
+    subprocess.run([sys.executable, str(ROOT / 'tools/check_layered_head.py'),
+        '--cli', str(build / 'strata'), '--out', str(output)], check=True, capture_output=True, text=True)
+    cases = json.loads((ROOT / 'runtime/tests/parity_cases.json').read_text())['layered']
+    case = next(item for item in cases if item['id'] == 'layered_tiles')
+    env = dict(os.environ)
+    verify(build / 'strata', output, case, env)
+    report = [{'name': 'tile-baseline', 'passed': True}]
+    for name, (old, new) in TILE_MUTANTS.items():
+        directory = work / name
+        directory.mkdir()
+        library = preload(build, directory, 'backend/runtime.c', old, new)
+        try:
+            verify(build / 'strata', output, case, {**env, 'LD_PRELOAD': library})
+        except AssertionError as error:
+            assert 'Not equal' in str(error), (name, str(error))
+            report.append({'name': name, 'killed': True, 'assertion': str(error).splitlines()[1]})
+        else:
+            raise AssertionError('survived: ' + name)
+    return report
 
 
 def main():
@@ -44,6 +80,7 @@ def main():
             assert (result.returncode == 0) == (mutation is None), (name, result)
             assert mutation is None or ': ' in result.stderr, (name, result)
             report.append({'name': name, 'exit_code': result.returncode})
+        report.extend(tile_mutations(args.build.resolve(), work))
     print(json.dumps(report, indent=2))
 
 

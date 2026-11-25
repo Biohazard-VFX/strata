@@ -28,5 +28,5 @@ def save_checkpoint(
         "seconds": seconds,
         "validation": validation,
     }
-    with atomic_path(path) as temporary:
-        torch.save(state, temporary)
+    with atomic_path(path) as temporary, temporary.open("wb") as stream:
+        torch.save(state, stream)

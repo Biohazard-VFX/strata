@@ -73,6 +73,8 @@ def admission(command, output):
         bad[bad.index('--head') + 1] = str(rejected)
         result = subprocess.run(bad, capture_output=True, text=True)
         assert result.returncode == 1 and 'head metadata mismatch: ' + key in result.stderr, result
+    subprocess.run([str(Path(command[0]).parent / 'strata_head_session_fixture'),
+        command[command.index('--model') + 1], str(source), str(rejected)], check=True)
     graph = onnx.load(source)
     for node in graph.graph.node:
         for i, name in enumerate(node.output):
@@ -128,7 +130,7 @@ def main():
             completed = subprocess.run(command, capture_output=True, text=True, check=True)
             report = json.loads(completed.stdout)
             assert report['provider'] == args.provider and not report['fallback_reason']
-            measured = compare(deep, reference, 2e-5 if args.provider == 'cpu' else 2e-4, case['colorspace'])
+            measured = compare(deep, reference, 5e-6, case['colorspace'])
             rows.append({'id': case['id'], **measured, 'timing': report})
             print(json.dumps(rows[-1]), flush=True)
         (output / 'layered-results.json').write_text(json.dumps(rows, indent=2) + '\n')
