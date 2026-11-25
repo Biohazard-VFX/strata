@@ -154,7 +154,7 @@ def parity(fixture: Path, oracle: Path) -> None:
     image = torch.as_tensor(values.copy()).expand(3, 1, -1)
     maximum = 0.0
     exposures = (-4, 0, 2, 0.1, -0.3)
-    encoded = np.stack([display(image, "Linear Rec.709", stops).numpy() for stops in exposures])
+    encoded = np.stack([display(image, "ACEScg", stops).numpy() for stops in exposures])
     save_arrays(oracle, linear=image.numpy(), exposures=np.array(exposures), encoded=encoded)
     for stops in exposures:
         result = subprocess.run(
@@ -165,7 +165,7 @@ def parity(fixture: Path, oracle: Path) -> None:
         )
         actual = np.frombuffer(result.stdout, np.float32).reshape(3, 32, 1024)
         expected = torch.nn.functional.pad(
-            normalize(display(image, "Linear Rec.709", stops)), (0, 1, 0, 31), mode="replicate"
+            normalize(display(image, "ACEScg", stops)), (0, 1, 0, 31), mode="replicate"
         ).numpy()
         error = float(np.max(np.abs(actual - expected)))
         maximum = max(maximum, error)

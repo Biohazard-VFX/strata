@@ -9,6 +9,7 @@
 struct bench_options {
 	struct strata_options session;
 	const char *input;
+	enum strata_colorspace colorspace;
 	float focal;
 	double exposure;
 	long frames;
@@ -32,7 +33,11 @@ static int parse(int argc, char **argv, struct bench_options *options)
 
 		if (!strcmp(key, "--model"))
 			options->session.model_path = value;
-		else if (!strcmp(key, "--in"))
+		else if (!strcmp(key, "--in-colorspace")) {
+			options->colorspace = strata_colorspace_parse(value);
+			if (!options->colorspace)
+				return -1;
+		} else if (!strcmp(key, "--in"))
 			options->input = value;
 		else if (!strcmp(key, "--provider"))
 			options->session.provider = value;
@@ -49,7 +54,7 @@ static int parse(int argc, char **argv, struct bench_options *options)
 			return -1;
 	}
 	return argc % 2 == 1 && options->session.model_path && options->input &&
-			       options->frames ?
+			       options->frames && options->colorspace ?
 		       0 :
 		       -1;
 }
@@ -86,7 +91,8 @@ static int bench(const struct bench_options *options)
 	struct strata_error err = { { 0 } };
 	struct strata_image image = { 0 };
 	struct strata_frame frame = { .image = &image,
-				      .exposure_stops = options->exposure };
+				      .exposure_stops = options->exposure,
+				      .colorspace = options->colorspace };
 	strata_context *ctx = NULL;
 	double start;
 	int ret = 1;
@@ -127,6 +133,7 @@ int main(int argc, char **argv)
 
 	if (parse(argc, argv, &options)) {
 		fputs("strata_bench --model M.onnx --in image --frames N\n"
+		      "             --in-colorspace acescg|aces2065-1|lin-rec709|lin-rec2020\n"
 		      "             [--f-px N] [--exposure stops]\n"
 		      "             [--provider auto|cuda|cpu] [--device N]\n",
 		      stderr);

@@ -49,9 +49,22 @@ struct strata_camera {
 	enum strata_focal_source focal_source;
 };
 
-/* Borrowed by strata_run for the call only. */
+enum strata_colorspace {
+	STRATA_COLOR_UNSET,
+	STRATA_COLOR_ACESCG,
+	STRATA_COLOR_ACES2065_1,
+	STRATA_COLOR_LIN_REC709,
+	STRATA_COLOR_LIN_REC2020
+};
+
+/* Names are static; parse returns UNSET for unsupported names; reentrant. */
+enum strata_colorspace strata_colorspace_parse(const char *name);
+const char *strata_colorspace_name(enum strata_colorspace space);
+
+/* Borrowed by strata_run for the call only; colorspace must be explicit. */
 struct strata_frame {
 	const struct strata_image *image;
+	enum strata_colorspace colorspace;
 	struct strata_camera camera;
 	double exposure_stops; /* Fixed per shot, in stops. */
 	int64_t index;
@@ -64,6 +77,7 @@ struct strata_frame_metadata {
 	double timestamp_seconds;
 	struct strata_camera camera;
 	int linear;
+	enum strata_colorspace colorspace;
 };
 
 /* Wall-clock milliseconds per stage of one strata_run call. */

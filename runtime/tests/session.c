@@ -1,6 +1,7 @@
 #include "strata.h"
 #include "expect.h"
 #include <math.h>
+#include <float.h>
 #include <pthread.h>
 #include <string.h>
 
@@ -47,6 +48,7 @@ static void fallback(const char *model)
 static void provided(strata_context *ctx, float *network)
 {
 	struct strata_frame frame = { .image = &image,
+				      .colorspace = STRATA_COLOR_ACESCG,
 				      .index = 1001,
 				      .timestamp_seconds = 1.25,
 				      .camera = { .fx_px = 100,
@@ -99,9 +101,10 @@ static void provided(strata_context *ctx, float *network)
 
 static void estimated(strata_context *ctx)
 {
-	struct strata_frame frame = {
-		.image = &image, .camera.focal_source = STRATA_FOCAL_ESTIMATED
-	};
+	struct strata_frame frame = { .image = &image,
+				      .colorspace = STRATA_COLOR_ACESCG,
+				      .camera.focal_source =
+					      STRATA_FOCAL_ESTIMATED };
 	struct strata_result result = { 0 };
 	struct strata_error err = { { 0 } };
 	float focal = 1 / tanf(30 * .008726646259971648f);
@@ -128,6 +131,7 @@ static void nonfinite(strata_context *ctx)
 	struct strata_image a = image, b = image;
 	struct strata_frame frame = {
 		.image = &a,
+		.colorspace = STRATA_COLOR_ACESCG,
 		.camera = { .fx_px = 10,
 			    .fy_px = 10,
 			    .focal_source = STRATA_FOCAL_PROVIDED }
@@ -138,11 +142,11 @@ static void nonfinite(strata_context *ctx)
 	memcpy(dirty, rgba, sizeof(dirty));
 	memcpy(clean, rgba, sizeof(clean));
 	dirty[0] = INFINITY;
-	clean[0] = 1;
-	dirty[5] = NAN;
-	clean[5] = 0;
-	dirty[6] = -INFINITY;
-	clean[6] = 0;
+	clean[0] = FLT_MAX;
+	for (size_t c = 0; c < 3; ++c) {
+		dirty[4 + c] = NAN;
+		clean[4 + c] = 0;
+	}
 	a.rgba = dirty;
 	b.rgba = clean;
 	EXPECT(!strata_run(ctx, &frame, &first, &err));
@@ -161,6 +165,7 @@ static void reload(strata_context *ctx, float network)
 {
 	struct strata_frame frame = {
 		.image = &image,
+		.colorspace = STRATA_COLOR_ACESCG,
 		.camera = { .fx_px = 100,
 			    .fy_px = 120,
 			    .focal_source = STRATA_FOCAL_PROVIDED }
@@ -188,6 +193,7 @@ static void *work(void *argument)
 					  .provider = "cpu" };
 	struct strata_frame frame = {
 		.image = &image,
+		.colorspace = STRATA_COLOR_ACESCG,
 		.camera = { .fx_px = 100,
 			    .fy_px = 120,
 			    .focal_source = STRATA_FOCAL_PROVIDED }

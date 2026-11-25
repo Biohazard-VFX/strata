@@ -78,8 +78,11 @@ def main():
         height, width = case['height'], case['width']
         rng = np.random.default_rng(case['seed'])
         plate = rng.uniform(-.1, 3, (3, height, width)).astype(np.float32)
-        image = torch.from_numpy(plate)[None]
-        encoded = normalize(display(image, 'linear-sRGB', case['exposure']))
+        reference = json.loads((cases_path.parent / 'colour_reference.json').read_text())
+        matrix = np.linalg.inv(np.asarray(reference['to_ap0']['acescg'])) @ np.asarray(reference['to_ap0'][case['colorspace']])
+        converted = (matrix @ plate.reshape(3, -1).astype(np.float64)).astype(np.float32).reshape(plate.shape)
+        image = torch.from_numpy(converted)[None]
+        encoded = normalize(display(image, 'ACEScg', case['exposure']))
         features = functional.conv2d(encoded, weights['features_weight'], weights['features_bias'])
         base = functional.conv2d(features, weights['inverse_weight'], weights['inverse_bias']).relu()
         base = functional.conv2d(base, weights['final_weight'], weights['final_bias']).relu()

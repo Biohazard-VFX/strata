@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(cli, directory, expected):
-    result = subprocess.run([str(cli),'depth','--model',str(directory/'model'/'model.onnx'),
+    result = subprocess.run([str(cli),'depth','--in-colorspace','acescg','--model',str(directory/'model'/'model.onnx'),
                              '--in',str(directory/'input.png'),
                              '--out-depth',str(directory/'depth.exr'),
                              '--provider','cpu','--f-px','1'],capture_output=True,text=True,check=False)
@@ -84,7 +84,7 @@ def main():
         onnx.save(fixture,str(model))
         if name != spec()['output']['name'] or channels != 1:
             run(cli,directory,'ONNX tensor contract mismatch')
-    command = [str(cli),'depth','--model',str(model),'--in',str(directory/'input.png'),
+    command = [str(cli),'depth','--in-colorspace','acescg','--model',str(model),'--in',str(directory/'input.png'),
                '--out-depth',str(directory/'depth.exr'),
                '--out-position',str(directory/'P.exr'),'--provider','cpu']
     import OpenEXR

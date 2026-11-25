@@ -97,7 +97,10 @@ static int write_variable(const char *directory)
 	struct strata_deep_result deep = {
 		.width = 3,
 		.height = 2,
-		.frame = { .index = 42, .camera.fx_px = 1000, .linear = 1 },
+		.frame = { .colorspace = STRATA_COLOR_ACESCG,
+			   .index = 42,
+			   .camera.fx_px = 1000,
+			   .linear = 1 },
 		.sample_count = 7,
 		.counts = counts,
 		.rgba = rgba,
@@ -294,7 +297,8 @@ int main(int argc, char **argv)
 	struct strata_result result = {
 		.width = WIDTH,
 		.height = HEIGHT,
-		.frame = { .index = 1001,
+		.frame = { .colorspace = STRATA_COLOR_ACESCG,
+			   .index = 1001,
 			   .timestamp_seconds = 1,
 			   .camera = { .fx_px = 1000,
 				       .fy_px = 1000,

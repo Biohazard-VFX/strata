@@ -170,7 +170,7 @@ static int write_metadata(exr_context_t ctx, int deep,
 		{ "strata:rgb_association", "premultiplied" },
 		{ "strata:alpha_semantics", "coverage" },
 		{ "strata:color_space",
-		  frame->linear ? "scene-linear" : "display-sRGB" },
+		  strata_colorspace_name(frame->colorspace) },
 	};
 	const char *names[] = {
 		"strata:fx_px",		  "strata:fy_px",
@@ -182,6 +182,22 @@ static int write_metadata(exr_context_t ctx, int deep,
 		camera->cy_px, camera->sensor_width_mm, camera->sensor_height_mm
 	};
 
+	if (deep) {
+		const float *xy = strata_chromaticities(frame->colorspace);
+		exr_attr_chromaticities_t chroma;
+
+		if (!xy)
+			return strata_fail(
+				err,
+				"deep requires an explicit input colorspace");
+		chroma = (exr_attr_chromaticities_t){ xy[0], xy[1], xy[2],
+						      xy[3], xy[4], xy[5],
+						      xy[6], xy[7] };
+		if (exr_failed(exr_attr_set_chromaticities(
+				       ctx, 0, "chromaticities", &chroma),
+			       "chromaticities", err))
+			return -1;
+	}
 	snprintf(index, sizeof(index), "%" PRId64, frame->index);
 	for (size_t i = 0; i < (deep ? 7u : 4u); ++i) {
 		if (exr_failed(exr_attr_set_string(ctx, 0, strings[i][0],

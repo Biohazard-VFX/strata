@@ -635,8 +635,8 @@ static int infer(strata_context *ctx, const struct strata_frame *frame,
 	return 0;
 }
 
-int strata_run(strata_context *ctx, const struct strata_frame *frame,
-	       struct strata_result *result, struct strata_error *err)
+static int run_model(strata_context *ctx, const struct strata_frame *frame,
+		     struct strata_result *result, struct strata_error *err)
 {
 	if (!result)
 		return strata_fail(err, "missing result output");
@@ -661,11 +661,31 @@ int strata_run(strata_context *ctx, const struct strata_frame *frame,
 	result->frame.index = frame->index;
 	result->frame.timestamp_seconds = frame->timestamp_seconds;
 	result->frame.linear = frame->image->linear;
+	result->frame.colorspace = frame->colorspace;
 	if (infer(ctx, frame, result, err)) {
 		strata_result_free(result);
 		return -1;
 	}
 	return 0;
+}
+
+int strata_run(strata_context *ctx, const struct strata_frame *frame,
+	       struct strata_result *result, struct strata_error *err)
+{
+	struct strata_image image = { 0 };
+	struct strata_frame model;
+	int ret;
+
+	if (!result)
+		return strata_fail(err, "missing result output");
+	strata_result_free(result);
+	if (strata_model_image(frame, &image, err))
+		return -1;
+	model = *frame;
+	model.image = &image;
+	ret = run_model(ctx, &model, result, err);
+	strata_image_free(&image);
+	return ret;
 }
 
 static int metadata_matches(strata_context *ctx, const char *key,
@@ -965,6 +985,8 @@ int strata_run_deep(strata_context *ctx, const struct strata_frame *frame,
 		    struct strata_result *depth,
 		    struct strata_deep_result *deep, struct strata_error *err)
 {
+	struct strata_image image = { 0 };
+	struct strata_frame model;
 	float *inverse = NULL, *alpha = NULL;
 	size_t pixels;
 	double start;
@@ -978,8 +1000,12 @@ int strata_run_deep(strata_context *ctx, const struct strata_frame *frame,
 	strata_result_free(depth);
 	if (!ctx || !ctx->head_path)
 		return strata_fail(err, "layered deep requires a head");
-	if (strata_run(ctx, frame, depth, err))
+	if (strata_model_image(frame, &image, err))
 		return -1;
+	model = *frame;
+	model.image = &image;
+	if (run_model(ctx, &model, depth, err))
+		goto out;
 	start = strata_milliseconds();
 	pixels = (size_t)depth->width * (size_t)depth->height;
 	inverse = malloc(pixels * 4 * sizeof(float));
@@ -988,13 +1014,14 @@ int strata_run_deep(strata_context *ctx, const struct strata_frame *frame,
 		strata_fail(err, "out of memory");
 		goto out;
 	}
-	if (predict_layers(ctx, frame, depth, inverse, alpha, err) ||
+	if (predict_layers(ctx, &model, depth, inverse, alpha, err) ||
 	    strata_prediction_to_deep(frame->image, &depth->frame, 4, inverse,
 				      alpha, deep, err))
 		goto out;
 	depth->timings.run_ms += strata_milliseconds() - start;
 	ret = 0;
 out:
+	strata_image_free(&image);
 	free(inverse);
 	free(alpha);
 	if (ret) {

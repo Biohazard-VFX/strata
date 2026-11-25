@@ -27,6 +27,9 @@ int strata_deep_validate(const struct strata_deep_result *deep,
 int strata_check_manifest(const char *model, struct strata_error *err);
 int strata_read_exr(const char *path, struct strata_image *image,
 		    struct strata_error *err);
+int strata_model_image(const struct strata_frame *frame,
+		       struct strata_image *image, struct strata_error *err);
+const float *strata_chromaticities(enum strata_colorspace space);
 float strata_srgb(float x);
 int strata_padded_size(int w, int h, int *pw, int *ph,
 		       struct strata_error *err);

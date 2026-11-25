@@ -50,6 +50,8 @@ Nuke first, with native deep. Then OFX hosts and ComfyUI.
 | `contract/` | The versioned model and dataset specs shared by the other folders. |
 | `tools/` | Repository checks. |
 
+`strata depth` requires `--in-colorspace acescg|aces2065-1|lin-rec709|lin-rec2020`. Model input converts to ACEScg; deep colours stay in the declared plate space.
+
 Host plugins will live in `hosts/` and use only the public C API.
 
 ## References

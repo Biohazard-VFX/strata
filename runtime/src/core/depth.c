@@ -84,6 +84,9 @@ static void prepare_row(const float *rgba, size_t w, double gain, int linear,
 {
 	const float mean[] = { STRATA_MEAN_R, STRATA_MEAN_G, STRATA_MEAN_B };
 	const float std[] = { STRATA_STD_R, STRATA_STD_G, STRATA_STD_B };
+	const double display[3][3] = { { 1.70505, -.62179, -.08326 },
+				       { -.13026, 1.1408, -.01055 },
+				       { -.024, -.12897, 1.15297 } };
 
 	if (!linear) {
 		for (size_t c = 0; c < 3; ++c) {
@@ -96,7 +99,11 @@ static void prepare_row(const float *rgba, size_t w, double gain, int linear,
 	}
 	for (size_t c = 0; c < 3; ++c) {
 		for (size_t x = 0; x < w; ++x) {
-			double value = rgba[x * 4 + c] * gain;
+			const float *rgb = rgba + x * 4;
+			double value = (display[c][0] * rgb[0] +
+					display[c][1] * rgb[1] +
+					display[c][2] * rgb[2]) *
+				       gain;
 
 			out[c][x] = (shoulder(value) - mean[c]) / std[c];
 		}

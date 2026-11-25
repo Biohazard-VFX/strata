@@ -11,6 +11,7 @@ struct cli_options {
 	struct strata_options session;
 	const char *head;
 	const char *input;
+	enum strata_colorspace colorspace;
 	const char *depth;
 	const char *deep;
 	const char *position;
@@ -30,10 +31,12 @@ static double milliseconds(void)
 static void usage(FILE *out)
 {
 	fputs("strata depth --model M.onnx --in plate.exr|png|jpg\n"
+	      "             --in-colorspace acescg|aces2065-1|lin-rec709|lin-rec2020\n"
 	      "             --out-depth depth.exr [--head H.onnx --out-deep deep.exr]\n"
 	      "             [--f-px N | --camera camera.json] [--exposure stops]\n"
 	      "             [--provider auto|cuda|cpu] [--device N]\n"
 	      "             [--out-position P.exr]\n"
+	      "Input colour space is required; linear only, no encoding conversion or guessing.\n"
 	      "Without --f-px or camera intrinsics, M.fov.onnx estimates focal.\n",
 	      out);
 }
@@ -170,7 +173,15 @@ static int parse(int argc, char **argv, struct cli_options *options)
 			options->session.model_path = value;
 		else if (!strcmp(key, "--head"))
 			options->head = value;
-		else if (!strcmp(key, "--in"))
+		else if (!strcmp(key, "--in-colorspace")) {
+			options->colorspace = strata_colorspace_parse(value);
+			if (!options->colorspace) {
+				fprintf(stderr,
+					"strata: unsupported input colour space: %s; supported: acescg, aces2065-1, lin-rec709, lin-rec2020 (linear only)\n",
+					value);
+				return -1;
+			}
+		} else if (!strcmp(key, "--in"))
 			options->input = value;
 		else if (!strcmp(key, "--out-depth"))
 			options->depth = value;
@@ -185,8 +196,14 @@ static int parse(int argc, char **argv, struct cli_options *options)
 		else if (numeric_option(options, key, value))
 			return -1;
 	}
+	if (!options->colorspace) {
+		fputs("strata: --in-colorspace is required (linear only)\n",
+		      stderr);
+		return -1;
+	}
 	if (!options->session.model_path || !options->input ||
-	    !options->depth || (!!options->deep != !!options->head))
+	    !options->colorspace || !options->depth ||
+	    (!!options->deep != !!options->head))
 		return -1;
 	if (options->camera && options->focal > 0)
 		return -1;
@@ -279,7 +296,8 @@ static int execute(const struct cli_options *options)
 	struct strata_result result = { 0 };
 	struct strata_deep_result deep = { 0 };
 	struct strata_frame frame = { .image = &image,
-				      .exposure_stops = options->exposure };
+				      .exposure_stops = options->exposure,
+				      .colorspace = options->colorspace };
 	strata_context *ctx = NULL;
 	struct strata_pose pose = { 0 };
 	int has_pose = 0, ret = 1;

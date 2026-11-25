@@ -145,6 +145,12 @@ def main() -> None:
     parser.add_argument("--bench", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
+    parser.add_argument(
+        "--in-colorspace",
+        choices=("acescg", "aces2065-1", "lin-rec709", "lin-rec2020"),
+        required=True,
+    )
+    parser.add_argument("--colour-reference", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
         "--engines",
@@ -178,12 +184,26 @@ def main() -> None:
             if engine.startswith("torch"):
                 cases = prefix.with_suffix(".json")
                 cases.write_text(
-                    json.dumps([{"id": prefix.name, "input": str(image), "focal_px": focal}]) + "\n"
+                    json.dumps(
+                        {
+                            "depth": [
+                                {
+                                    "id": prefix.name,
+                                    "input": str(image),
+                                    "focal_px": focal,
+                                    "colorspace": args.in_colorspace,
+                                }
+                            ]
+                        }
+                    )
+                    + "\n"
                 )
                 command = [
                     sys.executable,
                     "-m",
                     "strata_train.reference",
+                    "--colour-reference",
+                    str(args.colour_reference.resolve()),
                     "--cases",
                     str(cases),
                     "--out",
@@ -198,6 +218,8 @@ def main() -> None:
                     str(args.bench.resolve()),
                     "--model",
                     str(args.model.resolve()),
+                    "--in-colorspace",
+                    args.in_colorspace,
                     "--in",
                     str(image),
                     "--f-px",

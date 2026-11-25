@@ -21,6 +21,7 @@ from ._precision import keep_float32_boundaries
 class Case(TypedDict):
     id: str
     input: str
+    colorspace: str
     focal_px: NotRequired[float]
     auto_focal: NotRequired[bool]
     exposure: NotRequired[float]
@@ -39,18 +40,44 @@ def encode(linear: NDArray[np.generic], exposure: float = 0) -> NDArray[np.float
     return encoded.astype(np.float32)
 
 
-def load(path: Path, exposure: float = 0) -> NDArray[np.float32]:
+def encode_acescg(rgb: NDArray[np.generic], exposure: float = 0) -> NDArray[np.float32]:
+    matrix = np.array(
+        [[1.70505, -0.62179, -0.08326], [-0.13026, 1.1408, -0.01055], [-0.024, -0.12897, 1.15297]],
+        np.float64,
+    )
+    with np.errstate(invalid="ignore"):
+        linear = np.einsum("ij,...j->...i", matrix, rgb.astype(np.float64))
+    return encode(linear, exposure)
+
+
+def color_matrix(path: Path, colorspace: str) -> NDArray[np.float64]:
+    reference = json.loads(path.read_text())["to_ap0"]
+    if colorspace == "acescg":
+        return np.eye(3, dtype=np.float64)
+    return np.linalg.solve(
+        np.asarray(reference["acescg"], np.float64), np.asarray(reference[colorspace], np.float64)
+    )
+
+
+def load(path: Path, matrix: NDArray[np.float64], exposure: float = 0) -> NDArray[np.float32]:
     if path.suffix.lower() != ".exr":
-        return load_rgb(str(path))[0].astype(np.float32) / np.float32(255)
-    with OpenEXR.File(str(path), separate_channels=True) as file:
-        rgb = np.stack([file.channels()[channel].pixels for channel in "RGB"], -1)
-    return encode(rgb, exposure)
+        rgb = load_rgb(str(path))[0].astype(np.float32) / np.float32(255)
+    else:
+        with OpenEXR.File(str(path), separate_channels=True) as file:
+            rgb = np.stack([file.channels()[channel].pixels for channel in "RGB"], -1)
+    converted = (
+        rgb
+        if np.array_equal(matrix, np.eye(3))
+        else (rgb.astype(np.float64) @ matrix.T).astype(np.float32)
+    )
+    return encode_acescg(converted, exposure)
 
 
 def infer(
     model: DepthPro2,
     case: Case,
     root: Path,
+    matrix: NDArray[np.float64],
     repeat: int,
     half_head: bool,
     precision: str,
@@ -58,7 +85,7 @@ def infer(
 ) -> dict[str, object]:
     path = root / case["input"]
     auto_focal = case.get("auto_focal", False)
-    rgb = load(path, case.get("exposure", 0))
+    rgb = load(path, matrix, case.get("exposure", 0))
     times: list[float] = []
     torch.cuda.reset_peak_memory_stats()
     inverse = np.empty((0,), dtype=np.float32)
@@ -98,6 +125,8 @@ def infer(
         inverse_metres=np.float32(1) / depth,
         focal_px=focal,
         input_sha256=digest,
+        colorspace=case["colorspace"],
+        input_preprocessing="explicit-linear-to-acescg-v1",
         half_head=half_head,
         precision=precision,
         exposure=case.get("exposure", 0),
@@ -115,6 +144,7 @@ def infer(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", type=Path, required=True)
+    parser.add_argument("--colour-reference", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, default=Path())
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--precision", choices=("fp16", "fp32", "bf16"), default="fp16")
@@ -141,7 +171,10 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     report: list[dict[str, object]] = []
     for case in cases:
-        row = infer(model, case, args.data_root, args.repeat, half_head, args.precision, out)
+        matrix = color_matrix(args.colour_reference, case["colorspace"])
+        row = infer(
+            model, case, args.data_root, matrix, args.repeat, half_head, args.precision, out
+        )
         row.update({"precision": args.precision, "session_ms": session_ms})
         report.append(row)
         (out / "timings.json").write_text(json.dumps(report, indent=2) + "\n")

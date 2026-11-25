@@ -14,10 +14,16 @@ from strata_contract import write_manifest
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def compare(path, reference, tolerance):
+def compare(path, reference, tolerance, colorspace):
     plate, inverse, alpha = (reference[name] for name in ('plate', 'inverse', 'alpha'))
     height, width = plate.shape[-2:]
     with OpenEXR.File(str(path), separate_channels=True) as file:
+        assert file.header()['strata:color_space'] == colorspace
+        expected_xy = {'acescg': (.713, .293, .165, .830, .128, .044, .32168, .33767),
+            'aces2065-1': (.7347, .2653, 0, 1, .0001, -.077, .32168, .33767),
+            'lin-rec709': (.64, .33, .30, .60, .15, .06, .3127, .3290),
+            'lin-rec2020': (.708, .292, .170, .797, .131, .046, .3127, .3290)}
+        np.testing.assert_allclose(file.header()['chromaticities'], expected_xy[colorspace], rtol=0, atol=1e-7)
         channels = {name: channel.pixels for name, channel in file.channels().items()}
         assert set(channels) == {'R', 'G', 'B', 'A', 'Z', 'ZBack'}
         values = {name: np.stack([channels[name][y, x] for y in range(height)
@@ -35,7 +41,7 @@ def compare(path, reference, tolerance):
     for layer in range(4):
         a = values['A'][:, :, layer]
         for c, name in enumerate('RGB'):
-            np.testing.assert_allclose(values[name][:, :, layer], plate[c] * a, rtol=2e-7, atol=2e-7)
+            np.testing.assert_array_equal(values[name][:, :, layer], plate[c] * a)
             flatten[:, :, c] += remaining * values[name][:, :, layer]
         coverage += remaining * a
         remaining *= 1 - a.astype(np.float64)
@@ -86,6 +92,15 @@ def admission(command, output):
         assert not Path(command[command.index(flag) + 1]).exists()
 
 
+def runtime_command(cli, output, case, provider):
+    return [str(cli.resolve()), 'depth', '--model', str(output / 'models/backbone.onnx'),
+        '--head', str(output / 'models/plumbing-only.onnx'), '--in', str(output / (case['id'] + '.exr')),
+        '--out-depth', str(output / (case['id'] + '.depth.exr')),
+        '--out-deep', str(output / (case['id'] + '.deep.exr')),
+        '--provider', provider, '--f-px', str(case['focal_px']),
+        '--exposure', str(case['exposure']), '--in-colorspace', case['colorspace']]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cli', type=Path, required=True)
@@ -107,17 +122,13 @@ def main():
             plate_path = output / (case['id'] + '.exr')
             OpenEXR.File({}, {c: reference['plate'][i] for i, c in enumerate('RGB')}).write(str(plate_path))
             deep = output / (case['id'] + '.deep.exr')
-            command = [str(args.cli.resolve()), 'depth', '--model', str(backbone),
-                '--head', str(output / 'models/plumbing-only.onnx'), '--in', str(plate_path),
-                '--out-depth', str(output / (case['id'] + '.depth.exr')), '--out-deep', str(deep),
-                '--provider', args.provider, '--f-px', str(case['focal_px']),
-                '--exposure', str(case['exposure'])]
+            command = runtime_command(args.cli, output, case, args.provider)
             if not rows:
                 admission(command, output)
             completed = subprocess.run(command, capture_output=True, text=True, check=True)
             report = json.loads(completed.stdout)
             assert report['provider'] == args.provider and not report['fallback_reason']
-            measured = compare(deep, reference, 2e-5 if args.provider == 'cpu' else 2e-4)
+            measured = compare(deep, reference, 2e-5 if args.provider == 'cpu' else 2e-4, case['colorspace'])
             rows.append({'id': case['id'], **measured, 'timing': report})
             print(json.dumps(rows[-1]), flush=True)
         (output / 'layered-results.json').write_text(json.dumps(rows, indent=2) + '\n')

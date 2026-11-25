@@ -1,5 +1,10 @@
 # Decisions
 
+- Input colour space is required: acescg, aces2065-1, lin-rec709 or lin-rec2020; never guess or accept log/camera encodings; colour checks missing/unknown CLI flags.
+- Colour matrices match OCIO ACES 1.3 studio v2.1.0 with Bradford D65/D60 adaptation; colour checks 1e-6 references and round-trips; colour_mutations kills incorrect/skipped/deep conversion.
+- Colour reference source: https://github.com/AcademySoftwareFoundation/OpenColorIO-Config-ACES/releases/tag/v2.1.0-v2.2.0; pinned numeric fixtures avoid an OCIO runtime dependency.
+- Bradford and primaries source: https://github.com/AcademySoftwareFoundation/OpenColorIO/blob/v2.3.0/src/OpenColorIO/transforms/builtins/ColorMatrixHelpers.cpp
+- Deep EXRs record plate chromaticities and strata:color_space, not model ACEScg; layered_parity verifies all four spaces and exact sample RGB.
 - Runtime head is separate FP32 ONNX, preserving DP2 nodes/weights in a feature-output sidecar; layered_parity checks the split and matching Python predictions.
 - Runtime emits one sample per nonempty layer, no equal-depth merging; plate-premultiplied conditional alpha flattens to the plate; deep_memory and layered_parity check it.
 - Smoke checkpoints are current-objective, deterministic and plumbing-only, never production candidates; layered_parity checks provenance and rejects incompatible heads.
@@ -16,9 +21,10 @@
 - Compare export parity at matching PyTorch precision; report stock bfloat16 differences separately because changing precision is not export error.
 - Parity gates every image alike vs FP16 PyTorch: p99.9 1%, max 5% beyond 2 px of a log step >0.3, median and signed bias 0.25%, focal 0.1%; no per-image exemptions.
 - Against an FP32 oracle, native median and |signed bias| may exceed PyTorch FP16's own by 0.2 pp, the most PyTorch moves under 1-fp16-ulp input perturbations.
-- Scene-linear EXR receives exposure and continuous sRGB conversion for inference only; head sample RGB is source RGB times conditional alpha.
+- Explicit linear input converts to ACEScg for backbone/head only; exposure and shoulder follow conversion; deep RGB stays plate RGB times conditional alpha; colour and layered_parity check it.
+- Encoder uses training's ACEScg display matrix before exposure/shoulder, not raw AP1 channels; encoder_input checks bit-identical training tensors and colour_mutations kills bypass.
 - Shoulder and sRGB math use double precision, rounded once to float32 before ImageNet normalization; encoder_input parity is bit-identical (atol 0).
-- Negative and NaN scene-linear input map to zero; +inf maps to one and -inf to zero; each result counts non-finite pixels.
+- After the training display matrix, negative/NaN channels map to zero, +inf to one and -inf to zero; each result counts non-finite pixels; encoder_input checks training parity.
 - Scanline RGB EXR and already-oriented 8-bit PNG/JPEG are P0 inputs; reject tiled/deep/subsampled EXR rather than guessing a conversion.
 - `strata_run` infers one frame; temporal inference will be a separate stream API rather than a frame count on this call.
 - Filled outputs take a zeroed or previously filled object, free its old contents first and hold nothing on failure, so hosts reuse them per frame.

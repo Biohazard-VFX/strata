@@ -16,7 +16,7 @@ from strata_contract import write_manifest
 def run(cli, cwd, **paths):
     defaults = {'model': 'models/model.onnx', 'in': 'input.png', 'out-depth': 'depth.exr', 'out-position': 'P.exr'}
     defaults.update({key.replace('_', '-'): value for key, value in paths.items()})
-    command = [str(cli), 'depth', '--provider', 'cpu', '--f-px', '1']
+    command = [str(cli), 'depth', '--in-colorspace', 'acescg', '--provider', 'cpu', '--f-px', '1']
     for key, value in defaults.items():
         command += [f'--{key}', str(value)]
     return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False, timeout=120)

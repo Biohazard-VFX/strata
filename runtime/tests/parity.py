@@ -19,7 +19,7 @@ EDGE_LOG_STEP = .3
 EDGE_RADIUS = 2
 FOCAL_RELATIVE = .001
 LIMITS = {'interior_max': .05, 'p999': .01, 'median': .0025, 'signed_bias': .0025, 'fp32_margin': .002}
-CASE_KEYS = {'id', 'input', 'focal_px', 'auto_focal', 'exposure'}
+CASE_KEYS = {'id', 'input', 'focal_px', 'auto_focal', 'exposure', 'colorspace'}
 
 
 def errors(native, reference):
@@ -59,7 +59,7 @@ def suppressions(stderr):
 def run_case(args, case, data, prefix):
     command = [str(args.cli), 'depth', '--model', str(args.model), '--in', str(data/case['input']),
                '--out-depth', str(prefix.with_suffix('.depth.exr')),
-               '--provider', 'cuda', '--exposure', str(case.get('exposure', 0))]
+               '--in-colorspace', case['colorspace'], '--provider', 'cuda', '--exposure', str(case.get('exposure', 0))]
     if not case.get('auto_focal', False):
         command += ['--f-px', str(case['focal_px'])]
     completed = subprocess.run(command, text=True, capture_output=True, check=False)
@@ -89,7 +89,7 @@ def check_overflow(args):
     image = args.out/'fp16_overflow.png'
     Image.fromarray(overflow_field(args.overflow_field)).save(image)
     prefix = args.out/'fp16_overflow'
-    run_case(args, {'id': 'fp16_overflow', 'input': image.name, 'focal_px': 1000}, image.parent, prefix)
+    run_case(args, {'id': 'fp16_overflow', 'input': image.name, 'focal_px': 1000, 'colorspace': 'lin-rec709'}, image.parent, prefix)
     with OpenEXR.File(str(prefix.with_suffix('.depth.exr')), separate_channels=True) as file:
         native = file.channels()['network_inverse_depth'].pixels
     assert np.isfinite(native).all() and (native > 0).all()
@@ -111,6 +111,8 @@ def load_reference(directory, case, digest, precision):
     with np.load(directory/(case['id']+'.npz')) as archive:
         reference = {key: archive[key] for key in archive.files}
     assert str(reference['input_sha256']) == digest, 'stale PyTorch oracle'
+    assert str(reference['colorspace']) == case['colorspace'], 'stale colour-space oracle'
+    assert str(reference['input_preprocessing']) == 'explicit-linear-to-acescg-v1', 'stale preprocessing oracle'
     assert str(reference['precision']) == precision, (case['id'], str(reference['precision']), precision)
     assert float(reference['exposure']) == case.get('exposure', 0)
     assert bool(reference['auto_focal']) == case.get('auto_focal', False)
