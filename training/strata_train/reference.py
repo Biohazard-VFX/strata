@@ -14,6 +14,7 @@ import OpenEXR
 import torch
 from depth_pro_2 import DepthPro2, create_model_and_transforms, load_rgb
 from numpy.typing import NDArray
+from strata_contract import spec
 
 from ._precision import keep_float32_boundaries
 
@@ -42,7 +43,7 @@ def encode(linear: NDArray[np.generic], exposure: float = 0) -> NDArray[np.float
 
 def encode_acescg(rgb: NDArray[np.generic], exposure: float = 0) -> NDArray[np.float32]:
     matrix = np.array(
-        [[1.70505, -0.62179, -0.08326], [-0.13026, 1.1408, -0.01055], [-0.024, -0.12897, 1.15297]],
+        cast("dict[str, list[list[float]]]", spec()["preprocessing"])["training_display_matrix"],
         np.float64,
     )
     with np.errstate(invalid="ignore"):

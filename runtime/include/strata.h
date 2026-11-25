@@ -33,7 +33,6 @@ struct strata_error {
 struct strata_image {
 	int width;
 	int height;
-	int linear;
 	float *rgba;
 	int owned;
 };
@@ -76,7 +75,6 @@ struct strata_frame_metadata {
 	int64_t index;
 	double timestamp_seconds;
 	struct strata_camera camera;
-	int linear;
 	enum strata_colorspace colorspace;
 };
 
@@ -201,7 +199,7 @@ int strata_unproject_deep(const struct strata_deep_result *deep,
 			  struct strata_positions *positions,
 			  struct strata_error *err);
 void strata_positions_free(struct strata_positions *positions);
-/* Copies path, unloads sessions; serialised with other context calls. */
+/* Copies path on success, unchanged on failure; serialize context calls. */
 int strata_set_head(strata_context *ctx, const char *path,
 		    struct strata_error *err);
 /* Fills both owned outputs, using the configured four-layer head. */

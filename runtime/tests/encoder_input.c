@@ -3,7 +3,9 @@
 int main(int argc, char **argv)
 {
 	float rgba[1023 * 4] = { 0 }, data[3 * 32 * 1024];
-	struct strata_image image = { 1023, 1, 1, rgba, 0 };
+	struct strata_image image = { .width = 1023,
+				      .height = 1,
+				      .rgba = rgba };
 	struct strata_tensor padded = { 1024, 32, data };
 	double exposure;
 

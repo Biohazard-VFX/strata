@@ -86,7 +86,6 @@ static int allocate_exr(exr_context_t ctx, struct strata_image *image,
 		return strata_fail(err, "out of memory");
 	image->width = (int)width;
 	image->height = (int)height;
-	image->linear = 1;
 	image->owned = 1;
 	for (size_t i = 0; i < pixels; ++i)
 		image->rgba[i * 4 + 3] = 1;

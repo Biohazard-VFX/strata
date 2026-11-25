@@ -9,16 +9,15 @@ static void layers_test(void)
 	uint32_t counts[] = { 0, 3, 1, 2, 1, 0 };
 	float rgba[28], z[] = { 3, 1, 2, 5, 6, 4, INFINITY };
 	float back[] = { 3.5f, 1.5f, 2.5f, 5.5f, 6.5f, 4.5f, INFINITY };
-	struct strata_deep_result deep = {
-		.width = 3,
-		.height = 2,
-		.frame = { .index = 42, .camera.fx_px = 1000, .linear = 1 },
-		.sample_count = 7,
-		.counts = counts,
-		.rgba = rgba,
-		.z = z,
-		.zback = back
-	};
+	struct strata_deep_result deep = { .width = 3,
+					   .height = 2,
+					   .frame = { .index = 42,
+						      .camera.fx_px = 1000 },
+					   .sample_count = 7,
+					   .counts = counts,
+					   .rgba = rgba,
+					   .z = z,
+					   .zback = back };
 	struct strata_layers layers = { 0 };
 	struct strata_error err = { { 0 } };
 	int expected[] = { -1, 1, 3, 5, 6, -1, -1, 2, -1, 4, -1, -1 };
@@ -49,7 +48,7 @@ static void layers_test(void)
 				      4 * sizeof(float)) == 0);
 		}
 	}
-	EXPECT(layers.frame.index == 42 && layers.frame.linear == 1);
+	EXPECT(layers.frame.index == 42);
 	z[2] = 1;
 	if (!EXPECT(strata_deep_to_layers(&deep, 3, &layers, &err) == 0))
 		goto out;
@@ -90,9 +89,7 @@ static void conversion_test(void)
 	float rgba[] = { -1, 2, 3, .2f, .1f, .2f, .3f, .4f };
 	float inverse[] = { .5f, 1, .5f, .5f, .25f, .25f, 0, 0 };
 	float alpha[] = { .25f, 1, 0, .5f, .5f, 0, 1, 1 };
-	struct strata_image image = {
-		.width = 2, .height = 1, .linear = 1, .rgba = rgba
-	};
+	struct strata_image image = { .width = 2, .height = 1, .rgba = rgba };
 	struct strata_frame_metadata frame = { .index = 17 };
 	struct strata_deep_result deep = { 0 };
 	struct strata_error err = { { 0 } };

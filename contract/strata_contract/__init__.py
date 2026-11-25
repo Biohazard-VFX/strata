@@ -64,6 +64,9 @@ def c_header() -> str:
         if isinstance(value, float) and not key.startswith("SRGB_"):
             literal += "f"
         lines.append(f"#define STRATA_{key} {literal}")
+    matrix = cast("list[list[float]]", preprocess["training_display_matrix"])
+    initializer = "{ " + ", ".join("{ " + ", ".join(map(str, row)) + " }" for row in matrix) + " }"
+    lines.append(f"#define STRATA_TRAINING_DISPLAY_MATRIX {initializer}")
     canonical = json.dumps(data, separators=(",", ":"))
     lines.extend(["", f"#define STRATA_CONTRACT_JSON {json.dumps(canonical)}", "", "#endif", ""])
     return "\n".join(lines)

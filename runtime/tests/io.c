@@ -45,8 +45,7 @@ static int read_inputs(const char *directory, const float *expected)
 		if (strata_image_read(path, &image, &err))
 			goto out;
 		if (file == 0) {
-			if (image.width != WIDTH || image.height != HEIGHT ||
-			    !image.linear)
+			if (image.width != WIDTH || image.height != HEIGHT)
 				goto out;
 			for (size_t i = 0; i < WIDTH * HEIGHT; ++i) {
 				for (size_t c = 0; c < 3; ++c) {
@@ -58,8 +57,7 @@ static int read_inputs(const char *directory, const float *expected)
 					goto out;
 			}
 		} else {
-			if (image.width != 2 || image.height != 2 ||
-			    image.linear)
+			if (image.width != 2 || image.height != 2)
 				goto out;
 			for (size_t i = 0; i < 4; ++i) {
 				for (size_t c = 0; c < 3; ++c) {
@@ -99,8 +97,7 @@ static int write_variable(const char *directory)
 		.height = 2,
 		.frame = { .colorspace = STRATA_COLOR_ACESCG,
 			   .index = 42,
-			   .camera.fx_px = 1000,
-			   .linear = 1 },
+			   .camera.fx_px = 1000 },
 		.sample_count = 7,
 		.counts = counts,
 		.rgba = rgba,
@@ -291,9 +288,9 @@ int main(int argc, char **argv)
 {
 	float rgba[WIDTH * HEIGHT * 4], depth[WIDTH * HEIGHT],
 		inverse[WIDTH * HEIGHT];
-	struct strata_image image = {
-		.width = WIDTH, .height = HEIGHT, .linear = 1, .rgba = rgba
-	};
+	struct strata_image image = { .width = WIDTH,
+				      .height = HEIGHT,
+				      .rgba = rgba };
 	struct strata_result result = {
 		.width = WIDTH,
 		.height = HEIGHT,

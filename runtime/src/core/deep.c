@@ -80,7 +80,6 @@ int strata_prediction_to_deep(const struct strata_image *image,
 	deep->width = image->width;
 	deep->height = image->height;
 	deep->frame = *frame;
-	deep->frame.linear = image->linear;
 	deep->counts = calloc(pixels, sizeof(uint32_t));
 	deep->rgba = malloc(capacity * 4 * sizeof(float));
 	deep->z = malloc(capacity * sizeof(float));

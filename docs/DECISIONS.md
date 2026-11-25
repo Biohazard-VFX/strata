@@ -2,11 +2,8 @@
 
 - Input colour space is required: acescg, aces2065-1, lin-rec709 or lin-rec2020; never guess or accept log/camera encodings; colour checks missing/unknown CLI flags.
 - Colour matrices match OCIO ACES 1.3 studio v2.1.0 with Bradford D65/D60 adaptation; colour checks 1e-6 references and round-trips; colour_mutations kills incorrect/skipped/deep conversion.
-- Colour reference source: https://github.com/AcademySoftwareFoundation/OpenColorIO-Config-ACES/releases/tag/v2.1.0-v2.2.0; pinned numeric fixtures avoid an OCIO runtime dependency.
-- Bradford and primaries source: https://github.com/AcademySoftwareFoundation/OpenColorIO/blob/v2.3.0/src/OpenColorIO/transforms/builtins/ColorMatrixHelpers.cpp
 - Deep EXRs record plate chromaticities and strata:color_space, not model ACEScg; layered_parity verifies all four spaces and exact sample RGB.
 - Runtime head is separate FP32 ONNX, preserving DP2 nodes/weights in a feature-output sidecar; layered_parity checks the split and matching Python predictions.
-- Runtime emits one sample per nonempty layer, no equal-depth merging; plate-premultiplied conditional alpha flattens to the plate; deep_memory and layered_parity check it.
 - Smoke checkpoints are current-objective, deterministic and plumbing-only, never production candidates; layered_parity checks provenance and rejects incompatible heads.
 
 - `runtime/` owns C; `training/` and `datagen/` own Python; only `contract/` bridges them, so no implementation imports another.

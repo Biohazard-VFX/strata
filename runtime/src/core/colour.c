@@ -67,7 +67,6 @@ int strata_model_image(const struct strata_frame *frame,
 		return -1;
 	pixels = (size_t)source->width * (size_t)source->height;
 	*image = *source;
-	image->linear = 1;
 	image->owned = 0;
 	if (frame->colorspace == STRATA_COLOR_ACESCG)
 		return 0;

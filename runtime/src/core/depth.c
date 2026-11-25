@@ -48,12 +48,6 @@ int strata_padded_size(int w, int h, int *pw, int *ph, struct strata_error *err)
 	return 0;
 }
 
-static float clamp_unit(float value)
-{
-	value = value > 0 ? value : 0;
-	return value < 1 ? value : 1;
-}
-
 static float shoulder(double x)
 {
 	if (!(x > 0))
@@ -79,24 +73,13 @@ static size_t nonfinite_pixels(const float *rgba, size_t w)
 	return count;
 }
 
-static void prepare_row(const float *rgba, size_t w, double gain, int linear,
+static void prepare_row(const float *rgba, size_t w, double gain,
 			float *const out[3])
 {
 	const float mean[] = { STRATA_MEAN_R, STRATA_MEAN_G, STRATA_MEAN_B };
 	const float std[] = { STRATA_STD_R, STRATA_STD_G, STRATA_STD_B };
-	const double display[3][3] = { { 1.70505, -.62179, -.08326 },
-				       { -.13026, 1.1408, -.01055 },
-				       { -.024, -.12897, 1.15297 } };
+	const double display[3][3] = STRATA_TRAINING_DISPLAY_MATRIX;
 
-	if (!linear) {
-		for (size_t c = 0; c < 3; ++c) {
-			for (size_t x = 0; x < w; ++x)
-				out[c][x] = (clamp_unit(rgba[x * 4 + c]) -
-					     mean[c]) /
-					    std[c];
-		}
-		return;
-	}
 	for (size_t c = 0; c < 3; ++c) {
 		for (size_t x = 0; x < w; ++x) {
 			const float *rgb = rgba + x * 4;
@@ -124,7 +107,7 @@ size_t strata_prepare(const struct strata_image *image, double exposure,
 		for (size_t c = 0; c < 3; ++c)
 			out[c] = padded->data + c * plane + y * pw;
 		nonfinite += nonfinite_pixels(row, w);
-		prepare_row(row, w, gain, image->linear, out);
+		prepare_row(row, w, gain, out);
 		for (size_t c = 0; c < 3; ++c) {
 			for (size_t x = w; x < pw; ++x)
 				out[c][x] = out[c][w - 1];

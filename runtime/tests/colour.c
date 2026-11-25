@@ -18,8 +18,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "%s\n", err.message);
 		return 1;
 	}
-	ret = fwrite(model.rgba, sizeof(float), 16, stdout) != 16 ||
-	      !model.linear;
+	ret = fwrite(model.rgba, sizeof(float), 16, stdout) != 16;
 	strata_image_free(&model);
 	return ret;
 }

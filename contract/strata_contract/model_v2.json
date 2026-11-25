@@ -25,7 +25,9 @@
     "semantics": "focal-normalized inverse optical-axis depth"
   },
   "preprocessing": {
-    "color": "display-sRGB",
+    "color": "declared linear plate -> ACEScg -> training display matrix -> exposure/clamp/Fable shoulder -> sRGB",
+    "plate_colorspace": "required --in-colorspace: acescg, aces2065-1, lin-rec709, lin-rec2020",
+    "training_display_matrix": [[1.70505, -0.62179, -0.08326], [-0.13026, 1.1408, -0.01055], [-0.024, -0.12897, 1.15297]],
     "mean": [
       0.485,
       0.456,
@@ -40,7 +42,7 @@
     "multiple": 32,
     "max_height": 4352,
     "max_width": 7680,
-    "linear_exposure": "x=max(0,0.72*exp2(shot_stops)*C); x<=0.6 ? x : 0.6+0.4*(x-0.6)/(0.4+x-0.6); sRGB; float32",
+    "linear_exposure": "x=max(0,0.72*exp2(shot_stops)*(training_display_matrix*ACEScg(plate))); x<=0.6 ? x : 0.6+0.4*(x-0.6)/(0.4+x-0.6); sRGB; float32",
     "srgb_threshold": 0.0031308,
     "srgb_linear_scale": 12.92,
     "srgb_power_scale": 1.055,

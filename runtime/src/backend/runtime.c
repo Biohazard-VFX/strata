@@ -22,6 +22,7 @@ struct strata_context {
 	OrtSession *session;
 	OrtSession *fov;
 	OrtSession *head;
+	int features;
 	char *head_path;
 	char *feature_path;
 	OrtIoBinding *binding;
@@ -445,7 +446,7 @@ static int bind_buffers(strata_context *ctx, struct strata_error *err)
 					   input),
 		       err))
 		return -1;
-	if (ctx->head_path &&
+	if (ctx->features &&
 	    ort_failed(ctx->api,
 		       ctx->api->BindOutput(ctx->binding, "strata_features",
 					    ctx->device ? b->device_features :
@@ -478,7 +479,7 @@ static int ensure_buffers(strata_context *ctx, int pw, int ph,
 					   input, &b->device_input, err) ||
 			     create_tensor(ctx, OrtDeviceMemoryType_DEFAULT,
 					   output, &b->device_output, err))) ||
-	    (ctx->head_path &&
+	    (ctx->features &&
 	     (create_tensor(ctx, host, features, &b->host_features, err) ||
 	      (ctx->device &&
 	       create_tensor(ctx, OrtDeviceMemoryType_DEFAULT, features,
@@ -621,7 +622,7 @@ static int infer(strata_context *ctx, const struct strata_frame *frame,
 	if (copy_tensor(ctx, b->device_output, b->host_output,
 			&timings->download_ms, err))
 		return -1;
-	if (ctx->head_path) {
+	if (ctx->features) {
 		double feature_ms;
 		if (copy_tensor(ctx, b->device_features, b->host_features,
 				&feature_ms, err))
@@ -636,7 +637,8 @@ static int infer(strata_context *ctx, const struct strata_frame *frame,
 }
 
 static int run_model(strata_context *ctx, const struct strata_frame *frame,
-		     struct strata_result *result, struct strata_error *err)
+		     struct strata_result *result, int features,
+		     struct strata_error *err)
 {
 	if (!result)
 		return strata_fail(err, "missing result output");
@@ -649,18 +651,22 @@ static int run_model(strata_context *ctx, const struct strata_frame *frame,
 		return strata_fail(err, "invalid frame");
 	if (strata_camera_validate(&frame->camera, 0, err))
 		return -1;
+	if (ctx->session && ctx->features != features) {
+		release_buffers(ctx);
+		ctx->api->ReleaseSession(ctx->session);
+		ctx->session = NULL;
+	}
+	ctx->features = features;
 	if (!ctx->session &&
 	    (strata_check_manifest(ctx->model_path, err) ||
 	     load_session(ctx,
-			  ctx->feature_path ? ctx->feature_path :
-					      ctx->model_path,
-			  &ctx->session, ctx->feature_path ? 2 : 0, err)))
+			  ctx->features ? ctx->feature_path : ctx->model_path,
+			  &ctx->session, ctx->features ? 2 : 0, err)))
 		return -1;
 	result->width = frame->image->width;
 	result->height = frame->image->height;
 	result->frame.index = frame->index;
 	result->frame.timestamp_seconds = frame->timestamp_seconds;
-	result->frame.linear = frame->image->linear;
 	result->frame.colorspace = frame->colorspace;
 	if (infer(ctx, frame, result, err)) {
 		strata_result_free(result);
@@ -683,7 +689,7 @@ int strata_run(strata_context *ctx, const struct strata_frame *frame,
 		return -1;
 	model = *frame;
 	model.image = &image;
-	ret = run_model(ctx, &model, result, err);
+	ret = run_model(ctx, &model, result, 0, err);
 	strata_image_free(&image);
 	return ret;
 }
@@ -809,6 +815,7 @@ static int load_head(strata_context *ctx, struct strata_error *err)
 int strata_set_head(strata_context *ctx, const char *path,
 		    struct strata_error *err)
 {
+	struct strata_context candidate;
 	size_t length;
 
 	if (!ctx || !path)
@@ -816,16 +823,29 @@ int strata_set_head(strata_context *ctx, const char *path,
 	length = strlen(path);
 	if (length < 5 || strcmp(path + length - 5, ".onnx"))
 		return strata_fail(err, "head path must end in .onnx");
+	candidate = *ctx;
+	candidate.head = NULL;
+	candidate.head_path = strdup(path);
+	candidate.feature_path = malloc(length + sizeof(".backbone.onnx"));
+	if (!candidate.head_path || !candidate.feature_path) {
+		free(candidate.head_path);
+		free(candidate.feature_path);
+		return strata_fail(err, "out of memory");
+	}
+	memcpy(candidate.feature_path, path, length - 5);
+	strcpy(candidate.feature_path + length - 5, ".backbone.onnx");
+	if (load_head(&candidate, err)) {
+		free(candidate.head_path);
+		free(candidate.feature_path);
+		return -1;
+	}
 	strata_unload(ctx);
 	free(ctx->head_path);
 	free(ctx->feature_path);
-	ctx->head_path = strdup(path);
-	ctx->feature_path = malloc(length + sizeof(".backbone.onnx"));
-	if (!ctx->head_path || !ctx->feature_path)
-		return strata_fail(err, "out of memory");
-	memcpy(ctx->feature_path, path, length - 5);
-	strcpy(ctx->feature_path + length - 5, ".backbone.onnx");
-	return load_head(ctx, err);
+	ctx->head = candidate.head;
+	ctx->head_path = candidate.head_path;
+	ctx->feature_path = candidate.feature_path;
+	return 0;
 }
 
 struct head_tile {
@@ -1004,7 +1024,7 @@ int strata_run_deep(strata_context *ctx, const struct strata_frame *frame,
 		return -1;
 	model = *frame;
 	model.image = &image;
-	if (run_model(ctx, &model, depth, err))
+	if (run_model(ctx, &model, depth, 1, err))
 		goto out;
 	start = strata_milliseconds();
 	pixels = (size_t)depth->width * (size_t)depth->height;
