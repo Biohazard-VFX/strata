@@ -15,10 +15,12 @@ def mixed_errors(
     last = np.where(target_alpha > 1e-7, indices, 0).max(axis=0)[None]
     back = np.take_along_axis(inverse_depth, last, axis=0)[0]
     target_back = np.take_along_axis(target_inverse, last, axis=0)[0]
+    front_mask = mask & np.isfinite(target_inverse[0]) & (target_inverse[0] > 0)
+    back_mask = mask & (last[0] > 0) & np.isfinite(target_back) & (target_back > 0)
     return (
         np.abs(front_alpha[mask] - target_alpha[0][mask]),
-        np.abs(inverse_depth[0][mask] / target_inverse[0][mask] - 1),
-        np.abs(back[mask & (last[0] > 0)] / target_back[mask & (last[0] > 0)] - 1),
+        np.abs(inverse_depth[0][front_mask] / target_inverse[0][front_mask] - 1),
+        np.abs(back[back_mask] / target_back[back_mask] - 1),
     )
 
 

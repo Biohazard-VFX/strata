@@ -64,3 +64,4 @@
 - Production eligibility requires leakage pass and sweep strictly below frozen DP2; test_ood_validation_retains_best_and_stops_at_patience_without_resetting_on_resume checks no-candidate runs.
 - Freeze and log one DP2 single-opaque-layer sweep per run on the same validation frames; test_dp2_baseline_is_single_opaque_layer_from_frozen_metric_depth checks metric depths.
 - Opaque sweep interior requires total coverage >=0.999 outside the edge band; test_opaque_interior_threshold_is_inclusive_0999 fixes the inclusive threshold.
+- Relative depth errors exclude non-finite and non-positive GT inverse depth; empty sets report null; test_relative_depth_excludes_sky_and_serializes_empty_groups checks both.

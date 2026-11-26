@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import numpy as np
 import torch
 from numpy.testing import assert_allclose
@@ -5,9 +8,48 @@ from numpy.testing import assert_allclose
 from strata_training.baselines.deep import fake_deep, two_layer
 from strata_training.eval.boundaries import boundary_f1, directed_boundary_counts, silhouette_recall
 from strata_training.eval.calibration import calibration, tracked_depth_jitter
+from strata_training.eval.metrics import mixed_errors
 from strata_training.eval.runner import Collected, collect
+from strata_training.io import write_json
 from strata_training.losses.deep import gradient_loss
 from strata_training.types import Layers
+
+
+def test_relative_depth_excludes_sky_and_serializes_empty_groups(tmp_path: Path) -> None:
+    shape = (4, 4)
+    beauty = np.full((3, *shape), 0.5)
+    target = two_layer(np.full(shape, 0.5), np.full(shape, 0.5), np.full(shape, 0.125), beauty)
+    target.inverse_depth[0, :, :2] = 0
+    target.inverse_depth[1, :, :2] = 0
+    prediction = fake_deep(np.full(shape, 0.25), beauty)
+    data = {
+        "mixed": np.ones(shape, dtype=bool),
+        "fur": np.tile([1, 1, 0, 0], (4, 1)),
+        "foreground": np.ones(shape),
+        "beauty": beauty,
+    }
+    results: dict[tuple[str, str], Collected] = {}
+    with np.errstate(divide="raise", invalid="raise"):
+        collect(prediction, target, data, "fake", {"category": "sharp"}, results)
+    all_summary = results["all", "fake"].summary()
+    sky_summary = results["sharp / fur", "fake"].summary()
+    assert all_summary["native_front_median_relative_error"] == 0.5
+    assert all_summary["native_back_median_relative_error"] == 1
+    assert sky_summary["native_front_median_relative_error"] is None
+    assert sky_summary["native_back_median_relative_error"] is None
+    output = tmp_path / "metrics.json"
+    write_json(output, {"all": all_summary, "sky": sky_summary})
+    assert json.loads(output.read_text())["sky"]["native_back_median_relative_error"] is None
+
+
+def test_relative_depth_excludes_nonfinite_and_negative_targets() -> None:
+    inverse = np.array([[[2.0, 2.0, 2.0, 2.0]], [[2.0, 2.0, 2.0, 2.0]]])
+    target = np.array([[[1.0, np.inf, np.nan, -1.0]], [[1.0, np.inf, np.nan, -1.0]]])
+    alpha = np.ones_like(target)
+    with np.errstate(divide="raise", invalid="raise"):
+        _, front, back = mixed_errors(inverse, alpha[0], target, alpha, np.ones((1, 4), bool))
+    assert_allclose(front, [1.0])
+    assert_allclose(back, [1.0])
 
 
 def test_zero_analytic_foreground_coverage_is_not_relabelled_as_opaque() -> None:
